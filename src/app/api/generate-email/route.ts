@@ -3,32 +3,47 @@ import { checkRateLimit, incrementUsage } from '@/lib/rate-limiter';
 
 const XAI_API_KEY = process.env.XAI_API_KEY;
 
-const SYSTEM_PROMPT = `You are an expert hospitality technology sales copywriter.
-You write personalized cold emails for Jengu, a hospitality tech company.
+const SYSTEM_PROMPT = `You are Edward Guest, Director at Jengu - a hospitality technology company.
+You write natural, human first-touch emails to hotels and restaurants you've discovered.
 
-Jengu helps hotels and restaurants:
-- Streamline operations with smart automation
-- Reduce costs while improving guest experience
-- Make data-driven decisions with real-time analytics
+About Jengu:
+- We help luxury and boutique hotels with smart hospitality technology
+- Our platform streamlines operations, from guest communications to staff coordination
+- We work with independent properties and small groups who want enterprise-level tech without the complexity
+- We're based in the UK/France and work internationally
 
-Your emails should be:
-- Personalized to the specific property
-- Concise (under 150 words for the body)
-- Friendly but professional
-- Focused on a single value proposition
-- Have a clear, low-friction CTA (quick call, not a demo)
+Your writing style:
+- Sound like a real person, not a marketing email
+- Write like you're reaching out to someone you'd genuinely like to meet
+- Keep it conversational and warm, like you're writing to a colleague
+- Be brief - busy hospitality professionals don't have time for long emails
+- Show you've actually looked at their property (mention something specific)
+- One simple ask: a quick chat to see if there's a fit
+- NO buzzwords, NO corporate speak, NO "I hope this email finds you well"
+- NO bullet points in the email body
+- Never mention "pain points" or "challenges" - just be helpful
 
-Never be pushy or salesy. Be genuinely helpful.
+Structure (keep the whole email under 100 words):
+- Opening: Something specific about THEM (their property, location, what caught your eye)
+- Bridge: Brief mention of why you thought of reaching out
+- Jengu: One sentence about what we do
+- Ask: Simple, low-pressure invitation to chat
+
+Sign off with just:
+Best,
+Edd
+
+(The signature with full details will be added automatically)
 
 Respond in JSON format:
 {
-  "subject": "email subject line",
-  "body": "email body",
-  "personalization_notes": "why you personalized it this way"
+  "subject": "short, casual subject - no clickbait, just natural",
+  "body": "the email body WITHOUT any signature",
+  "personalization_notes": "what specific details you used to personalize"
 }`;
 
 export async function POST(request: NextRequest) {
-  // Check rate limit for Anthropic API
+  // Check rate limit for Grok API
   const rateLimit = checkRateLimit('xai_emails');
   if (!rateLimit.allowed) {
     return NextResponse.json({
@@ -74,7 +89,7 @@ export async function POST(request: NextRequest) {
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user', content: prompt },
         ],
-        temperature: 0.7,
+        temperature: 0.8, // Slightly higher for more natural variation
         stream: false,
       }),
     });
@@ -109,68 +124,118 @@ export async function POST(request: NextRequest) {
   }
 }
 
-function buildPrompt(prospect: {
+interface ProspectData {
   name: string;
   city?: string;
   country?: string;
+  website?: string;
   google_rating?: number;
   google_review_count?: number;
+  star_rating?: number;
+  room_count?: number;
   source_job_title?: string;
   tier?: string;
   contact_name?: string;
   contact_title?: string;
-}) {
-  const contextParts = [`Property: ${prospect.name}`];
+  notes?: string;
+  tags?: string[];
+  linkedin_url?: string;
+  instagram_url?: string;
+  chain_affiliation?: string;
+}
+
+function buildPrompt(prospect: ProspectData) {
+  const details: string[] = [];
+
+  // Basic info
+  details.push(`Property name: ${prospect.name}`);
 
   if (prospect.city || prospect.country) {
     const location = [prospect.city, prospect.country].filter(Boolean).join(', ');
-    contextParts.push(`Location: ${location}`);
+    details.push(`Location: ${location}`);
   }
 
+  // Property characteristics
+  if (prospect.star_rating) {
+    details.push(`Star rating: ${prospect.star_rating}-star property`);
+  }
+
+  if (prospect.room_count) {
+    details.push(`Size: ${prospect.room_count} rooms`);
+  }
+
+  if (prospect.chain_affiliation) {
+    details.push(`Affiliation: ${prospect.chain_affiliation}`);
+  } else if (prospect.tags?.includes('independent')) {
+    details.push(`Type: Independent/boutique property`);
+  }
+
+  // Online presence
   if (prospect.google_rating) {
-    contextParts.push(`Google Rating: ${prospect.google_rating}/5`);
+    details.push(`Google rating: ${prospect.google_rating}/5 stars`);
   }
 
   if (prospect.google_review_count) {
-    contextParts.push(`Review Count: ${prospect.google_review_count}`);
+    details.push(`Reviews: ${prospect.google_review_count} Google reviews`);
   }
 
-  if (prospect.source_job_title) {
-    contextParts.push(`They're hiring for: ${prospect.source_job_title}`);
+  if (prospect.website) {
+    details.push(`Website: ${prospect.website}`);
   }
 
+  // Contact info
   if (prospect.contact_name) {
-    contextParts.push(`Contact: ${prospect.contact_name} (${prospect.contact_title || 'Unknown title'})`);
+    const title = prospect.contact_title ? ` (${prospect.contact_title})` : '';
+    details.push(`Contact: ${prospect.contact_name}${title}`);
   }
 
-  const context = contextParts.join('\n');
+  // Context clues
+  if (prospect.source_job_title) {
+    details.push(`Found via job posting for: ${prospect.source_job_title}`);
+  }
 
-  let angle = '';
+  // AI-generated notes from enrichment
+  if (prospect.notes && prospect.notes.length > 50) {
+    details.push(`Research notes: ${prospect.notes}`);
+  }
+
+  // Build strategy hints
+  const hints: string[] = [];
+
   if (prospect.tier === 'hot') {
-    angle = `This is a high-priority lead. They have strong online presence and are actively hiring.
-Focus on how Jengu can help them scale efficiently during growth.`;
-  } else {
-    angle = `Focus on how Jengu can help improve their operations and guest experience.`;
+    hints.push('This is a high-value lead - they have strong online presence and/or are actively hiring');
   }
 
-  if (prospect.google_review_count && prospect.google_review_count > 200) {
-    angle += '\nThey clearly care about guest experience given their review volume.';
+  if (prospect.google_review_count && prospect.google_review_count > 500) {
+    hints.push('Very popular property with lots of guest feedback - they clearly care about reputation');
+  }
+
+  if (prospect.tags?.includes('spa') || prospect.tags?.includes('luxury')) {
+    hints.push('Luxury/spa property - focus on premium guest experience');
   }
 
   const jobTitle = (prospect.source_job_title || '').toLowerCase();
-  if (jobTitle.includes('revenue')) {
-    angle += '\nThey\'re hiring for revenue - emphasize our analytics and revenue optimization.';
+  if (jobTitle.includes('revenue') || jobTitle.includes('commercial')) {
+    hints.push('They\'re hiring for revenue/commercial roles - they\'re focused on growth');
   }
   if (jobTitle.includes('marketing') || jobTitle.includes('digital')) {
-    angle += '\nThey\'re hiring for marketing - emphasize our guest engagement tools.';
+    hints.push('They\'re hiring for marketing - they\'re investing in their brand');
+  }
+  if (jobTitle.includes('manager') || jobTitle.includes('director')) {
+    hints.push('Senior hire - they\'re building their leadership team');
   }
 
-  return `Write a cold outreach email for this property:
+  return `Write a first outreach email to this hotel:
 
-${context}
+PROPERTY DETAILS:
+${details.join('\n')}
 
-Strategy notes:
-${angle}
+${hints.length > 0 ? `CONTEXT (use subtly, don't be obvious about it):\n${hints.join('\n')}` : ''}
 
-Generate the email in JSON format with subject, body, and personalization_notes fields.`;
+Remember:
+- Keep it under 100 words
+- Sound human, not like a sales template
+- Find ONE specific thing about them to mention
+- End with "Best, Edd" (signature is added automatically)
+- Generate JSON with subject, body, and personalization_notes`;
 }
