@@ -1,33 +1,36 @@
-import nodemailer from 'nodemailer';
+import { ClientSecretCredential } from '@azure/identity';
+import { Client } from '@microsoft/microsoft-graph-client';
+import { TokenCredentialAuthenticationProvider } from '@microsoft/microsoft-graph-client/authProviders/azureTokenCredentials';
 
-// Email configuration from environment
-const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
-const SMTP_PORT = parseInt(process.env.SMTP_PORT || '587');
-const SMTP_USER = process.env.SMTP_USER;
-const SMTP_PASS = process.env.SMTP_PASS;
-const SMTP_FROM = process.env.SMTP_FROM;
-const SMTP_FROM_NAME = process.env.SMTP_FROM_NAME || 'Edward Guest';
+// Azure AD / Microsoft Graph configuration
+const AZURE_TENANT_ID = process.env.AZURE_TENANT_ID;
+const AZURE_CLIENT_ID = process.env.AZURE_CLIENT_ID;
+const AZURE_CLIENT_SECRET = process.env.AZURE_CLIENT_SECRET;
+const AZURE_MAIL_FROM = process.env.AZURE_MAIL_FROM || 'edd@jengu.ai';
+const AZURE_MAIL_FROM_NAME = process.env.AZURE_MAIL_FROM_NAME || 'Edward Guest';
 
-// Check if SMTP is configured
+// Check if Azure is configured
 export function isSmtpConfigured(): boolean {
-  return !!(SMTP_USER && SMTP_PASS && SMTP_FROM);
+  return !!(AZURE_TENANT_ID && AZURE_CLIENT_ID && AZURE_CLIENT_SECRET && AZURE_MAIL_FROM);
 }
 
-// Create transporter
-function createTransporter() {
+// Create Microsoft Graph client
+function createGraphClient(): Client {
   if (!isSmtpConfigured()) {
-    throw new Error('SMTP not configured. Set SMTP_USER, SMTP_PASS, and SMTP_FROM in .env.local');
+    throw new Error('Azure credentials not configured');
   }
 
-  return nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: SMTP_PORT,
-    secure: false, // true for 465, false for other ports
-    auth: {
-      user: SMTP_USER,
-      pass: SMTP_PASS,
-    },
+  const credential = new ClientSecretCredential(
+    AZURE_TENANT_ID!,
+    AZURE_CLIENT_ID!,
+    AZURE_CLIENT_SECRET!
+  );
+
+  const authProvider = new TokenCredentialAuthenticationProvider(credential, {
+    scopes: ['https://graph.microsoft.com/.default'],
   });
+
+  return Client.initWithMiddleware({ authProvider });
 }
 
 export interface SendEmailOptions {
@@ -45,33 +48,50 @@ export interface SendEmailResult {
 }
 
 /**
- * Send an email via SMTP
+ * Send an email via Microsoft Graph API
  */
 export async function sendEmail(options: SendEmailOptions): Promise<SendEmailResult> {
   const startTime = Date.now();
 
   try {
-    const transporter = createTransporter();
+    const client = createGraphClient();
 
-    const mailOptions = {
-      from: `"${SMTP_FROM_NAME}" <${SMTP_FROM}>`,
-      to: options.to,
+    const message = {
       subject: options.subject,
-      text: options.body + '\n\n--\nEdward Guest\nDirector | Jengu\n+33 759637307\n+44 1273 090340\nwww.jengu.ai',
-      html: formatEmailHtml(options.body),
-      replyTo: options.replyTo || SMTP_FROM,
+      body: {
+        contentType: 'HTML',
+        content: formatEmailHtml(options.body),
+      },
+      toRecipients: [
+        {
+          emailAddress: {
+            address: options.to,
+          },
+        },
+      ],
+      from: {
+        emailAddress: {
+          name: AZURE_MAIL_FROM_NAME,
+          address: AZURE_MAIL_FROM,
+        },
+      },
     };
 
-    const info = await transporter.sendMail(mailOptions);
+    // Send mail using Graph API
+    await client
+      .api(`/users/${AZURE_MAIL_FROM}/sendMail`)
+      .post({ message, saveToSentItems: true });
+
     const deliveryTime = Date.now() - startTime;
 
     return {
       success: true,
-      messageId: info.messageId,
+      messageId: `graph-${Date.now()}`,
       deliveryTime,
     };
   } catch (error) {
     const deliveryTime = Date.now() - startTime;
+    console.error('Microsoft Graph email error:', error);
     return {
       success: false,
       error: String(error),
@@ -173,7 +193,6 @@ function formatEmailHtml(body: string): string {
   const htmlBody = body
     .split('\n')
     .map(line => {
-      // Don't trim lines to preserve intentional spacing
       if (line.trim() === '') return '<br>';
       return line;
     })
@@ -216,16 +235,17 @@ function formatEmailHtml(body: string): string {
 }
 
 /**
- * Verify SMTP connection
+ * Verify Azure/Graph connection
  */
 export async function verifySmtpConnection(): Promise<{ success: boolean; error?: string }> {
   if (!isSmtpConfigured()) {
-    return { success: false, error: 'SMTP not configured' };
+    return { success: false, error: 'Azure credentials not configured' };
   }
 
   try {
-    const transporter = createTransporter();
-    await transporter.verify();
+    const client = createGraphClient();
+    // Try to get the user profile to verify credentials work
+    await client.api(`/users/${AZURE_MAIL_FROM}`).select('displayName').get();
     return { success: true };
   } catch (error) {
     return { success: false, error: String(error) };

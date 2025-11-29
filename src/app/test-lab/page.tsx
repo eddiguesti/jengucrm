@@ -301,8 +301,8 @@ export default function TestLabPage() {
               </p>
               <p className="text-xs text-zinc-400">
                 {smtpStatus?.configured
-                  ? 'Emails will be sent from andy.chukwuat@gmail.com'
-                  : 'Add SMTP settings in .env.local to send real emails'}
+                  ? 'Emails will be sent from edd@jengu.ai via Microsoft Graph'
+                  : 'Configure Azure credentials in .env.local to send real emails'}
               </p>
             </div>
           </div>
@@ -662,18 +662,18 @@ export default function TestLabPage() {
           </CardHeader>
           <CardContent className="space-y-4 text-sm text-zinc-400">
             <ol className="list-decimal list-inside space-y-2">
-              <li>Add a test prospect above with your test email address</li>
+              <li>Add a test prospect with andy.chukwuat@gmail.com as the email</li>
               <li>Click &quot;Send Test&quot; to generate an AI email with Grok 4</li>
-              <li>The email will be sent to your inbox via Gmail SMTP</li>
-              <li>Check your inbox - delivery is typically under 5 seconds</li>
+              <li>The email will be sent from edd@jengu.ai via Microsoft Graph</li>
+              <li>Check the test inbox - delivery is typically under 5 seconds</li>
               <li>Review the email content quality and personalization</li>
               <li>Reply to test the full conversation flow</li>
             </ol>
             <Separator className="bg-zinc-800" />
             <p className="text-zinc-500">
-              <strong className="text-zinc-300">Sender:</strong> Emails are sent from andy.chukwuat@gmail.com
+              <strong className="text-zinc-300">Sender:</strong> edd@jengu.ai (Edward Guest)
               <br />
-              <strong className="text-zinc-300">Tip:</strong> Use a +alias like yourname+test@gmail.com to easily filter test emails
+              <strong className="text-zinc-300">Test inbox:</strong> andy.chukwuat@gmail.com
             </p>
           </CardContent>
         </Card>
