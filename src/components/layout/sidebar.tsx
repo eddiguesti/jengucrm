@@ -12,6 +12,7 @@ import {
   Settings,
   Zap,
   AlertTriangle,
+  FlaskConical,
 } from 'lucide-react';
 
 const navigation = [
@@ -21,6 +22,7 @@ const navigation = [
   { name: 'Emails', href: '/emails', icon: Mail },
   { name: 'Job Scraper', href: '/scraper', icon: Search },
   { name: 'Review Mining', href: '/review-mining', icon: AlertTriangle },
+  { name: 'Test Lab', href: '/test-lab', icon: FlaskConical },
   { name: 'Settings', href: '/settings', icon: Settings },
 ];
 

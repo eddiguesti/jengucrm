@@ -8,6 +8,7 @@ export async function GET(request: NextRequest) {
   const tier = searchParams.get('tier');
   const stage = searchParams.get('stage');
   const search = searchParams.get('search');
+  const tags = searchParams.get('tags');
   const limit = parseInt(searchParams.get('limit') || '50');
   const offset = parseInt(searchParams.get('offset') || '0');
 
@@ -25,6 +26,10 @@ export async function GET(request: NextRequest) {
   }
   if (search) {
     query = query.or(`name.ilike.%${search}%,city.ilike.%${search}%`);
+  }
+  if (tags) {
+    // Filter by tag (supports single tag for now)
+    query = query.contains('tags', [tags]);
   }
 
   const { data, error, count } = await query;
