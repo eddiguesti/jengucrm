@@ -2,7 +2,7 @@ import { tripadvisorScraper } from './tripadvisor';
 import { googleReviewScraper } from './google';
 import { ReviewMiningResult, ReviewMinedProperty } from './types';
 import { ReviewPlatform, REVIEW_MINING_LOCATIONS } from '@/types';
-import { createClient } from '@supabase/supabase-js';
+import { createServerClient } from '@/lib/supabase';
 
 export { tripadvisorScraper } from './tripadvisor';
 export { googleReviewScraper } from './google';
@@ -48,11 +48,9 @@ export async function runReviewMining(
 
 // Save review mining results to database
 export async function saveReviewMiningResults(
-  results: ReviewMiningResult,
-  supabaseUrl: string,
-  supabaseKey: string
+  results: ReviewMiningResult
 ): Promise<{ newLeads: number; newSignals: number; errors: string[] }> {
-  const supabase = createClient(supabaseUrl, supabaseKey);
+  const supabase = createServerClient();
   const errors: string[] = [];
   let newLeads = 0;
   let newSignals = 0;
@@ -168,11 +166,9 @@ export async function logScrapeRun(
   platform: ReviewPlatform,
   location: string,
   results: ReviewMiningResult,
-  newLeads: number,
-  supabaseUrl: string,
-  supabaseKey: string
+  newLeads: number
 ): Promise<void> {
-  const supabase = createClient(supabaseUrl, supabaseKey);
+  const supabase = createServerClient();
 
   await supabase.from('review_scrape_logs').insert({
     platform,

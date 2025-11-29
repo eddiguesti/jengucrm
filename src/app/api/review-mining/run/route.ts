@@ -1,14 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createServerClient } from '@/lib/supabase';
 import {
   runReviewMining,
   saveReviewMiningResults,
   logScrapeRun,
 } from '@/lib/scrapers/review-mining';
 import { ReviewPlatform } from '@/types';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 export async function POST(request: NextRequest) {
   try {
@@ -43,22 +40,18 @@ export async function POST(request: NextRequest) {
         totalErrors += results.errors.length;
 
         // Save results to database
-        const { newLeads, errors } = await saveReviewMiningResults(
-          results,
-          supabaseUrl,
-          supabaseKey
-        );
+        const { newLeads, errors } = await saveReviewMiningResults(results);
         totalNewLeads += newLeads;
         totalErrors += errors.length;
 
         // Log the scrape run
-        await logScrapeRun(platform, location, results, newLeads, supabaseUrl, supabaseKey);
+        await logScrapeRun(platform, location, results, newLeads);
       } catch (err) {
         console.error(`Error mining ${location}:`, err);
         totalErrors++;
 
         // Log failed run
-        const supabase = createClient(supabaseUrl, supabaseKey);
+        const supabase = createServerClient();
         await supabase.from('review_scrape_logs').insert({
           platform,
           location,

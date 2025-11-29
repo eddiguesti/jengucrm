@@ -19,24 +19,24 @@ import {
 import {
   Star,
   MapPin,
-  Globe,
   Mail,
-  Phone,
-  ExternalLink,
-  Sparkles,
   Loader2,
   ArrowLeft,
   RefreshCw,
   Copy,
   Check,
-  Briefcase,
-  Calendar,
-  Target,
-  CheckCircle,
-  AlertTriangle,
+  Sparkles,
 } from 'lucide-react';
 import Link from 'next/link';
 import type { Prospect, Email, Activity, ProspectStage, PainSignal } from '@/types';
+import {
+  NextActionCard,
+  HiringSignalCard,
+  PainSignalsCard,
+  ContactInfoCard,
+  ScoreBreakdownCard,
+  SourceInfoCard,
+} from './components';
 
 const STAGES: { value: ProspectStage; label: string }[] = [
   { value: 'new', label: 'New' },
@@ -72,95 +72,6 @@ function formatTimeAgo(dateString: string) {
   if (diffHours < 24) return `${diffHours} hours ago`;
   if (diffDays < 7) return `${diffDays} days ago`;
   return date.toLocaleDateString();
-}
-
-function getNextAction(stage: string, hasEmail: boolean, hasContact: boolean, emailsSent: number): {
-  action: string;
-  description: string;
-  priority: 'high' | 'medium' | 'low';
-  icon: 'mail' | 'phone' | 'calendar' | 'target' | 'check';
-} {
-  switch (stage) {
-    case 'new':
-      if (!hasEmail && !hasContact) {
-        return {
-          action: 'Enrich Data',
-          description: 'Get contact details via Google Places enrichment',
-          priority: 'high',
-          icon: 'target',
-        };
-      }
-      return {
-        action: 'Research Property',
-        description: 'Review website, social media, and recent news',
-        priority: 'medium',
-        icon: 'target',
-      };
-    case 'researching':
-      return {
-        action: 'Generate Outreach Email',
-        description: 'Create personalized email based on hiring signal',
-        priority: 'high',
-        icon: 'mail',
-      };
-    case 'outreach':
-      if (emailsSent === 0) {
-        return {
-          action: 'Send First Email',
-          description: 'Generate and send initial outreach email',
-          priority: 'high',
-          icon: 'mail',
-        };
-      }
-      return {
-        action: 'Follow Up',
-        description: 'Send follow-up email or try phone call',
-        priority: 'medium',
-        icon: 'phone',
-      };
-    case 'engaged':
-      return {
-        action: 'Schedule Meeting',
-        description: 'Book a discovery call or demo',
-        priority: 'high',
-        icon: 'calendar',
-      };
-    case 'meeting':
-      return {
-        action: 'Prepare Proposal',
-        description: 'Create customized proposal after meeting',
-        priority: 'high',
-        icon: 'target',
-      };
-    case 'proposal':
-      return {
-        action: 'Follow Up on Proposal',
-        description: 'Check in on decision timeline',
-        priority: 'high',
-        icon: 'phone',
-      };
-    case 'won':
-      return {
-        action: 'Onboarding',
-        description: 'Begin customer onboarding process',
-        priority: 'medium',
-        icon: 'check',
-      };
-    case 'lost':
-      return {
-        action: 'Nurture',
-        description: 'Add to nurture sequence for future opportunities',
-        priority: 'low',
-        icon: 'mail',
-      };
-    default:
-      return {
-        action: 'Review',
-        description: 'Review prospect details',
-        priority: 'medium',
-        icon: 'target',
-      };
-  }
 }
 
 export default function ProspectDetailPage() {
@@ -227,7 +138,6 @@ export default function ProspectDetailPage() {
         body: data.email.body,
       });
 
-      // Refresh to get the saved email
       fetchProspect();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to generate email');
@@ -252,7 +162,6 @@ export default function ProspectDetailPage() {
         throw new Error(error.error || 'Failed to enrich');
       }
 
-      // Refresh prospect data
       fetchProspect();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to enrich prospect');
@@ -274,7 +183,7 @@ export default function ProspectDetailPage() {
       if (!response.ok) throw new Error('Failed to update stage');
 
       setProspect({ ...prospect, stage: newStage });
-      fetchProspect(); // Refresh to get new activity
+      fetchProspect();
     } catch {
       alert('Failed to update stage');
     }
@@ -472,22 +381,12 @@ export default function ProspectDetailPage() {
                     </Button>
                   </CardHeader>
                   <CardContent>
-                    {/* Newly Generated Email */}
                     {generatedEmail && (
                       <div className="mb-4 p-4 rounded-lg bg-amber-500/10 border border-amber-500/30">
                         <div className="flex items-center justify-between mb-2">
                           <h4 className="font-medium text-amber-400">Generated Email</h4>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={handleCopyEmail}
-                            className="text-amber-400"
-                          >
-                            {copied ? (
-                              <Check className="h-4 w-4" />
-                            ) : (
-                              <Copy className="h-4 w-4" />
-                            )}
+                          <Button size="sm" variant="ghost" onClick={handleCopyEmail} className="text-amber-400">
+                            {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                           </Button>
                         </div>
                         <p className="text-sm font-medium text-white mb-2">Subject: {generatedEmail.subject}</p>
@@ -495,14 +394,10 @@ export default function ProspectDetailPage() {
                       </div>
                     )}
 
-                    {/* Existing Emails */}
                     {emails.length > 0 ? (
                       <div className="space-y-4">
                         {emails.map((email) => (
-                          <div
-                            key={email.id}
-                            className="p-4 rounded-lg bg-zinc-800 border border-zinc-700"
-                          >
+                          <div key={email.id} className="p-4 rounded-lg bg-zinc-800 border border-zinc-700">
                             <div className="flex items-center justify-between mb-2">
                               <h4 className="font-medium text-white">{email.subject}</h4>
                               <Badge className={
@@ -577,9 +472,7 @@ export default function ProspectDetailPage() {
                       disabled={isSavingNote}
                       className="bg-amber-600 hover:bg-amber-700"
                     >
-                      {isSavingNote ? (
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      ) : null}
+                      {isSavingNote ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                       Save Note
                     </Button>
                   </CardContent>
@@ -590,296 +483,35 @@ export default function ProspectDetailPage() {
 
           {/* Sidebar */}
           <div className="space-y-6">
-            {/* Next Action - Most Important for Sales Agents */}
-            {(() => {
-              const nextAction = getNextAction(
-                prospect.stage,
-                !!prospect.email,
-                !!prospect.contact_name,
-                emails.length
-              );
-              const ActionIcon = {
-                mail: Mail,
-                phone: Phone,
-                calendar: Calendar,
-                target: Target,
-                check: CheckCircle,
-              }[nextAction.icon];
-              const priorityColors = {
-                high: 'bg-red-500/20 border-red-500/50 text-red-400',
-                medium: 'bg-amber-500/20 border-amber-500/50 text-amber-400',
-                low: 'bg-zinc-500/20 border-zinc-500/50 text-zinc-400',
-              };
-              return (
-                <Card className={`border-2 ${priorityColors[nextAction.priority].split(' ')[1]}`}>
-                  <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-white text-base flex items-center gap-2">
-                        <Target className="h-4 w-4 text-amber-500" />
-                        Next Action
-                      </CardTitle>
-                      <Badge className={priorityColors[nextAction.priority]}>
-                        {nextAction.priority.charAt(0).toUpperCase() + nextAction.priority.slice(1)} Priority
-                      </Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex items-start gap-3">
-                      <div className="h-10 w-10 rounded-lg bg-amber-500/20 flex items-center justify-center flex-shrink-0">
-                        <ActionIcon className="h-5 w-5 text-amber-500" />
-                      </div>
-                      <div>
-                        <p className="font-medium text-white">{nextAction.action}</p>
-                        <p className="text-sm text-zinc-400">{nextAction.description}</p>
-                      </div>
-                    </div>
-                    {nextAction.icon === 'mail' && prospect.stage !== 'won' && prospect.stage !== 'lost' && (
-                      <Button
-                        onClick={handleGenerateEmail}
-                        disabled={isGenerating}
-                        className="w-full mt-4 bg-amber-600 hover:bg-amber-700"
-                        size="sm"
-                      >
-                        {isGenerating ? (
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        ) : (
-                          <Sparkles className="h-4 w-4 mr-2" />
-                        )}
-                        Generate Email Now
-                      </Button>
-                    )}
-                    {nextAction.icon === 'target' && !prospect.google_place_id && (
-                      <Button
-                        onClick={handleEnrich}
-                        disabled={isEnriching}
-                        className="w-full mt-4 bg-amber-600 hover:bg-amber-700"
-                        size="sm"
-                      >
-                        {isEnriching ? (
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        ) : (
-                          <RefreshCw className="h-4 w-4 mr-2" />
-                        )}
-                        Enrich Now
-                      </Button>
-                    )}
-                  </CardContent>
-                </Card>
-              );
-            })()}
+            <NextActionCard
+              stage={prospect.stage}
+              hasEmail={!!prospect.email}
+              hasContact={!!prospect.contact_name}
+              emailsSent={emails.length}
+              hasGooglePlaceId={!!prospect.google_place_id}
+              isGenerating={isGenerating}
+              isEnriching={isEnriching}
+              onGenerateEmail={handleGenerateEmail}
+              onEnrich={handleEnrich}
+            />
 
-            {/* Hiring Signal - Job Description */}
             {prospect.source_job_title && (
-              <Card className="bg-gradient-to-br from-emerald-500/10 to-emerald-500/5 border-emerald-500/30">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-white text-base flex items-center gap-2">
-                    <Briefcase className="h-4 w-4 text-emerald-500" />
-                    Hiring Signal
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div>
-                    <p className="text-xs text-zinc-500 uppercase tracking-wide">Position</p>
-                    <p className="text-white font-medium">{prospect.source_job_title}</p>
-                  </div>
-                  <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-                    <p className="text-sm text-emerald-300">
-                      This property is actively hiring, indicating growth and potential need for your services.
-                    </p>
-                  </div>
-                  {prospect.source_url && (
-                    <a
-                      href={prospect.source_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-sm text-emerald-400 hover:underline flex items-center gap-1"
-                    >
-                      View Job Posting <ExternalLink className="h-3 w-3" />
-                    </a>
-                  )}
-                </CardContent>
-              </Card>
+              <HiringSignalCard
+                jobTitle={prospect.source_job_title}
+                sourceUrl={prospect.source_url || undefined}
+              />
             )}
 
-            {/* Pain Signals - For Review Mining Leads */}
-            {painSignals.length > 0 && (
-              <Card className="bg-gradient-to-br from-red-500/10 to-orange-500/5 border-red-500/30">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-white text-base flex items-center gap-2">
-                    <AlertTriangle className="h-4 w-4 text-red-500" />
-                    Pain Signals ({painSignals.length})
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-                    <p className="text-sm text-red-300">
-                      Guests are complaining about communication issues - they need help!
-                    </p>
-                  </div>
-                  <div className="space-y-3 max-h-[300px] overflow-y-auto">
-                    {painSignals.slice(0, 5).map((signal) => (
-                      <div key={signal.id} className="p-3 rounded-lg bg-zinc-800/50 border border-zinc-700">
-                        <div className="flex items-center justify-between mb-2">
-                          <Badge className="bg-red-500/20 text-red-400 text-xs">
-                            &quot;{signal.keyword_matched}&quot;
-                          </Badge>
-                          {signal.review_rating && (
-                            <span className="flex items-center gap-1 text-xs">
-                              <Star className="h-3 w-3 text-amber-400 fill-amber-400" />
-                              {signal.review_rating}/5
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-zinc-300 line-clamp-3">
-                          &quot;{signal.review_snippet}&quot;
-                        </p>
-                        <div className="flex items-center justify-between mt-2 text-xs text-zinc-500">
-                          <span>{signal.reviewer_name || 'Anonymous'}</span>
-                          {signal.review_date && (
-                            <span>{new Date(signal.review_date).toLocaleDateString()}</span>
-                          )}
-                        </div>
-                        {signal.review_url && (
-                          <a
-                            href={signal.review_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-amber-400 hover:underline flex items-center gap-1 mt-1"
-                          >
-                            View review <ExternalLink className="h-3 w-3" />
-                          </a>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  {painSignals.length > 5 && (
-                    <p className="text-xs text-zinc-500 text-center">
-                      +{painSignals.length - 5} more pain signals
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            )}
+            <PainSignalsCard painSignals={painSignals} />
 
-            {/* Contact Info */}
-            <Card className="bg-zinc-900 border-zinc-800">
-              <CardHeader>
-                <CardTitle className="text-white text-base">Contact Information</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {prospect.contact_name && (
-                  <div>
-                    <p className="text-sm text-zinc-500">Contact</p>
-                    <p className="text-white">{prospect.contact_name}</p>
-                    {prospect.contact_title && (
-                      <p className="text-sm text-zinc-400">{prospect.contact_title}</p>
-                    )}
-                  </div>
-                )}
+            <ContactInfoCard prospect={prospect} />
 
-                {prospect.email && (
-                  <div className="flex items-center gap-2">
-                    <Mail className="h-4 w-4 text-zinc-500" />
-                    <a href={`mailto:${prospect.email}`} className="text-amber-400 hover:underline text-sm">
-                      {prospect.email}
-                    </a>
-                  </div>
-                )}
+            <ScoreBreakdownCard
+              scoreBreakdown={prospect.score_breakdown || {}}
+              totalScore={prospect.score || 0}
+            />
 
-                {prospect.phone && (
-                  <div className="flex items-center gap-2">
-                    <Phone className="h-4 w-4 text-zinc-500" />
-                    <span className="text-zinc-300 text-sm">{prospect.phone}</span>
-                  </div>
-                )}
-
-                {prospect.website && (
-                  <div className="flex items-center gap-2">
-                    <Globe className="h-4 w-4 text-zinc-500" />
-                    <a
-                      href={prospect.website}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-amber-400 hover:underline text-sm flex items-center gap-1"
-                    >
-                      Website <ExternalLink className="h-3 w-3" />
-                    </a>
-                  </div>
-                )}
-
-                {prospect.full_address && (
-                  <div className="flex items-start gap-2">
-                    <MapPin className="h-4 w-4 text-zinc-500 mt-0.5" />
-                    <span className="text-zinc-300 text-sm">{prospect.full_address}</span>
-                  </div>
-                )}
-
-                {!prospect.email && !prospect.phone && !prospect.website && !prospect.contact_name && (
-                  <p className="text-zinc-500 text-sm">No contact information available. Try enriching the data.</p>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Score Breakdown */}
-            {prospect.score_breakdown && Object.keys(prospect.score_breakdown).length > 0 && (
-              <Card className="bg-zinc-900 border-zinc-800">
-                <CardHeader>
-                  <CardTitle className="text-white text-base">Score Breakdown</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-2">
-                    {Object.entries(prospect.score_breakdown).map(([key, value]) => (
-                      <div key={key} className="flex items-center justify-between text-sm">
-                        <span className="text-zinc-400">
-                          {key.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
-                        </span>
-                        <span className="text-emerald-400">+{value as number}</span>
-                      </div>
-                    ))}
-                    <Separator className="bg-zinc-800 my-2" />
-                    <div className="flex items-center justify-between font-medium">
-                      <span className="text-white">Total Score</span>
-                      <span className="text-white">{prospect.score || 0}</span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Source Info */}
-            <Card className="bg-zinc-900 border-zinc-800">
-              <CardHeader>
-                <CardTitle className="text-white text-base">Source</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                <div className="flex items-center justify-between">
-                  <span className="text-zinc-400">Found via</span>
-                  <span className="text-white capitalize">{prospect.source || 'unknown'}</span>
-                </div>
-                {prospect.source_job_title && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-zinc-400">Job posting</span>
-                    <span className="text-white">{prospect.source_job_title}</span>
-                  </div>
-                )}
-                {prospect.source_url && (
-                  <a
-                    href={prospect.source_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-amber-400 hover:underline flex items-center gap-1"
-                  >
-                    View source <ExternalLink className="h-3 w-3" />
-                  </a>
-                )}
-                <div className="flex items-center justify-between">
-                  <span className="text-zinc-400">Added</span>
-                  <span className="text-white">
-                    {prospect.created_at ? new Date(prospect.created_at).toLocaleDateString() : '-'}
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
+            <SourceInfoCard prospect={prospect} />
           </div>
         </div>
       </div>
