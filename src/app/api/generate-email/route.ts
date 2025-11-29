@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
 import { checkRateLimit, incrementUsage } from '@/lib/rate-limiter';
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+const XAI_API_KEY = process.env.XAI_API_KEY;
 
 const SYSTEM_PROMPT = `You are an expert hospitality technology sales copywriter.
 You write personalized cold emails for Jengu, a hospitality tech company.
@@ -32,14 +29,21 @@ Respond in JSON format:
 
 export async function POST(request: NextRequest) {
   // Check rate limit for Anthropic API
-  const rateLimit = checkRateLimit('anthropic_emails');
+  const rateLimit = checkRateLimit('xai_emails');
   if (!rateLimit.allowed) {
     return NextResponse.json({
       error: 'Daily email generation limit reached',
       remaining: rateLimit.remaining,
       limit: rateLimit.limit,
-      message: 'Max 50 emails per day to manage costs. Try again tomorrow.',
+      message: 'Max 100 emails per day. Try again tomorrow.',
     }, { status: 429 });
+  }
+
+  if (!XAI_API_KEY) {
+    return NextResponse.json(
+      { error: 'XAI_API_KEY not configured' },
+      { status: 500 }
+    );
   }
 
   try {
@@ -54,18 +58,34 @@ export async function POST(request: NextRequest) {
     }
 
     // Increment usage before making API call
-    incrementUsage('anthropic_emails');
+    incrementUsage('xai_emails');
 
     const prompt = buildPrompt(prospect);
 
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 500,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: prompt }],
+    const response = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${XAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'grok-4-latest',
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: prompt },
+        ],
+        temperature: 0.7,
+        stream: false,
+      }),
     });
 
-    const responseText = message.content[0].type === 'text' ? message.content[0].text : '';
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Grok API error: ${error}`);
+    }
+
+    const data = await response.json();
+    const responseText = data.choices?.[0]?.message?.content || '';
 
     // Parse JSON response
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);

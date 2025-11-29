@@ -7,6 +7,7 @@ import {
   ScrapedProperty,
 } from '@/lib/scrapers';
 import { checkRateLimit, incrementUsage } from '@/lib/rate-limiter';
+import { autoEnrichBatch } from '@/lib/enrichment';
 
 const DEFAULT_LOCATIONS = [
   'London, UK',
@@ -112,8 +113,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Save new properties
+    // Save new properties and collect IDs for auto-enrichment
     let savedCount = 0;
+    const savedIds: string[] = [];
     const batchSize = 50;
 
     for (let i = 0; i < newProperties.length; i += batchSize) {
@@ -139,10 +141,11 @@ export async function POST(request: NextRequest) {
 
       if (!error && data) {
         savedCount += data.length;
+        savedIds.push(...data.map(d => d.id));
       }
     }
 
-    // Update scrape run
+    // Update scrape run status to enriching
     if (runId) {
       await supabase
         .from('scrape_runs')
@@ -152,8 +155,32 @@ export async function POST(request: NextRequest) {
           duplicates_skipped: duplicatesSkipped + (uniqueProperties.length - allProperties.length),
           errors: totalErrors.length,
           error_log: totalErrors.length > 0 ? totalErrors : null,
+          status: 'enriching',
+        })
+        .eq('id', runId);
+    }
+
+    // Auto-enrich all new prospects (scrape websites, find emails, contacts, generate notes)
+    let enrichedCount = 0;
+    let enrichFailedCount = 0;
+
+    if (savedIds.length > 0) {
+      const enrichResult = await autoEnrichBatch(savedIds, 3);
+      enrichedCount = enrichResult.enriched;
+      enrichFailedCount = enrichResult.failed;
+    }
+
+    // Update scrape run as completed
+    if (runId) {
+      await supabase
+        .from('scrape_runs')
+        .update({
           status: 'completed',
           completed_at: new Date().toISOString(),
+          error_log: [
+            ...(totalErrors.length > 0 ? totalErrors : []),
+            `Auto-enriched ${enrichedCount} prospects, ${enrichFailedCount} failed`,
+          ],
         })
         .eq('id', runId);
     }
@@ -164,6 +191,8 @@ export async function POST(request: NextRequest) {
       total_found: allProperties.length,
       after_dedup: uniqueProperties.length,
       new_saved: savedCount,
+      auto_enriched: enrichedCount,
+      enrich_failed: enrichFailedCount,
       duplicates_skipped: duplicatesSkipped,
       errors: totalErrors.length,
       run_id: runId,

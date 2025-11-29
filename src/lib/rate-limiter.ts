@@ -1,6 +1,6 @@
 // Rate limiting and free tier management
 // Google Places API (New) free tier: $200/month credit (~around 5,000 Text Search requests)
-// Anthropic: Pay as you go, but we'll add daily limits
+// X.AI Grok: Pay as you go with generous limits
 
 interface UsageRecord {
   count: number;
@@ -9,11 +9,10 @@ interface UsageRecord {
 
 const usage: Record<string, UsageRecord> = {};
 
-// Free tier limits - using Google Essentials tier (10k free/month)
-// Set to 0 to disable a service entirely
+// Daily limits
 export const FREE_TIER_LIMITS = {
   google_places: 300, // ~300/day = ~9000/month (under 10k free limit)
-  anthropic_emails: 50, // ~50 emails per day (~$0.10/day with Sonnet)
+  xai_emails: 100, // ~100 emails per day with Grok
   scrape_runs: 10, // Max 10 scrape runs per day (free - just web scraping)
 };
 
