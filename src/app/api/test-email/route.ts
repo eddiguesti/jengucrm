@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
-
-// For now, we simulate email sending. In production, you'd integrate with:
-// - SendGrid, Mailgun, AWS SES, or similar
-// This allows testing the full flow without actually sending emails
+import { sendEmail, isSmtpConfigured, verifySmtpConnection } from '@/lib/email';
 
 interface TestEmailRequest {
   prospect_id: string;
@@ -11,6 +8,7 @@ interface TestEmailRequest {
   subject: string;
   body: string;
   test_type: 'delivery' | 'response' | 'bounce' | 'open_tracking';
+  simulate?: boolean; // If true, don't actually send
 }
 
 export async function POST(request: NextRequest) {
@@ -18,7 +16,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const data: TestEmailRequest = await request.json();
-    const { prospect_id, to_email, subject, body, test_type } = data;
+    const { prospect_id, to_email, subject, body, test_type, simulate } = data;
 
     if (!prospect_id || !to_email || !subject || !body) {
       return NextResponse.json(
@@ -36,15 +34,40 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const sendStartTime = Date.now();
+    let deliveryTime: number;
+    let messageId: string | undefined;
+    let sendSuccess = true;
+    let sendError: string | undefined;
 
-    // Simulate email sending (replace with real email service in production)
-    // For testing, we'll track timing and simulate different outcomes
-    const simulatedDelay = Math.random() * 500 + 100; // 100-600ms
-    await new Promise(resolve => setTimeout(resolve, simulatedDelay));
+    // Check if we should send real email or simulate
+    const shouldSimulate = simulate || !isSmtpConfigured();
 
-    const sendEndTime = Date.now();
-    const deliveryTime = sendEndTime - sendStartTime;
+    if (shouldSimulate) {
+      // Simulate email sending
+      const simulatedDelay = Math.random() * 500 + 100;
+      await new Promise(resolve => setTimeout(resolve, simulatedDelay));
+      deliveryTime = Math.round(simulatedDelay);
+      messageId = `simulated-${Date.now()}`;
+    } else {
+      // Send real email via SMTP
+      const result = await sendEmail({
+        to: to_email,
+        subject,
+        body,
+      });
+
+      deliveryTime = result.deliveryTime;
+      messageId = result.messageId;
+      sendSuccess = result.success;
+      sendError = result.error;
+
+      if (!sendSuccess) {
+        return NextResponse.json(
+          { error: `Email send failed: ${sendError}` },
+          { status: 500 }
+        );
+      }
+    }
 
     // Create email record in database
     const { data: email, error: emailError } = await supabase
@@ -66,32 +89,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create test result record
-    const { data: testResult, error: testError } = await supabase
-      .from('email_tests')
-      .insert({
-        email_id: email.id,
-        prospect_id,
-        to_email,
-        test_type,
-        status: 'sent',
-        delivery_time_ms: deliveryTime,
-        sent_at: new Date().toISOString(),
-      })
-      .select()
-      .single();
-
-    if (testError) {
-      // Table might not exist yet, that's ok - just log it
-      console.log('Note: email_tests table may need to be created');
-    }
-
     // Log activity
     await supabase.from('activities').insert({
       prospect_id,
       type: 'email',
-      title: `Test email sent to ${to_email}`,
-      description: `Subject: ${subject}\nDelivery time: ${deliveryTime}ms\nTest type: ${test_type}`,
+      title: shouldSimulate ? `Test email simulated to ${to_email}` : `Email sent to ${to_email}`,
+      description: `Subject: ${subject}\nDelivery time: ${deliveryTime}ms\nTest type: ${test_type}\nMessage ID: ${messageId || 'N/A'}`,
     });
 
     // Update prospect stage
@@ -106,10 +109,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       email_id: email.id,
-      test_id: testResult?.id,
+      message_id: messageId,
       delivery_time_ms: deliveryTime,
       sent_at: email.sent_at,
-      message: `Test email sent to ${to_email}`,
+      simulated: shouldSimulate,
+      message: shouldSimulate
+        ? `Test email simulated to ${to_email} (SMTP not configured)`
+        : `Email sent to ${to_email}`,
     });
   } catch (error) {
     console.error('Test email error:', error);
@@ -120,42 +126,37 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Get test email history
+// Get test email history and SMTP status
 export async function GET(request: NextRequest) {
   const supabase = createServerClient();
   const { searchParams } = new URL(request.url);
   const limit = parseInt(searchParams.get('limit') || '20');
+  const checkSmtp = searchParams.get('check_smtp') === 'true';
 
-  // Get recent test emails (look for test prospects)
+  // Optionally verify SMTP connection
+  let smtpStatus: { configured: boolean; connected?: boolean; error?: string } = {
+    configured: isSmtpConfigured(),
+  };
+
+  if (checkSmtp && smtpStatus.configured) {
+    const verification = await verifySmtpConnection();
+    smtpStatus.connected = verification.success;
+    smtpStatus.error = verification.error;
+  }
+
+  // Get recent emails
   const { data: emails, error } = await supabase
     .from('emails')
-    .select(`
-      *,
-      prospects!inner(
-        id,
-        name,
-        email,
-        tags
-      )
-    `)
-    .contains('prospects.tags', ['test'])
+    .select('*, prospects(id, name, email, tags)')
     .order('created_at', { ascending: false })
     .limit(limit);
 
   if (error) {
-    // If filter fails, just get recent emails
-    const { data: allEmails, error: allError } = await supabase
-      .from('emails')
-      .select('*, prospects(id, name, email, tags)')
-      .order('created_at', { ascending: false })
-      .limit(limit);
-
-    if (allError) {
-      return NextResponse.json({ error: allError.message }, { status: 500 });
-    }
-
-    return NextResponse.json({ emails: allEmails || [] });
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ emails: emails || [] });
+  return NextResponse.json({
+    emails: emails || [],
+    smtp: smtpStatus,
+  });
 }

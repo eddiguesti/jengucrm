@@ -52,13 +52,21 @@ interface TestMetrics {
   slowest_delivery: number;
 }
 
+interface SmtpStatus {
+  configured: boolean;
+  connected?: boolean;
+  error?: string;
+}
+
 export default function TestLabPage() {
   const [testProspects, setTestProspects] = useState<TestProspect[]>([]);
   const [testResults, setTestResults] = useState<TestResult[]>([]);
   const [metrics, setMetrics] = useState<TestMetrics | null>(null);
+  const [smtpStatus, setSmtpStatus] = useState<SmtpStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [checkingSmtp, setCheckingSmtp] = useState(false);
 
   // New prospect form
   const [newName, setNewName] = useState('Test Hotel');
@@ -69,7 +77,23 @@ export default function TestLabPage() {
   useEffect(() => {
     fetchTestProspects();
     fetchTestResults();
+    checkSmtpStatus();
   }, []);
+
+  const checkSmtpStatus = async () => {
+    setCheckingSmtp(true);
+    try {
+      const res = await fetch('/api/test-email?check_smtp=true');
+      if (res.ok) {
+        const data = await res.json();
+        setSmtpStatus(data.smtp);
+      }
+    } catch (error) {
+      console.error('Error checking SMTP:', error);
+    } finally {
+      setCheckingSmtp(false);
+    }
+  };
 
   const fetchTestProspects = async () => {
     try {
@@ -200,7 +224,10 @@ export default function TestLabPage() {
 
       if (sendRes.ok) {
         const result = await sendRes.json();
-        alert(`Email sent! Delivery time: ${result.delivery_time_ms}ms`);
+        const statusMsg = result.simulated
+          ? `Email simulated (${result.delivery_time_ms}ms) - Configure SMTP to send real emails`
+          : `Email sent to ${prospect.email}! Delivery time: ${result.delivery_time_ms}ms`;
+        alert(statusMsg);
         fetchTestProspects();
         fetchTestResults();
       } else {
@@ -246,6 +273,54 @@ export default function TestLabPage() {
       />
 
       <div className="flex-1 p-6 space-y-6 overflow-auto">
+        {/* SMTP Status Banner */}
+        <div className={`p-4 rounded-lg flex items-center justify-between ${
+          smtpStatus?.configured && smtpStatus?.connected
+            ? 'bg-emerald-500/10 border border-emerald-500/30'
+            : smtpStatus?.configured
+            ? 'bg-amber-500/10 border border-amber-500/30'
+            : 'bg-zinc-800 border border-zinc-700'
+        }`}>
+          <div className="flex items-center gap-3">
+            {checkingSmtp ? (
+              <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
+            ) : smtpStatus?.configured && smtpStatus?.connected ? (
+              <CheckCircle className="h-5 w-5 text-emerald-500" />
+            ) : smtpStatus?.configured ? (
+              <AlertCircle className="h-5 w-5 text-amber-500" />
+            ) : (
+              <Mail className="h-5 w-5 text-zinc-400" />
+            )}
+            <div>
+              <p className="text-sm font-medium text-white">
+                {smtpStatus?.configured && smtpStatus?.connected
+                  ? 'SMTP Connected - Real emails will be sent'
+                  : smtpStatus?.configured
+                  ? 'SMTP Configured - Testing connection...'
+                  : 'SMTP Not Configured - Emails will be simulated'}
+              </p>
+              <p className="text-xs text-zinc-400">
+                {smtpStatus?.configured
+                  ? 'Emails will be sent from andy.chukwuat@gmail.com'
+                  : 'Add SMTP settings in .env.local to send real emails'}
+              </p>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-zinc-600"
+            onClick={checkSmtpStatus}
+            disabled={checkingSmtp}
+          >
+            {checkingSmtp ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+          </Button>
+        </div>
+
         {/* Quick Actions */}
         <div className="flex gap-4">
           <Button
@@ -259,7 +334,7 @@ export default function TestLabPage() {
           <Button
             variant="outline"
             className="border-zinc-700"
-            onClick={() => { fetchTestProspects(); fetchTestResults(); }}
+            onClick={() => { fetchTestProspects(); fetchTestResults(); checkSmtpStatus(); }}
           >
             <RefreshCw className="h-4 w-4 mr-2" />
             Refresh
@@ -398,19 +473,19 @@ export default function TestLabPage() {
                   status: 'available',
                 },
                 {
+                  title: 'Real Email Delivery',
+                  desc: 'Send actual emails via Gmail SMTP',
+                  status: smtpStatus?.configured ? 'available' : 'configure',
+                },
+                {
                   title: 'Delivery Speed',
-                  desc: 'Measure time from generation to simulated delivery',
+                  desc: 'Measure time from generation to delivery',
                   status: 'available',
                 },
                 {
                   title: 'Content Quality',
                   desc: 'Review generated emails for personalization',
                   status: 'available',
-                },
-                {
-                  title: 'Real Email Delivery',
-                  desc: 'Send actual emails via SMTP integration',
-                  status: 'coming',
                 },
                 {
                   title: 'Open Tracking',
@@ -435,10 +510,12 @@ export default function TestLabPage() {
                     className={
                       scenario.status === 'available'
                         ? 'bg-emerald-500/20 text-emerald-400'
+                        : scenario.status === 'configure'
+                        ? 'bg-amber-500/20 text-amber-400'
                         : 'bg-zinc-700 text-zinc-400'
                     }
                   >
-                    {scenario.status === 'available' ? 'Ready' : 'Coming'}
+                    {scenario.status === 'available' ? 'Ready' : scenario.status === 'configure' ? 'Configure' : 'Coming'}
                   </Badge>
                 </div>
               ))}
@@ -585,17 +662,18 @@ export default function TestLabPage() {
           </CardHeader>
           <CardContent className="space-y-4 text-sm text-zinc-400">
             <ol className="list-decimal list-inside space-y-2">
-              <li>Create a test Gmail account or use a +alias (yourname+test@gmail.com)</li>
-              <li>Add a test prospect above with your test email</li>
-              <li>Click &quot;Send Test&quot; to generate and send an AI email</li>
-              <li>Check your test inbox for the email</li>
-              <li>Measure response time, review content quality</li>
-              <li>Try replying to test the full conversation flow</li>
+              <li>Add a test prospect above with your test email address</li>
+              <li>Click &quot;Send Test&quot; to generate an AI email with Grok 4</li>
+              <li>The email will be sent to your inbox via Gmail SMTP</li>
+              <li>Check your inbox - delivery is typically under 5 seconds</li>
+              <li>Review the email content quality and personalization</li>
+              <li>Reply to test the full conversation flow</li>
             </ol>
             <Separator className="bg-zinc-800" />
             <p className="text-zinc-500">
-              <strong className="text-zinc-300">Note:</strong> Currently emails are simulated.
-              To send real emails, configure SMTP settings in Settings.
+              <strong className="text-zinc-300">Sender:</strong> Emails are sent from andy.chukwuat@gmail.com
+              <br />
+              <strong className="text-zinc-300">Tip:</strong> Use a +alias like yourname+test@gmail.com to easily filter test emails
             </p>
           </CardContent>
         </Card>
