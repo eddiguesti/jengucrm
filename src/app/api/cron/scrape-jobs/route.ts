@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 import { runScrapers, recommendedScrapers, filterNewProperties, normalizePropertyName, normalizeCity, filterRelevantProperties, getJobPriorityScore, getTierFromScore } from '@/lib/scrapers';
 import { extractJobPainPoints } from '@/lib/extract-job-pain-points';
+import { cleanupProspects } from '@/lib/enrichment/ai-cleanup';
 
 // All locations to scrape - rotated daily to spread the load
 const ALL_LOCATIONS = [
@@ -210,6 +211,21 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Run AI cleanup on all new prospects to catch anything the rule-based filter missed
+    let aiCleanupResult = { analyzed: 0, archived: 0, kept: 0 };
+    if (process.env.XAI_API_KEY && inserted > 0) {
+      try {
+        aiCleanupResult = await cleanupProspects({
+          dryRun: false,
+          limit: inserted + 20, // Process all newly inserted + some buffer
+          stage: 'new',
+        });
+      } catch (cleanupError) {
+        console.error('AI cleanup failed:', cleanupError);
+        totalErrors.push(`AI cleanup error: ${String(cleanupError)}`);
+      }
+    }
+
     // Update the run log
     await supabase
       .from('scrape_runs')
@@ -221,7 +237,8 @@ export async function GET(request: NextRequest) {
         error_log: [
           ...totalErrors,
           `Filtered ${irrelevantCount} irrelevant roles: ${filteredRoles.slice(0, 10).join(', ')}`,
-          `Filtered ${filteredChains.length} large chains: ${filteredChains.slice(0, 10).join(', ')}`
+          `Filtered ${filteredChains.length} large chains: ${filteredChains.slice(0, 10).join(', ')}`,
+          `AI cleanup: analyzed ${aiCleanupResult.analyzed}, archived ${aiCleanupResult.archived}, kept ${aiCleanupResult.kept}`,
         ],
         status: 'completed',
         completed_at: new Date().toISOString(),
@@ -247,6 +264,11 @@ export async function GET(request: NextRequest) {
         chains_filtered: filteredChains.length,
         sample_filtered_chains: filteredChains.slice(0, 5),
         tier_breakdown: tierCounts,
+        ai_cleanup: {
+          analyzed: aiCleanupResult.analyzed,
+          archived: aiCleanupResult.archived,
+          kept: aiCleanupResult.kept,
+        },
         api_keys_configured: {
           scraperapi: !!process.env.SCRAPERAPI_KEY,
           adzuna: !!(process.env.ADZUNA_APP_ID && process.env.ADZUNA_API_KEY),
