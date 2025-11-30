@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
-import { sendEmail, isSmtpConfigured } from '@/lib/email';
+import { sendEmail, isSmtpConfigured, getInboxStats, getTotalRemainingCapacity, getSmtpInboxes, syncInboxCountsFromDb } from '@/lib/email';
 import Anthropic from '@anthropic-ai/sdk';
 
 const AZURE_MAIL_FROM = process.env.AZURE_MAIL_FROM || 'edd@jengu.ai';
@@ -180,44 +180,83 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Sync inbox counts from database (handles server restarts/deploys)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const { data: todaysEmails } = await supabase
+      .from('emails')
+      .select('from_email')
+      .eq('direction', 'outbound')
+      .eq('email_type', 'outreach')
+      .gte('sent_at', today.toISOString());
+
+    const sentTodayByInbox: Record<string, number> = {};
+    for (const e of todaysEmails || []) {
+      if (e.from_email) {
+        sentTodayByInbox[e.from_email] = (sentTodayByInbox[e.from_email] || 0) + 1;
+      }
+    }
+    syncInboxCountsFromDb(sentTodayByInbox);
+
     // Find prospects to email:
-    // - Stage is 'new'
+    // - Stage is 'new' or 'researching'
     // - Has email address
     // - Score >= minScore
     // - Not archived
     // - Never been emailed before
-    // Try with job_pain_points, fall back without if column doesn't exist
+    // PRIORITY ORDER: hot leads first, then warm, then cold (by score within each tier)
     let prospects;
     const baseSelect = `id, name, email, city, country, property_type,
         google_rating, google_review_count, source_job_title,
-        score, tier, pain_signals(keyword_matched, review_snippet)`;
+        score, tier, lead_quality, pain_signals(keyword_matched, review_snippet)`;
 
-    // Try with job_pain_points first
-    const { data: prospectsWithPainPoints, error: painPointsError } = await supabase
+    // First: Get HOT leads (job boards, review pain points)
+    const { data: hotLeads } = await supabase
       .from('prospects')
       .select(`${baseSelect}, job_pain_points`)
-      .eq('stage', 'new')
+      .in('stage', ['new', 'researching'])
       .eq('archived', false)
+      .eq('lead_quality', 'hot')
       .not('email', 'is', null)
       .gte('score', minScore)
       .order('score', { ascending: false })
-      .limit(maxEmails * 2);
+      .limit(maxEmails);
 
-    if (painPointsError?.message?.includes('job_pain_points')) {
-      // Column doesn't exist, try without it
-      const { data: prospectsBasic } = await supabase
+    // Second: Get WARM leads if not enough hot
+    let warmLeads: typeof hotLeads = [];
+    if ((hotLeads?.length || 0) < maxEmails) {
+      const { data } = await supabase
         .from('prospects')
-        .select(baseSelect)
-        .eq('stage', 'new')
+        .select(`${baseSelect}, job_pain_points`)
+        .in('stage', ['new', 'researching'])
         .eq('archived', false)
+        .eq('lead_quality', 'warm')
         .not('email', 'is', null)
         .gte('score', minScore)
         .order('score', { ascending: false })
-        .limit(maxEmails * 2);
-      prospects = (prospectsBasic || []).map(p => ({ ...p, job_pain_points: null }));
-    } else {
-      prospects = prospectsWithPainPoints;
+        .limit(maxEmails - (hotLeads?.length || 0));
+      warmLeads = data || [];
     }
+
+    // Third: Get COLD leads only if hot + warm not enough
+    let coldLeads: typeof hotLeads = [];
+    const hotWarmCount = (hotLeads?.length || 0) + (warmLeads?.length || 0);
+    if (hotWarmCount < maxEmails) {
+      const { data } = await supabase
+        .from('prospects')
+        .select(`${baseSelect}, job_pain_points`)
+        .in('stage', ['new', 'researching'])
+        .eq('archived', false)
+        .eq('lead_quality', 'cold')
+        .not('email', 'is', null)
+        .gte('score', Math.max(minScore - 20, 30)) // Lower threshold for cold
+        .order('score', { ascending: false })
+        .limit(maxEmails - hotWarmCount);
+      coldLeads = data || [];
+    }
+
+    // Combine all leads (hot first, then warm, then cold)
+    prospects = [...(hotLeads || []), ...(warmLeads || []), ...(coldLeads || [])];
 
     if (!prospects || prospects.length === 0) {
       return NextResponse.json({
@@ -274,13 +313,13 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      // Save to database
+      // Save to database - use the actual inbox that sent the email
       const { data: savedEmail } = await supabase.from('emails').insert({
         prospect_id: prospect.id,
         subject: email.subject,
         body: email.body,
         to_email: prospect.email,
-        from_email: AZURE_MAIL_FROM,
+        from_email: sendResult.sentFrom || AZURE_MAIL_FROM,
         message_id: sendResult.messageId,
         email_type: 'outreach',
         direction: 'outbound',
@@ -327,18 +366,37 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// GET: Check auto-email status
+// GET: Check auto-email status with lead quality breakdown
 export async function GET() {
   const supabase = createServerClient();
 
-  // Count eligible prospects
-  const { count: eligibleCount } = await supabase
+  // Count eligible prospects by lead quality
+  const { count: hotCount } = await supabase
     .from('prospects')
     .select('*', { count: 'exact', head: true })
-    .eq('stage', 'new')
+    .in('stage', ['new', 'researching'])
     .eq('archived', false)
+    .eq('lead_quality', 'hot')
     .not('email', 'is', null)
     .gte('score', 50);
+
+  const { count: warmCount } = await supabase
+    .from('prospects')
+    .select('*', { count: 'exact', head: true })
+    .in('stage', ['new', 'researching'])
+    .eq('archived', false)
+    .eq('lead_quality', 'warm')
+    .not('email', 'is', null)
+    .gte('score', 50);
+
+  const { count: coldCount } = await supabase
+    .from('prospects')
+    .select('*', { count: 'exact', head: true })
+    .in('stage', ['new', 'researching'])
+    .eq('archived', false)
+    .eq('lead_quality', 'cold')
+    .not('email', 'is', null)
+    .gte('score', 30);
 
   // Count emails sent today
   const today = new Date();
@@ -351,10 +409,34 @@ export async function GET() {
     .eq('email_type', 'outreach')
     .gte('sent_at', today.toISOString());
 
+  const totalEligible = (hotCount || 0) + (warmCount || 0) + (coldCount || 0);
+
+  // Get inbox stats for warmup monitoring
+  const inboxStats = getInboxStats();
+  const remainingCapacity = getTotalRemainingCapacity();
+  const smtpInboxCount = getSmtpInboxes().length;
+
   return NextResponse.json({
     configured: isSmtpConfigured(),
-    eligible_prospects: eligibleCount || 0,
+    eligible_prospects: {
+      hot: hotCount || 0,
+      warm: warmCount || 0,
+      cold: coldCount || 0,
+      total: totalEligible,
+    },
     sent_today: sentToday || 0,
     sender: AZURE_MAIL_FROM,
+    // Inbox rotation stats (for warmup monitoring)
+    inboxes: {
+      count: smtpInboxCount,
+      remaining_capacity: remainingCapacity,
+      daily_limit: parseInt(process.env.SMTP_DAILY_LIMIT || '20'),
+      details: inboxStats,
+    },
+    recommendation: remainingCapacity === 0
+      ? 'All inboxes at daily limit! Wait for tomorrow or add more inboxes.'
+      : (hotCount || 0) < 20
+        ? 'Hot leads running low! Run job board scrapers or scrape cold leads from Google Maps.'
+        : 'Hot lead pool healthy - prioritizing high-intent prospects.',
   });
 }

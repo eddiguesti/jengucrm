@@ -2,6 +2,8 @@ import { ClientSecretCredential } from '@azure/identity';
 import { Client } from '@microsoft/microsoft-graph-client';
 import { TokenCredentialAuthenticationProvider } from '@microsoft/microsoft-graph-client/authProviders/azureTokenCredentials';
 import * as nodemailer from 'nodemailer';
+import Imap from 'imap';
+import { simpleParser, ParsedMail } from 'mailparser';
 
 // Azure AD / Microsoft Graph configuration
 const AZURE_TENANT_ID = process.env.AZURE_TENANT_ID;
@@ -10,9 +12,151 @@ const AZURE_CLIENT_SECRET = process.env.AZURE_CLIENT_SECRET;
 const AZURE_MAIL_FROM = process.env.AZURE_MAIL_FROM || 'edd@jengu.ai';
 const AZURE_MAIL_FROM_NAME = process.env.AZURE_MAIL_FROM_NAME || 'Edward Guest';
 
+// Multi-inbox SMTP configuration for warmup/rotation
+// Format: SMTP_INBOXES=email1:pass1:host1:port1,email2:pass2:host2:port2
+// Or use individual env vars: SMTP_INBOX_1, SMTP_INBOX_2, etc.
+export interface SmtpInbox {
+  email: string;
+  password: string;
+  host: string;
+  port: number;
+  secure: boolean;
+  dailyLimit: number; // Warmup limit (start at 20, increase over time)
+  name: string; // Display name for From field
+}
+
+// Parse SMTP inboxes from environment
+export function getSmtpInboxes(): SmtpInbox[] {
+  const inboxes: SmtpInbox[] = [];
+
+  // Check for SMTP_INBOXES (comma-separated)
+  const inboxesEnv = process.env.SMTP_INBOXES;
+  if (inboxesEnv) {
+    const configs = inboxesEnv.split(',');
+    for (const config of configs) {
+      const [email, password, host, port, name] = config.split(':');
+      if (email && password && host) {
+        inboxes.push({
+          email: email.trim(),
+          password: password.trim(),
+          host: host.trim(),
+          port: parseInt(port) || 465,
+          secure: true,
+          dailyLimit: parseInt(process.env.SMTP_DAILY_LIMIT || '20'),
+          name: name?.trim() || 'Edward Guest',
+        });
+      }
+    }
+  }
+
+  // Also check individual SMTP_INBOX_N env vars (1-10)
+  for (let i = 1; i <= 10; i++) {
+    const config = process.env[`SMTP_INBOX_${i}`];
+    if (config) {
+      const [email, password, host, port, name] = config.split(':');
+      if (email && password && host) {
+        inboxes.push({
+          email: email.trim(),
+          password: password.trim(),
+          host: host.trim(),
+          port: parseInt(port) || 465,
+          secure: true,
+          dailyLimit: parseInt(process.env.SMTP_DAILY_LIMIT || '20'),
+          name: name?.trim() || 'Edward Guest',
+        });
+      }
+    }
+  }
+
+  return inboxes;
+}
+
+// In-memory tracking of daily sends per inbox
+// This is synced from database when getAvailableInboxWithDbCheck is called
+const dailySends: Map<string, { count: number; date: string }> = new Map();
+
+function getTodayKey(): string {
+  return new Date().toISOString().split('T')[0];
+}
+
+export function getInboxSendCount(email: string): number {
+  const today = getTodayKey();
+  const data = dailySends.get(email);
+  if (!data || data.date !== today) {
+    return 0;
+  }
+  return data.count;
+}
+
+export function incrementInboxSendCount(email: string): void {
+  const today = getTodayKey();
+  const data = dailySends.get(email);
+  if (!data || data.date !== today) {
+    dailySends.set(email, { count: 1, date: today });
+  } else {
+    data.count++;
+  }
+}
+
+// Sync in-memory counts from database (call this to initialize after deploy)
+export function syncInboxCountsFromDb(sentTodayByInbox: Record<string, number>): void {
+  const today = getTodayKey();
+  for (const [email, count] of Object.entries(sentTodayByInbox)) {
+    dailySends.set(email, { count, date: today });
+  }
+}
+
+// Get next available inbox that hasn't hit daily limit
+export function getAvailableInbox(): SmtpInbox | null {
+  const inboxes = getSmtpInboxes();
+  if (inboxes.length === 0) return null;
+
+  // Find inbox with lowest send count that hasn't hit limit
+  let bestInbox: SmtpInbox | null = null;
+  let lowestCount = Infinity;
+
+  for (const inbox of inboxes) {
+    const count = getInboxSendCount(inbox.email);
+    if (count < inbox.dailyLimit && count < lowestCount) {
+      bestInbox = inbox;
+      lowestCount = count;
+    }
+  }
+
+  return bestInbox;
+}
+
+// Get total remaining sends across all inboxes
+export function getTotalRemainingCapacity(): number {
+  const inboxes = getSmtpInboxes();
+  let remaining = 0;
+  for (const inbox of inboxes) {
+    const count = getInboxSendCount(inbox.email);
+    remaining += Math.max(0, inbox.dailyLimit - count);
+  }
+  return remaining;
+}
+
+// Get inbox stats for monitoring
+export function getInboxStats(): { email: string; sent: number; limit: number; remaining: number }[] {
+  const inboxes = getSmtpInboxes();
+  return inboxes.map(inbox => {
+    const sent = getInboxSendCount(inbox.email);
+    return {
+      email: inbox.email,
+      sent,
+      limit: inbox.dailyLimit,
+      remaining: inbox.dailyLimit - sent,
+    };
+  });
+}
+
 // Check if Azure is configured
 export function isSmtpConfigured(): boolean {
-  return !!(AZURE_TENANT_ID && AZURE_CLIENT_ID && AZURE_CLIENT_SECRET && AZURE_MAIL_FROM);
+  // Either Azure or SMTP inboxes work
+  const hasAzure = !!(AZURE_TENANT_ID && AZURE_CLIENT_ID && AZURE_CLIENT_SECRET && AZURE_MAIL_FROM);
+  const hasSmtpInboxes = getSmtpInboxes().length > 0;
+  return hasAzure || hasSmtpInboxes;
 }
 
 // Create Microsoft Graph client
@@ -40,6 +184,8 @@ export interface SendEmailOptions {
   body: string;
   replyTo?: string;
   inReplyTo?: string; // Message ID for threading
+  forceAzure?: boolean; // Force use of Azure (for replies)
+  forceInbox?: string; // Force use of a specific inbox email (for thread continuity)
 }
 
 export interface SendEmailResult {
@@ -47,12 +193,67 @@ export interface SendEmailResult {
   messageId?: string;
   error?: string;
   deliveryTime: number;
+  sentFrom?: string; // Which inbox was used
 }
 
 /**
- * Send an email via Microsoft Graph API
+ * Send email via SMTP (for warmup inboxes)
+ * Note: No reply-to header - replies go directly to the sending inbox
+ * to maintain email thread continuity for the customer
  */
-export async function sendEmail(options: SendEmailOptions): Promise<SendEmailResult> {
+async function sendViaSmtp(
+  inbox: SmtpInbox,
+  options: SendEmailOptions
+): Promise<SendEmailResult> {
+  const startTime = Date.now();
+
+  try {
+    const transporter = nodemailer.createTransport({
+      host: inbox.host,
+      port: inbox.port,
+      secure: inbox.secure,
+      auth: {
+        user: inbox.email,
+        pass: inbox.password,
+      },
+    });
+
+    // No reply-to header - replies go back to the sending inbox
+    // This maintains thread continuity for the customer
+    const result = await transporter.sendMail({
+      from: `${inbox.name} <${inbox.email}>`,
+      to: options.to,
+      subject: options.subject,
+      html: formatEmailHtml(options.body),
+    });
+
+    const deliveryTime = Date.now() - startTime;
+
+    // Track the send
+    incrementInboxSendCount(inbox.email);
+
+    return {
+      success: true,
+      messageId: result.messageId,
+      deliveryTime,
+      sentFrom: inbox.email,
+    };
+  } catch (error) {
+    const deliveryTime = Date.now() - startTime;
+    console.error(`SMTP error (${inbox.email}):`, error);
+    return {
+      success: false,
+      error: String(error),
+      deliveryTime,
+      sentFrom: inbox.email,
+    };
+  }
+}
+
+/**
+ * Send email via Microsoft Graph API
+ */
+async function sendViaGraph(options: SendEmailOptions): Promise<SendEmailResult> {
   const startTime = Date.now();
 
   try {
@@ -79,11 +280,6 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
       },
     };
 
-    // For reply threading, we rely on conversationId which Graph handles automatically
-    // Custom headers like In-Reply-To must start with 'x-' in Graph API
-    // The threading is handled by setting the conversationId when replying
-
-    // Send mail using Graph API
     await client
       .api(`/users/${AZURE_MAIL_FROM}/sendMail`)
       .post({ message, saveToSentItems: true });
@@ -94,6 +290,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
       success: true,
       messageId: `graph-${Date.now()}`,
       deliveryTime,
+      sentFrom: AZURE_MAIL_FROM,
     };
   } catch (error) {
     const deliveryTime = Date.now() - startTime;
@@ -104,6 +301,61 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
       deliveryTime,
     };
   }
+}
+
+/**
+ * Send an email - uses SMTP rotation if available, falls back to Azure
+ * Best practice: Rotates across inboxes, respects daily warmup limits
+ *
+ * For thread continuity:
+ * - Use forceInbox to send from a specific inbox (e.g., replying from same inbox that received)
+ * - Use forceAzure to force Azure (for internal notifications)
+ */
+export async function sendEmail(options: SendEmailOptions): Promise<SendEmailResult> {
+  const hasAzure = !!(AZURE_TENANT_ID && AZURE_CLIENT_ID && AZURE_CLIENT_SECRET);
+
+  // If a specific inbox is forced (for thread continuity), use it
+  if (options.forceInbox) {
+    // Check if it's Azure
+    if (options.forceInbox.toLowerCase() === AZURE_MAIL_FROM.toLowerCase()) {
+      if (hasAzure) {
+        return sendViaGraph(options);
+      }
+    }
+    // Find the specific SMTP inbox
+    const inboxes = getSmtpInboxes();
+    const specificInbox = inboxes.find(i => i.email.toLowerCase() === options.forceInbox!.toLowerCase());
+    if (specificInbox) {
+      return sendViaSmtp(specificInbox, options);
+    }
+    // Inbox not found, fall through to normal logic
+    console.warn(`Forced inbox ${options.forceInbox} not found, using default logic`);
+  }
+
+  // Force Azure if explicitly requested
+  if (options.forceAzure) {
+    if (hasAzure) {
+      return sendViaGraph(options);
+    }
+  }
+
+  // Try SMTP inboxes first (with rotation and warmup limits)
+  const availableInbox = getAvailableInbox();
+  if (availableInbox) {
+    return sendViaSmtp(availableInbox, options);
+  }
+
+  // Fall back to Azure if no SMTP capacity
+  if (hasAzure) {
+    return sendViaGraph(options);
+  }
+
+  // No sending capacity available
+  return {
+    success: false,
+    error: 'No email sending capacity available (all inboxes at daily limit)',
+    deliveryTime: 0,
+  };
 }
 
 // Edward Guest's professional email signature
@@ -365,4 +617,260 @@ function formatSimpleHtml(body: string): string {
 </body>
 </html>
   `.trim();
+}
+
+// ============================================================
+// IMAP - Check inboxes for replies
+// ============================================================
+
+export interface IncomingEmail {
+  messageId: string;
+  from: string;
+  to: string;
+  subject: string;
+  bodyPreview: string;
+  body?: string;
+  receivedAt: Date;
+  inReplyTo?: string;
+  conversationId?: string;
+  inboxEmail: string; // Which inbox received this
+}
+
+/**
+ * Check a single SMTP inbox for new emails via IMAP
+ * Spacemail uses the same host for IMAP as SMTP
+ */
+async function checkImapInbox(inbox: SmtpInbox, sinceDate: Date): Promise<IncomingEmail[]> {
+  return new Promise((resolve) => {
+    const emails: IncomingEmail[] = [];
+
+    // Spacemail IMAP config (same credentials, port 993 for IMAP SSL)
+    const imap = new Imap({
+      user: inbox.email,
+      password: inbox.password,
+      host: inbox.host, // mail.spacemail.com
+      port: 993,
+      tls: true,
+      tlsOptions: { rejectUnauthorized: false },
+    });
+
+    imap.once('ready', () => {
+      imap.openBox('INBOX', true, (err) => {
+        if (err) {
+          console.error(`IMAP error opening inbox ${inbox.email}:`, err);
+          imap.end();
+          resolve([]);
+          return;
+        }
+
+        // Search for emails since the given date
+        const searchDate = sinceDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+        imap.search(['ALL', ['SINCE', searchDate]], (searchErr, results) => {
+          if (searchErr || !results || results.length === 0) {
+            imap.end();
+            resolve([]);
+            return;
+          }
+
+          const fetch = imap.fetch(results, {
+            bodies: '',
+            struct: true,
+          });
+
+          fetch.on('message', (msg) => {
+            msg.on('body', (stream) => {
+              let buffer = '';
+              stream.on('data', (chunk) => {
+                buffer += chunk.toString('utf8');
+              });
+              stream.once('end', async () => {
+                try {
+                  const parsed: ParsedMail = await simpleParser(buffer);
+                  const fromAddress = parsed.from?.value?.[0]?.address || '';
+                  const toAddress = parsed.to && !Array.isArray(parsed.to)
+                    ? parsed.to.value?.[0]?.address || inbox.email
+                    : inbox.email;
+
+                  // Get body preview (first 500 chars of text)
+                  const textBody = parsed.text || '';
+                  const bodyPreview = textBody.substring(0, 500).replace(/\n+/g, ' ').trim();
+
+                  emails.push({
+                    messageId: parsed.messageId || `imap-${Date.now()}-${Math.random()}`,
+                    from: fromAddress,
+                    to: toAddress,
+                    subject: parsed.subject || '(No subject)',
+                    bodyPreview,
+                    body: textBody,
+                    receivedAt: parsed.date || new Date(),
+                    inReplyTo: parsed.inReplyTo,
+                    conversationId: parsed.references?.[0],
+                    inboxEmail: inbox.email,
+                  });
+                } catch (parseErr) {
+                  console.error(`Error parsing email in ${inbox.email}:`, parseErr);
+                }
+              });
+            });
+          });
+
+          fetch.once('error', (fetchErr) => {
+            console.error(`IMAP fetch error for ${inbox.email}:`, fetchErr);
+          });
+
+          fetch.once('end', () => {
+            imap.end();
+          });
+        });
+      });
+    });
+
+    imap.once('error', (imapErr: Error) => {
+      console.error(`IMAP connection error for ${inbox.email}:`, imapErr);
+      resolve([]);
+    });
+
+    imap.once('end', () => {
+      resolve(emails);
+    });
+
+    imap.connect();
+  });
+}
+
+/**
+ * Check all configured SMTP inboxes for replies via IMAP
+ */
+export async function checkAllInboxesForReplies(sinceDate: Date): Promise<IncomingEmail[]> {
+  const inboxes = getSmtpInboxes();
+  const allEmails: IncomingEmail[] = [];
+
+  // Check all inboxes in parallel
+  const results = await Promise.all(
+    inboxes.map(inbox => checkImapInbox(inbox, sinceDate))
+  );
+
+  for (const emails of results) {
+    allEmails.push(...emails);
+  }
+
+  // Sort by received date, newest first
+  allEmails.sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime());
+
+  return allEmails;
+}
+
+/**
+ * Get the assigned inbox for a prospect based on their last outbound email
+ * If no previous email, returns null (prospect can be assigned to any inbox)
+ */
+export function getProspectAssignedInbox(fromEmail: string | null): string | null {
+  return fromEmail || null;
+}
+
+// ============================================================
+// Gmail IMAP - Check mystery shopper inbox for hotel replies
+// ============================================================
+
+/**
+ * Check Gmail inbox for replies to mystery shopper emails
+ * Used to track hotel response times
+ */
+export async function checkGmailForReplies(sinceDate: Date): Promise<IncomingEmail[]> {
+  if (!GMAIL_SMTP_USER || !GMAIL_SMTP_PASS) {
+    return [];
+  }
+
+  return new Promise((resolve) => {
+    const emails: IncomingEmail[] = [];
+
+    const imap = new Imap({
+      user: GMAIL_SMTP_USER,
+      password: GMAIL_SMTP_PASS,
+      host: 'imap.gmail.com',
+      port: 993,
+      tls: true,
+      tlsOptions: { rejectUnauthorized: false },
+    });
+
+    imap.once('ready', () => {
+      imap.openBox('INBOX', true, (err) => {
+        if (err) {
+          console.error('Gmail IMAP error opening inbox:', err);
+          imap.end();
+          resolve([]);
+          return;
+        }
+
+        const searchDate = sinceDate.toISOString().split('T')[0];
+        imap.search(['ALL', ['SINCE', searchDate]], (searchErr, results) => {
+          if (searchErr || !results || results.length === 0) {
+            imap.end();
+            resolve([]);
+            return;
+          }
+
+          const fetch = imap.fetch(results, {
+            bodies: '',
+            struct: true,
+          });
+
+          fetch.on('message', (msg) => {
+            msg.on('body', (stream) => {
+              let buffer = '';
+              stream.on('data', (chunk) => {
+                buffer += chunk.toString('utf8');
+              });
+              stream.once('end', async () => {
+                try {
+                  const parsed: ParsedMail = await simpleParser(buffer);
+                  const fromAddress = parsed.from?.value?.[0]?.address || '';
+                  const toAddress = parsed.to && !Array.isArray(parsed.to)
+                    ? parsed.to.value?.[0]?.address || GMAIL_SMTP_USER!
+                    : GMAIL_SMTP_USER!;
+
+                  const textBody = parsed.text || '';
+                  const bodyPreview = textBody.substring(0, 500).replace(/\n+/g, ' ').trim();
+
+                  emails.push({
+                    messageId: parsed.messageId || `gmail-${Date.now()}-${Math.random()}`,
+                    from: fromAddress,
+                    to: toAddress,
+                    subject: parsed.subject || '(No subject)',
+                    bodyPreview,
+                    body: textBody,
+                    receivedAt: parsed.date || new Date(),
+                    inReplyTo: parsed.inReplyTo,
+                    conversationId: parsed.references?.[0],
+                    inboxEmail: GMAIL_SMTP_USER!,
+                  });
+                } catch (parseErr) {
+                  console.error('Error parsing Gmail email:', parseErr);
+                }
+              });
+            });
+          });
+
+          fetch.once('error', (fetchErr) => {
+            console.error('Gmail IMAP fetch error:', fetchErr);
+          });
+
+          fetch.once('end', () => {
+            imap.end();
+          });
+        });
+      });
+    });
+
+    imap.once('error', (imapErr: Error) => {
+      console.error('Gmail IMAP connection error:', imapErr);
+      resolve([]);
+    });
+
+    imap.once('end', () => {
+      resolve(emails);
+    });
+
+    imap.connect();
+  });
 }

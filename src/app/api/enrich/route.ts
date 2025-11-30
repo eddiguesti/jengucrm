@@ -148,6 +148,21 @@ export async function POST(request: NextRequest) {
     if (websiteData.propertyInfo.amenities?.includes('spa') && !tags.includes('spa')) tags.push('spa');
     if (websiteData.propertyInfo.amenities?.includes('michelin') && !tags.includes('fine-dining')) tags.push('fine-dining');
     if (primaryContact && !tags.includes('has-contact')) tags.push('has-contact');
+
+    // Check if we have a decision-maker email (not just generic info@)
+    // If not, tag for contact discovery
+    const isGenericEmail = email && (
+      email.startsWith('info@') ||
+      email.startsWith('reservations@') ||
+      email.startsWith('reception@') ||
+      email.startsWith('frontdesk@')
+    );
+    const hasDecisionMakerEmail = primaryContact && email && !isGenericEmail;
+
+    if (!hasDecisionMakerEmail && !tags.includes('needs-contact-discovery')) {
+      tags.push('needs-contact-discovery');
+    }
+
     if (tags.length) updateData.tags = tags;
 
     const { data: updated, error: updateError } = await supabase

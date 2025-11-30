@@ -3,6 +3,7 @@ import { enrichWithGooglePlaces } from './google-places';
 import { scrapeWebsite, extractDomain } from './website-scraper';
 import { calculateScore, getTier } from './scoring';
 import { WebsiteData, EnrichmentData } from './types';
+import { findDecisionMakerEmail, findDecisionMaker } from './email-finder';
 
 const XAI_API_KEY = process.env.XAI_API_KEY;
 
@@ -208,25 +209,13 @@ export async function autoEnrichProspect(prospectId: string): Promise<{
       websiteData = await scrapeWebsite(websiteUrl);
     }
 
-    // Find best email
-    let email = prospect.email;
-    if (!email && websiteData.emails.length > 0) {
-      email = websiteData.emails[0];
-    }
-    if (!email && websiteUrl) {
-      const domain = extractDomain(websiteUrl);
-      if (domain) {
-        email = `info@${domain}`;
-      }
-    }
-
     // Find best phone
     let phone = prospect.phone;
     if (!phone && websiteData.phones.length > 0) {
       phone = websiteData.phones[0];
     }
 
-    // Find primary contact (filter fake names and HTML artifacts)
+    // Filter team members (remove fake names and HTML artifacts)
     const fakeNamePatterns = /fallback|placeholder|cookie|consent|privacy|test|demo|sample|john doe|jane doe|btn|button|click|submit|form|input|select|toggle|menu|nav|header|footer|modal|popup|website|facebook|twitter|instagram|linkedin|youtube|using fb|js$/i;
     const validTeamMembers = websiteData.teamMembers.filter(m => {
       const name = m.name.trim();
@@ -244,9 +233,21 @@ export async function autoEnrichProspect(prospectId: string): Promise<{
       return true;
     });
 
-    const primaryContact = validTeamMembers.find(m =>
-      m.title.match(/general manager|gm|director|owner|managing/i)
-    ) || validTeamMembers[0];
+    // Use 7-step email finder process to find decision-maker email
+    const emailFinderResult = await findDecisionMakerEmail(
+      prospect.name,
+      websiteUrl,
+      validTeamMembers,
+      websiteData.emails
+    );
+
+    // Get best email from email finder
+    let email = prospect.email || emailFinderResult.validatedEmail;
+
+    // Get primary contact from email finder (uses priority-based role matching)
+    const primaryContact = emailFinderResult.contactName
+      ? { name: emailFinderResult.contactName, title: emailFinderResult.contactRole }
+      : findDecisionMaker(validTeamMembers);
 
     // Generate AI research notes
     const notes = await generateResearchNotes(prospect, websiteData, enrichmentData);
@@ -281,6 +282,21 @@ export async function autoEnrichProspect(prospectId: string): Promise<{
     if (websiteData.propertyInfo.starRating && websiteData.propertyInfo.starRating >= 4) tags.push('luxury');
     if (websiteData.propertyInfo.amenities?.includes('spa')) tags.push('spa');
     if (primaryContact) tags.push('has-contact');
+
+    // Check if we have a decision-maker email (not just generic info@)
+    // If not, tag for contact discovery
+    const hasDecisionMakerEmail =
+      emailFinderResult.confidenceScore === 'high' ||
+      (emailFinderResult.contactName && emailFinderResult.validatedEmail &&
+       !emailFinderResult.validatedEmail.startsWith('info@') &&
+       !emailFinderResult.validatedEmail.startsWith('reservations@') &&
+       !emailFinderResult.validatedEmail.startsWith('reception@') &&
+       !emailFinderResult.validatedEmail.startsWith('frontdesk@'));
+
+    if (!hasDecisionMakerEmail) {
+      tags.push('needs-contact-discovery');
+    }
+
     if (tags.length) updateData.tags = tags;
 
     // Update prospect
@@ -308,17 +324,20 @@ export async function autoEnrichProspect(prospectId: string): Promise<{
       })
       .eq('id', prospectId);
 
-    // Log activity
+    // Log activity with email finder details
+    const emailConfidence = emailFinderResult.confidenceScore;
+    const emailSource = emailFinderResult.emailPatternSource;
+
     await supabase.from('activities').insert({
       prospect_id: prospectId,
       type: 'note',
       title: 'Auto-enriched with AI research',
       description: `Found: ${[
-        email && 'Email',
+        email && `Email (${emailConfidence} confidence, ${emailSource})`,
         phone && 'Phone',
-        primaryContact && `Contact: ${primaryContact.name}`,
+        primaryContact && `Contact: ${primaryContact.name} (${primaryContact.title})`,
         websiteData.socialLinks.linkedin && 'LinkedIn',
-      ].filter(Boolean).join(', ') || 'Basic info'}`,
+      ].filter(Boolean).join(', ') || 'Basic info'}${emailFinderResult.fallbackMethod ? `\n\nFallback: ${emailFinderResult.fallbackMethod}` : ''}`,
     });
 
     return { success: true, enriched: true };

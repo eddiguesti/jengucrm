@@ -3,7 +3,7 @@ import { createServerClient } from '@/lib/supabase';
 import { ClientSecretCredential } from '@azure/identity';
 import { Client } from '@microsoft/microsoft-graph-client';
 import { TokenCredentialAuthenticationProvider } from '@microsoft/microsoft-graph-client/authProviders/azureTokenCredentials';
-import { sendEmail } from '@/lib/email';
+import { sendEmail, checkAllInboxesForReplies, getSmtpInboxes, checkGmailForReplies, IncomingEmail, isGmailConfigured } from '@/lib/email';
 import Anthropic from '@anthropic-ai/sdk';
 
 // Azure credentials for edd@jengu.ai
@@ -25,6 +25,7 @@ interface EmailMessage {
   receivedAt: Date;
   inReplyTo?: string;
   conversationId?: string;
+  receivedByInbox?: string; // Which of our inboxes received this (for thread continuity)
 }
 
 interface ReplyAnalysis {
@@ -157,7 +158,8 @@ async function sendInstantReply(
   supabase: ReturnType<typeof createServerClient>,
   prospect: { id: string; name: string; email: string },
   incomingEmail: EmailMessage,
-  analysis: ReplyAnalysis
+  analysis: ReplyAnalysis,
+  replyFromInbox?: string // Which inbox to send the reply from (for thread continuity)
 ): Promise<{ success: boolean; error?: string }> {
   const apiKey = process.env.XAI_API_KEY || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -180,10 +182,7 @@ async function sendInstantReply(
       senderName.length < 15 &&
       /^[A-Z][a-z]+$/.test(senderName);
 
-    const prompt = `You are Edward Guest, Automation Expert at Jengu. A hotel prospect just replied to your cold email. Generate the perfect response.
-
-=== CRITICAL SALES BEST PRACTICE ===
-Research shows 35-50% of sales go to the FIRST vendor to respond. Your goal is ALWAYS to get them on a call - NOT to answer all their questions over email. Keep responses under 50 words, give brief teasers but ALWAYS pivot to a call. "Easier to show you than explain" is your mantra.
+    const prompt = `You are Edd from Jengu. Write a reply to this hotel prospect. Sound like a real person, not a sales bot.
 
 === THEIR MESSAGE ===
 From: ${incomingEmail.from}
@@ -191,120 +190,60 @@ Hotel: ${prospect.name}
 Subject: ${incomingEmail.subject}
 Content: "${incomingEmail.bodyPreview}"
 
-=== COMPLETE JENGU BUSINESS CONTEXT ===
+=== YOUR VOICE & STYLE ===
+You're friendly, professional, but not corporate or robotic. Warm but direct.
+You don't say generic things like "Hey! Thanks for getting back!" - sounds like a template.
+You talk about doing a "quick process map" to find "low hanging fruit" with the best ROI.
+You explain that it could be API connections, email automation, chatbots, or bigger things like dynamic pricing - depends on their needs.
+You always want a quick chat to see if they'd be a good fit for YOU (not the other way around - this subtle framing matters).
 
-**What Jengu Does:**
-Custom AI agents and automation for tourism & hospitality. We automate guest communications, bookings, and operations through intelligent software integrations.
+=== WHAT JENGU DOES ===
+Custom AI agents and automation for hospitality. Could be:
+- Email/WhatsApp/chat automation
+- Booking bots, voice bots
+- Dynamic pricing engine
+- API integrations with their PMS/booking systems
+- Usually a mix of small automations + bigger projects
 
-**Core Products:**
-1. AI Guest Communication - Handles emails, WhatsApp, live chat automatically. 40+ languages, 24/7 instant responses. Automates 80% of routine inquiries.
-2. Voice & Booking Bots - Phone bots and chatbots for reservations. Direct booking integration and payment processing.
-3. Dynamic Pricing Engine - AI-powered rate optimization based on demand/seasonality. Competitor monitoring.
-4. System Integrations - Connects PMS, booking engines, CRM, payment systems. Eliminates manual data entry.
+The approach: Quick chat → Process map → Find the low hanging fruit → Deploy
 
-**Key Stats (use these!):**
-- 30% booking conversion increase
-- 80% of customer inquiries automated
-- Response time: seconds (vs. industry average 15-20 minutes)
-- 40+ hours saved weekly per client
-- £85,000 annual labor savings (typical)
-- £65,000 annual revenue increase (typical)
-- ROI within 3-4 months (300-500% first year)
+Calendly: calendly.com/edd-jengu-6puv/30min
 
-**Target Customers:**
-Hotels, resorts, boutique accommodations, campsites, holiday parks, tour operators, travel agencies, DMCs, activity providers - UK, Europe and beyond.
+=== HOW TO RESPOND ===
 
-**Deployment:**
-2-6 weeks typical. Four stages: Discover → Process Map → Deploy → Optimize.
+**If they're interested/want to know more:**
+Don't over-explain. Say something like:
+"We normally do a quick process map to find the low hanging fruit - could be API connections, email automation, chatbots, or bigger stuff like dynamic pricing. Depends on your setup. Worth a quick chat to see if you'd be right for us?"
 
-**Pricing:**
-Custom quotes based on property size and needs. No hidden fees. ROI calculator available. Most clients see payback in 3-4 months.
+**If they want to schedule:**
+Give them times or the calendly link. Keep it brief.
+"Nice one - how's Tuesday 2pm or Thursday 10am? Or grab a slot here: calendly.com/edd-jengu-6puv/30min"
 
-**Technical:**
-- GDPR compliant, AES-256 encryption
-- 99.9% uptime SLA
-- Integrates with existing PMS, booking engines, CRM
+**If they ask about pricing:**
+"Depends on what we find in the process map - could be a few small wins or a bigger project. Easier to figure out on a quick call?"
 
-**Links:**
-- Website: www.jengu.ai
-- Book a call: calendly.com/edd-jengu-6puv/30min
-- Email: edd@jengu.ai
+**If they ask specific questions:**
+Give a one-liner answer, then push for a call. Don't write essays.
 
-=== RESPONSE DECISION TREE ===
+**If they're not interested / bad timing:**
+Be cool about it. "No worries, timing is everything. Want me to ping you in the new year?"
 
-READ their message carefully. Then pick ONE scenario:
+**If they confirmed a meeting:**
+"Perfect, locked in. Speak then."
 
-**SCENARIO A: They want to SCHEDULE A CALL**
-Keywords: "let's chat", "call", "meeting", "schedule", "available", "demo"
-Response structure:
-- Express genuine (not over-the-top) enthusiasm
-- Offer 2-3 specific time slots (e.g., "Tuesday 2pm, Wednesday 10am, or Thursday 3pm GMT?")
-- Include Calendly link as easy alternative
-Example: "Awesome! How's Tuesday 2pm, Wednesday 10am, or Thursday 3pm (GMT)? Or grab any slot: calendly.com/edd-jengu-6puv/30min\\n\\nEdd"
+=== RULES ===
+1. ${looksLikePersonName ? `Start with just "${senderName}," or "Hi ${senderName},"` : 'Start with a warm but not generic opener'}
+2. Keep it SHORT - 40-70 words max
+3. Sound like a real person, professional but personable
+4. End with just "Edd" on its own line
+5. Use \\n\\n between paragraphs
+6. Be warm and helpful, but not over-the-top or salesy
+7. Frame it as YOU qualifying THEM ("see if you'd be right for us")
+8. Be genuinely helpful - if they ask something, answer it properly before suggesting a call
+9. NEVER include numbers, stats, percentages, or figures - keep it conversational, not data-driven
 
-**SCENARIO B: They asked a SPECIFIC QUESTION**
-Keywords: "how does", "pricing", "cost", "features", "does it work with", "what about"
-Response structure:
-- Give a BRIEF teaser answer (1 sentence max - don't give everything away!)
-- ALWAYS pivot to a call - "easier to show you than explain over email"
-Example for pricing: "Depends on your setup - usually see 10-20x ROI in the first year. Easier to give you an exact number on a quick call?\\n\\nEdd"
-Example for features: "Yep, we do that! Easier to show you than explain - fancy a quick 15 min call? calendly.com/edd-jengu-6puv/30min\\n\\nEdd"
-
-**SCENARIO C: They said FORWARD to someone else / wrong person**
-Response structure:
-- Thank them warmly
-- Ask who handles guest communications or operations
-Example: "Thanks so much for letting me know! Any chance you could point me to whoever handles guest communications or operations?\\n\\nEdd"
-
-**SCENARIO D: They said BAD TIMING / too busy**
-Response structure:
-- Respect it completely, no guilt
-- Offer to follow up in specific timeframe
-Example: "Totally get it - timing is everything. Want me to circle back in January when things calm down?\\n\\nEdd"
-
-**SCENARIO E: They have an OBJECTION** (already have solution, not interested, etc.)
-Response structure:
-- Acknowledge without arguing
-- Ask a curious question
-Example: "Makes sense! What are you using currently? Always curious what's working well for hotels.\\n\\nEdd"
-
-**SCENARIO F: General POSITIVE response** (interested but not specific)
-Response structure:
-- Be appreciative
-- Suggest one clear next step
-Example: "Great to hear! Would a quick 15-min call be useful to show you how it works? Here's my calendar: calendly.com/edd-jengu-6puv/30min\\n\\nEdd"
-
-**SCENARIO G: They CONFIRMED a time/booked via Calendly**
-Keywords: "booked", "confirmed", "see you", "looking forward", "scheduled", "got it", "sounds good", "perfect", "works for me"
-Response structure:
-- Confirm you received it
-- Express brief enthusiasm
-- Mention you'll send any prep materials if needed
-Example: "Perfect, got it locked in! Looking forward to chatting. I'll send over a quick agenda beforehand.\\n\\nEdd"
-
-**SCENARIO H: They're asking FOLLOW-UP questions after initial interest**
-Response structure:
-- Give brief teaser (1 sentence)
-- ALWAYS push for a call - much better to discuss face-to-face/phone
-Example: "Good question! Short answer is yes - but honestly easier to show you than explain. Fancy jumping on a quick call? calendly.com/edd-jengu-6puv/30min\\n\\nEdd"
-
-=== STRICT OUTPUT RULES ===
-1. LENGTH: 30-50 words maximum. Be concise.
-2. START: ${looksLikePersonName ? `Begin with "${senderName}!" or "Hey ${senderName}!"` : 'Begin with "Hey!" or "Thanks for getting back!" (we don\'t know their name)'}
-3. TONE: Conversational, friendly, professional - like texting a business contact
-4. TEASER ONLY: Give brief 1-sentence answers but ALWAYS pivot to a call. Don't give everything away over email.
-5. ONE CTA: Only one call-to-action per reply - usually book a call
-6. LINKS: Include Calendly link (calendly.com/edd-jengu-6puv/30min) when scheduling
-7. ROI CALCULATOR: If they ask about pricing/ROI, mention our calculator: "Check out our ROI calculator at jengu.ai/roi-calculator - most hotels are surprised by the numbers"
-8. END: Sign off with just "Edd" on its own line - NO "Best", "Regards", "Thanks", etc.
-9. PARAGRAPHS: Use \\n\\n between paragraphs
-10. NO SIGNATURE: Signature is added automatically - don't include one
-11. MATCH THEIR VIBE: If they're casual, be casual. If more formal, adjust slightly.
-12. NEVER USE: Hotel name, company name, or generic words as a greeting - only use actual person names.
-13. ALWAYS PUSH FOR CALL: Every response should move toward a meeting/call. Best practice: 35-50% of sales go to first responder.
-
-=== OUTPUT FORMAT ===
-Return ONLY valid JSON, nothing else:
+=== OUTPUT ===
+Return ONLY valid JSON:
 {"subject": "Re: ${incomingEmail.subject}", "body": "your reply here"}`;
 
     const response = await anthropic.messages.create({
@@ -325,25 +264,26 @@ Return ONLY valid JSON, nothing else:
 
     const reply = JSON.parse(jsonMatch[0]) as { subject: string; body: string };
 
-    // Send the reply with threading
+    // Send the reply from the SAME inbox that received it (thread continuity)
     const sendResult = await sendEmail({
       to: incomingEmail.from,
       subject: reply.subject,
       body: reply.body,
       inReplyTo: incomingEmail.messageId,
+      forceInbox: replyFromInbox, // Use the same inbox that received the reply
     });
 
     if (!sendResult.success) {
       return { success: false, error: sendResult.error };
     }
 
-    // Save the outbound reply to database
+    // Save the outbound reply to database with the actual inbox used
     await supabase.from('emails').insert({
       prospect_id: prospect.id,
       subject: reply.subject,
       body: reply.body,
       to_email: incomingEmail.from,
-      from_email: AZURE_MAIL_FROM,
+      from_email: sendResult.sentFrom || replyFromInbox || AZURE_MAIL_FROM,
       message_id: sendResult.messageId,
       email_type: 'auto_reply',
       direction: 'outbound',
@@ -461,7 +401,8 @@ async function matchEmailToProspect(
 }
 
 /**
- * POST: Check inbox for replies and save to CRM
+ * POST: Check ALL inboxes for replies and save to CRM
+ * Checks: Azure (edd@jengu.ai) + all Spacemail inboxes via IMAP
  */
 export async function POST(request: NextRequest) {
   const supabase = createServerClient();
@@ -481,6 +422,8 @@ export async function POST(request: NextRequest) {
       archived: 0,
       notifications: 0,
       autoReplies: 0,
+      mysteryShopperReplies: 0,
+      inboxesChecked: [] as string[],
       errors: [] as string[],
     };
 
@@ -498,15 +441,97 @@ export async function POST(request: NextRequest) {
       graphClient = Client.initWithMiddleware({ authProvider });
     }
 
+    // Collect all emails from all sources
+    const allEmails: EmailMessage[] = [];
+
+    // 1. Check Azure inbox (edd@jengu.ai)
     if (AZURE_TENANT_ID && AZURE_CLIENT_ID && AZURE_CLIENT_SECRET) {
       results.checked = true;
-      const emails = await checkMicrosoftInbox(sinceDate);
-      results.found = emails.length;
+      results.inboxesChecked.push(AZURE_MAIL_FROM);
+      const azureEmails = await checkMicrosoftInbox(sinceDate);
+      // Tag each email with which inbox received it
+      for (const e of azureEmails) {
+        e.receivedByInbox = AZURE_MAIL_FROM;
+      }
+      allEmails.push(...azureEmails);
+    }
+
+    // 2. Check all Spacemail inboxes via IMAP
+    const smtpInboxes = getSmtpInboxes();
+    if (smtpInboxes.length > 0) {
+      results.checked = true;
+      for (const inbox of smtpInboxes) {
+        results.inboxesChecked.push(inbox.email);
+      }
+
+      try {
+        const imapEmails = await checkAllInboxesForReplies(sinceDate);
+        // Convert IncomingEmail to EmailMessage format
+        for (const e of imapEmails) {
+          allEmails.push({
+            messageId: e.messageId,
+            from: e.from,
+            to: e.to,
+            subject: e.subject,
+            bodyPreview: e.bodyPreview,
+            body: e.body,
+            receivedAt: e.receivedAt,
+            inReplyTo: e.inReplyTo,
+            conversationId: e.conversationId,
+            receivedByInbox: e.inboxEmail, // Which Spacemail inbox received this
+          });
+        }
+      } catch (imapError) {
+        results.errors.push(`IMAP check failed: ${String(imapError)}`);
+      }
+    }
+
+    // 3. Check Gmail inbox for mystery shopper replies (to track response times)
+    const gmailUser = process.env.GMAIL_SMTP_USER;
+    if (isGmailConfigured() && gmailUser) {
+      results.inboxesChecked.push(gmailUser);
+      try {
+        const gmailEmails = await checkGmailForReplies(sinceDate);
+        for (const e of gmailEmails) {
+          // Skip emails FROM gmail (our own outbound)
+          if (e.from.toLowerCase() === gmailUser.toLowerCase()) {
+            continue;
+          }
+          allEmails.push({
+            messageId: e.messageId,
+            from: e.from,
+            to: e.to,
+            subject: e.subject,
+            bodyPreview: e.bodyPreview,
+            body: e.body,
+            receivedAt: e.receivedAt,
+            inReplyTo: e.inReplyTo,
+            conversationId: e.conversationId,
+            receivedByInbox: gmailUser, // Gmail inbox
+          });
+        }
+      } catch (gmailError) {
+        results.errors.push(`Gmail IMAP check failed: ${String(gmailError)}`);
+      }
+    }
+
+    results.found = allEmails.length;
+
+    // Build list of all our inbox addresses to skip
+    const ourInboxes = new Set([
+      AZURE_MAIL_FROM.toLowerCase(),
+      ...smtpInboxes.map(i => i.email.toLowerCase()),
+      ...(gmailUser ? [gmailUser.toLowerCase()] : []),
+    ]);
+
+    // Process all found emails
+    if (allEmails.length > 0) {
+      const emails = allEmails;
 
       for (const email of emails) {
         try {
-          // Skip if from ourselves
-          if (email.from.toLowerCase() === AZURE_MAIL_FROM.toLowerCase()) {
+          // Skip if from any of our inboxes (don't process our own outbound as replies)
+          if (ourInboxes.has(email.from.toLowerCase())) {
             continue;
           }
 
@@ -518,6 +543,66 @@ export async function POST(request: NextRequest) {
             .single();
 
           if (existing) continue;
+
+          // Check if this is a reply to a mystery shopper email (from Gmail inbox)
+          const isMysteryShopperReply = email.receivedByInbox?.toLowerCase() === gmailUser?.toLowerCase();
+
+          if (isMysteryShopperReply) {
+            // Find the original mystery shopper email we sent to this address
+            const { data: originalEmail } = await supabase
+              .from('emails')
+              .select('id, prospect_id, sent_at, prospects(id, name)')
+              .eq('to_email', email.from)
+              .eq('email_type', 'mystery_shopper')
+              .order('sent_at', { ascending: false })
+              .limit(1)
+              .single();
+
+            if (originalEmail && originalEmail.sent_at) {
+              const sentAt = new Date(originalEmail.sent_at);
+              const replyAt = email.receivedAt;
+              const responseTimeMs = replyAt.getTime() - sentAt.getTime();
+              const responseTimeMinutes = Math.round(responseTimeMs / 60000);
+              const responseTimeHours = (responseTimeMs / 3600000).toFixed(1);
+
+              // Save the reply
+              await supabase.from('emails').insert({
+                prospect_id: originalEmail.prospect_id,
+                subject: email.subject,
+                body: email.bodyPreview,
+                to_email: gmailUser,
+                from_email: email.from,
+                message_id: email.messageId,
+                email_type: 'mystery_shopper_reply',
+                direction: 'inbound',
+                status: 'received',
+                sent_at: email.receivedAt.toISOString(),
+              });
+
+              // Log activity with response time
+              const prospectData = originalEmail.prospects;
+              const prospectName = Array.isArray(prospectData) ? prospectData[0]?.name : prospectData?.name;
+              await supabase.from('activities').insert({
+                prospect_id: originalEmail.prospect_id,
+                type: 'mystery_shopper_reply',
+                title: `Hotel responded to mystery shopper in ${responseTimeMinutes < 60 ? responseTimeMinutes + ' minutes' : responseTimeHours + ' hours'}`,
+                description: `Response time: ${responseTimeMinutes} minutes\nSubject: ${email.subject}\n\n${email.bodyPreview.substring(0, 300)}...`,
+              });
+
+              // Update prospect notes with response time
+              await supabase.rpc('append_prospect_note', {
+                p_id: originalEmail.prospect_id,
+                p_note: `\n\nMystery shopper response time: ${responseTimeMinutes < 60 ? responseTimeMinutes + ' minutes' : responseTimeHours + ' hours'} (${new Date().toISOString().split('T')[0]})`
+              }).catch(() => {
+                // Fallback if RPC doesn't exist - just log it
+                console.log(`Mystery shopper response time for ${prospectName}: ${responseTimeMinutes} minutes`);
+              });
+
+              results.mysteryShopperReplies++;
+              results.saved++;
+            }
+            continue; // Don't process mystery shopper replies as regular sales replies
+          }
 
           // Match to prospect
           const prospect = await matchEmailToProspect(supabase, email.from);
@@ -615,8 +700,8 @@ export async function POST(request: NextRequest) {
               }
 
               // INSTANT AI REPLY - Walk the walk with fast responses!
-              // Send an AI-generated reply within seconds of receiving their message
-              const autoReplyResult = await sendInstantReply(supabase, prospect, email, analysis);
+              // Send an AI-generated reply from the SAME inbox that received the reply (thread continuity)
+              const autoReplyResult = await sendInstantReply(supabase, prospect, email, analysis, email.receivedByInbox);
               if (autoReplyResult.success) {
                 results.autoReplies++;
               } else {
@@ -641,7 +726,8 @@ export async function POST(request: NextRequest) {
                 .eq('id', prospect.id);
 
               // INSTANT AI REPLY for any reply - show we're responsive!
-              const autoReplyResult = await sendInstantReply(supabase, prospect, email, analysis);
+              // Send from the SAME inbox that received it (thread continuity)
+              const autoReplyResult = await sendInstantReply(supabase, prospect, email, analysis, email.receivedByInbox);
               if (autoReplyResult.success) {
                 results.autoReplies++;
               } else {
@@ -684,15 +770,29 @@ export async function POST(request: NextRequest) {
  * GET: Check configuration status
  */
 export async function GET() {
+  const smtpInboxes = getSmtpInboxes();
+  const gmailUser = process.env.GMAIL_SMTP_USER;
+  const allMailboxes = [AZURE_MAIL_FROM, ...smtpInboxes.map(i => i.email)];
+  if (gmailUser && isGmailConfigured()) {
+    allMailboxes.push(gmailUser);
+  }
+
   return NextResponse.json({
-    configured: !!(AZURE_TENANT_ID && AZURE_CLIENT_ID && AZURE_CLIENT_SECRET),
-    mailbox: AZURE_MAIL_FROM,
+    configured: !!(AZURE_TENANT_ID && AZURE_CLIENT_ID && AZURE_CLIENT_SECRET) || smtpInboxes.length > 0 || isGmailConfigured(),
+    mailboxes: allMailboxes,
+    primary_mailbox: AZURE_MAIL_FROM,
+    smtp_inboxes: smtpInboxes.map(i => i.email),
+    gmail_inbox: gmailUser || null,
+    gmail_purpose: 'Mystery shopper emails + response time tracking',
     notification_email: NOTIFICATION_EMAIL,
     features: [
       'Email threading by conversation ID',
+      'Multi-inbox IMAP checking (Azure + Spacemail + Gmail)',
       'Meeting request detection',
       'Not interested detection + auto-archive',
       'Instant email notification for meetings',
+      'Sticky inbox assignment (maintains thread continuity)',
+      'Mystery shopper response time tracking',
     ],
     usage: 'POST with { hours_back: 24 } to check for replies',
   });

@@ -20,7 +20,10 @@ export async function GET(request: NextRequest) {
 
     const response = await fetch(`${baseUrl}/api/check-replies`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${cronSecret}`, // Pass auth through
+      },
       body: JSON.stringify({ hours_back: 1 }), // Check last hour
     });
 
