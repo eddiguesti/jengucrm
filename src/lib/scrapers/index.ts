@@ -13,6 +13,16 @@ import { EHotelierScraper } from './ehotelier';
 import { AdzunaScraper } from './adzuna';
 import { BaseScraper, ScrapedProperty, ScraperResult } from './types';
 
+// Google Maps bulk scraper (Tier 2 cold leads)
+export {
+  scrapeGoogleMaps,
+  scrapeMultipleLocations,
+  getUKCities,
+  getEuropeanCities,
+  type GoogleMapsResult,
+  type GoogleMapsListing,
+} from './google-maps';
+
 export * from './types';
 
 // Scraper status:

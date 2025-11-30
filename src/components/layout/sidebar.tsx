@@ -13,10 +13,14 @@ import {
   Zap,
   Star,
   FlaskConical,
+  BarChart3,
+  Inbox,
 } from 'lucide-react';
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { name: 'Stats', href: '/stats', icon: BarChart3 },
+  { name: 'Agents', href: '/agents', icon: Inbox },
   { name: 'Prospects', href: '/prospects', icon: Users },
   { name: 'Pipeline', href: '/pipeline', icon: Kanban },
   { name: 'Emails', href: '/emails', icon: Mail },
