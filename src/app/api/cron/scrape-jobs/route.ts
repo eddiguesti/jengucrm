@@ -211,8 +211,8 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Run AI cleanup on all new prospects to catch anything the rule-based filter missed
-    let aiCleanupResult = { analyzed: 0, archived: 0, kept: 0 };
+    // Run AI cleanup and scoring on all new prospects
+    let aiCleanupResult = { analyzed: 0, archived: 0, kept: 0, scored: 0, scoreBreakdown: { A: 0, B: 0, C: 0, D: 0, F: 0 } };
     if (process.env.XAI_API_KEY && inserted > 0) {
       try {
         aiCleanupResult = await cleanupProspects({
@@ -268,6 +268,8 @@ export async function GET(request: NextRequest) {
           analyzed: aiCleanupResult.analyzed,
           archived: aiCleanupResult.archived,
           kept: aiCleanupResult.kept,
+          scored: aiCleanupResult.scored,
+          grade_breakdown: aiCleanupResult.scoreBreakdown,
         },
         api_keys_configured: {
           scraperapi: !!process.env.SCRAPERAPI_KEY,

@@ -1,14 +1,15 @@
 /**
- * AI-Powered Prospect Cleanup
+ * AI-Powered Prospect Cleanup & Scoring
  *
- * Uses Grok to analyze and filter out irrelevant prospects:
- * - Big hotel chains (Marriott, Hilton, IHG, etc.)
- * - Wrong job roles (sous chef, housekeeping, bartender, etc.)
- * - Non-hotel businesses
- * - Duplicates and low-quality leads
+ * Uses Grok to analyze and score prospects:
+ * - Filter out irrelevant prospects (big chains, wrong job roles, non-hotels)
+ * - Score remaining prospects on fit potential (1-100)
+ * - Analyze job descriptions for automation opportunities
+ * - Classify hotel size and decision-making capability
  */
 
 import { createServerClient } from '@/lib/supabase';
+import { JobPainPoints } from '@/lib/extract-job-pain-points';
 
 const XAI_API_KEY = process.env.XAI_API_KEY;
 
@@ -60,6 +61,8 @@ interface ProspectForReview {
   city?: string;
   country?: string;
   source_job_title?: string;
+  source_job_description?: string;
+  job_pain_points?: JobPainPoints | null;
   chain_affiliation?: string;
   property_type?: string;
   tags?: string[];
@@ -71,6 +74,21 @@ interface CleanupResult {
   action: 'keep' | 'archive' | 'delete';
   reason: string;
   confidence: 'high' | 'medium' | 'low';
+}
+
+// AI Scoring result
+export interface AIScoreResult {
+  prospect_id: string;
+  action: 'keep' | 'archive';
+  fit_score: number; // 1-100
+  fit_grade: 'A' | 'B' | 'C' | 'D' | 'F'; // A=80-100, B=60-79, C=40-59, D=20-39, F=0-19
+  reason: string;
+  buying_signals: string[];
+  concerns: string[];
+  hotel_size_estimate: 'small' | 'medium' | 'large' | 'unknown';
+  decision_maker_access: 'direct' | 'likely' | 'unlikely' | 'unknown';
+  automation_opportunity: 'high' | 'medium' | 'low';
+  recommended_approach: string;
 }
 
 /**
@@ -121,24 +139,44 @@ function quickFilter(prospect: ProspectForReview): CleanupResult | null {
 }
 
 /**
- * Use Grok to analyze uncertain prospects
+ * Use Grok to analyze and SCORE prospects with detailed analysis
  */
-async function aiAnalyzeProspects(prospects: ProspectForReview[]): Promise<CleanupResult[]> {
+async function aiAnalyzeAndScoreProspects(prospects: ProspectForReview[]): Promise<AIScoreResult[]> {
   if (!XAI_API_KEY || prospects.length === 0) {
     return prospects.map(p => ({
       prospect_id: p.id,
       action: 'keep' as const,
-      reason: 'No AI available - keeping by default',
-      confidence: 'low' as const,
+      fit_score: 50,
+      fit_grade: 'C' as const,
+      reason: 'No AI available - default score',
+      buying_signals: [],
+      concerns: ['Could not analyze - AI unavailable'],
+      hotel_size_estimate: 'unknown' as const,
+      decision_maker_access: 'unknown' as const,
+      automation_opportunity: 'medium' as const,
+      recommended_approach: 'Standard outreach',
     }));
   }
 
-  const prospectList = prospects.map((p, i) =>
-    `${i + 1}. "${p.name}" in ${p.city || 'Unknown'}, ${p.country || 'Unknown'}` +
-    (p.source_job_title ? ` (hiring: ${p.source_job_title})` : '') +
-    (p.chain_affiliation ? ` [Chain: ${p.chain_affiliation}]` : '') +
-    (p.property_type ? ` [Type: ${p.property_type}]` : '')
-  ).join('\n');
+  // Build detailed prospect info for AI analysis
+  const prospectList = prospects.map((p, i) => {
+    let info = `${i + 1}. "${p.name}" in ${p.city || 'Unknown'}, ${p.country || 'Unknown'}`;
+    if (p.source_job_title) info += `\n   Job posting: ${p.source_job_title}`;
+    if (p.source_job_description) {
+      // Truncate but keep enough for analysis
+      const desc = p.source_job_description.slice(0, 800);
+      info += `\n   Job description: ${desc}${p.source_job_description.length > 800 ? '...' : ''}`;
+    }
+    if (p.job_pain_points) {
+      info += `\n   Pain points identified: ${p.job_pain_points.summary || 'None'}`;
+      if (p.job_pain_points.communication_tasks?.length) {
+        info += `\n   Communication tasks: ${p.job_pain_points.communication_tasks.join(', ')}`;
+      }
+    }
+    if (p.chain_affiliation) info += `\n   Chain: ${p.chain_affiliation}`;
+    if (p.property_type) info += `\n   Type: ${p.property_type}`;
+    return info;
+  }).join('\n\n');
 
   try {
     const response = await fetch('https://api.x.ai/v1/chat/completions', {
@@ -152,73 +190,108 @@ async function aiAnalyzeProspects(prospects: ProspectForReview[]): Promise<Clean
         messages: [
           {
             role: 'system',
-            content: `You are a lead qualification expert for Jengu.
+            content: `You are a B2B sales intelligence expert for Jengu, a hospitality tech startup.
 
 ## ABOUT JENGU
-Jengu is a hospitality tech startup that sells AI-powered guest communication software to hotels. Our product:
+Jengu sells AI-powered guest communication software to hotels:
 - Automates guest inquiries, booking confirmations, pre-arrival messages
-- Handles WhatsApp, email, and SMS guest communication
-- Integrates with PMS systems
-- Helps small hotels compete with big chains by providing 24/7 automated responses
+- WhatsApp, email, and SMS guest communication
+- PMS integrations (Opera, Mews, Cloudbeds, etc.)
+- 24/7 automated responses - helps small hotels compete with big chains
+- Price: $200-500/month depending on size
 
-## IDEAL CUSTOMER PROFILE (ICP)
-Our perfect customers are:
-- **Independent hotels** (single property, owner-operated)
-- **Boutique hotels** (unique, design-focused, under 100 rooms)
-- **Small hotel groups** (2-10 properties, regional operators)
-- **B&Bs, inns, guesthouses, lodges** (family-run, personal service)
-- **Luxury independent properties** (high-end, no chain affiliation)
+## SCORING CRITERIA (Score 1-100)
 
-## WHY JOB POSTINGS MATTER
-We find hotels by their job postings. Good signals:
-- **KEEP**: Front desk, receptionist, guest relations, reservations, night auditor, revenue manager, operations manager, GM, hotel manager, guest services
-- These roles indicate the hotel needs help with guest communication - exactly what we solve!
+### HIGH SCORE (80-100) - Grade A - HOT LEADS
+- Independent/boutique hotels (can make own buying decisions)
+- Hiring for guest-facing roles: Front desk, Guest relations, Reservations, Night audit
+- Job description mentions: high volume inquiries, WhatsApp, guest communication, response time
+- Small-medium size (under 100 rooms) - right budget range
+- Luxury/upscale properties (can afford $300-500/month)
+- Pain points match our product perfectly
 
-## BAD PROSPECTS TO ARCHIVE
+### GOOD SCORE (60-79) - Grade B - WARM LEADS
+- Hiring GM, Operations Manager, Revenue Manager (decision makers)
+- Independent but larger properties (100-200 rooms)
+- Job mentions technology, systems, efficiency, automation
+- B&Bs, inns, guesthouses (smaller but good fit)
 
-### Wrong Job Roles (not our target):
-- Chef, cook, sous chef, kitchen staff (restaurant hiring, not guest comms)
-- Housekeeping, room attendant, cleaner (operations, not guest-facing)
-- Bartender, server, waiter (F&B, not hotel operations)
-- Maintenance, engineer, security (facilities, not our product)
-- Spa therapist, lifeguard (amenities staff)
+### MODERATE SCORE (40-59) - Grade C - WORTH A TRY
+- Hiring IT/Digital roles (tech-savvy but not core user)
+- Job description unclear about guest comms
+- Could be independent or franchise (uncertain)
+- Properties in secondary locations
 
-### Big Hotel Chains (can't sell to corporate):
-- Marriott, Hilton, Hyatt, IHG, Accor, Wyndham brands
-- These have corporate contracts - individual properties can't buy software
-- Exception: Franchises MIGHT be independent owners - mark as "keep" if unsure
+### LOW SCORE (20-39) - Grade D - LONG SHOT
+- Large properties (200+ rooms) - likely have existing systems
+- Unclear if independent or chain
+- Job role not directly related to guest comms
+- Budget markets (may not afford premium software)
 
-### Not Hotels:
-- Standalone restaurants, pubs, bars, cafes
-- Nightclubs, casinos (different industry)
-- Hospitals, care homes, student accommodation
-- Serviced apartments, hostels (different model)
+### ARCHIVE (0-19) - Grade F - NOT A FIT
+- Definitely part of a big chain (corporate decisions)
+- Wrong job role entirely (chef, housekeeping, security)
+- Not a hotel (restaurant, cafe, hospital)
+- Staffing agency posting (not direct hotel)
 
-## YOUR TASK
-Analyze each prospect and decide:
-- "keep" = Good fit for Jengu, should receive outreach
-- "archive" = Not a fit, remove from pipeline
+## ANALYZE THESE SIGNALS
 
-Respond in JSON format only:
-[{"index": 1, "action": "keep" or "archive", "reason": "brief reason"}]`
+**Buying Signals (positive):**
+- "Busy front desk" / "high guest volume" - needs automation
+- "24/7 coverage needed" - AI can help with off-hours
+- "WhatsApp inquiries" - we specialize in this
+- "Multiple languages" - AI handles this well
+- "Quick response time" - AI excels here
+- "Expanding" / "growing" - investing in tools
+- "Modernizing" / "digitizing" - open to new tech
+
+**Concerns (negative):**
+- "Part of [chain name] family" - corporate decision
+- "Opening soon" - might not be ready to buy
+- "Budget hotel" - price sensitive
+- Very large team mentioned - complex org
+- Already using specific systems (may be locked in)
+
+## OUTPUT FORMAT
+Return JSON array with one object per prospect:
+[{
+  "index": 1,
+  "action": "keep" or "archive",
+  "fit_score": 75,
+  "fit_grade": "B",
+  "reason": "Independent boutique hotel hiring front desk - perfect ICP",
+  "buying_signals": ["Mentions high WhatsApp volume", "Looking for quick response times"],
+  "concerns": ["Large property - may have existing systems"],
+  "hotel_size_estimate": "small" | "medium" | "large" | "unknown",
+  "decision_maker_access": "direct" | "likely" | "unlikely" | "unknown",
+  "automation_opportunity": "high" | "medium" | "low",
+  "recommended_approach": "Lead with WhatsApp automation case study"
+}]`
           },
           {
             role: 'user',
-            content: `Analyze these prospects and decide which to keep or archive:\n\n${prospectList}`
+            content: `Analyze and score these ${prospects.length} hotel prospects. Consider their job postings, pain points, and likelihood to buy our guest communication software:\n\n${prospectList}`
           }
         ],
-        temperature: 0.1,
-        max_tokens: 2000,
+        temperature: 0.2,
+        max_tokens: 4000,
       }),
     });
 
     if (!response.ok) {
-      console.error('Grok API error:', response.status);
+      console.error('Grok API error:', response.status, await response.text());
       return prospects.map(p => ({
         prospect_id: p.id,
         action: 'keep' as const,
-        reason: 'AI error - keeping by default',
-        confidence: 'low' as const,
+        fit_score: 50,
+        fit_grade: 'C' as const,
+        reason: 'AI error - default score',
+        buying_signals: [],
+        concerns: ['AI analysis failed'],
+        hotel_size_estimate: 'unknown' as const,
+        decision_maker_access: 'unknown' as const,
+        automation_opportunity: 'medium' as const,
+        recommended_approach: 'Standard outreach',
       }));
     }
 
@@ -228,40 +301,81 @@ Respond in JSON format only:
     // Parse JSON from response
     const jsonMatch = content.match(/\[[\s\S]*\]/);
     if (!jsonMatch) {
+      console.error('Could not parse AI response:', content.slice(0, 200));
       return prospects.map(p => ({
         prospect_id: p.id,
         action: 'keep' as const,
+        fit_score: 50,
+        fit_grade: 'C' as const,
         reason: 'Could not parse AI response',
-        confidence: 'low' as const,
+        buying_signals: [],
+        concerns: ['Parse error'],
+        hotel_size_estimate: 'unknown' as const,
+        decision_maker_access: 'unknown' as const,
+        automation_opportunity: 'medium' as const,
+        recommended_approach: 'Standard outreach',
       }));
     }
 
     const decisions = JSON.parse(jsonMatch[0]) as Array<{
       index: number;
       action: 'keep' | 'archive';
+      fit_score: number;
+      fit_grade: 'A' | 'B' | 'C' | 'D' | 'F';
       reason: string;
+      buying_signals: string[];
+      concerns: string[];
+      hotel_size_estimate: 'small' | 'medium' | 'large' | 'unknown';
+      decision_maker_access: 'direct' | 'likely' | 'unlikely' | 'unknown';
+      automation_opportunity: 'high' | 'medium' | 'low';
+      recommended_approach: string;
     }>;
 
     return decisions.map(d => ({
       prospect_id: prospects[d.index - 1]?.id || '',
       action: d.action,
+      fit_score: d.fit_score,
+      fit_grade: d.fit_grade,
       reason: d.reason,
-      confidence: 'medium' as const,
+      buying_signals: d.buying_signals || [],
+      concerns: d.concerns || [],
+      hotel_size_estimate: d.hotel_size_estimate || 'unknown',
+      decision_maker_access: d.decision_maker_access || 'unknown',
+      automation_opportunity: d.automation_opportunity || 'medium',
+      recommended_approach: d.recommended_approach || 'Standard outreach',
     })).filter(r => r.prospect_id);
 
   } catch (error) {
-    console.error('AI analysis error:', error);
+    console.error('AI scoring error:', error);
     return prospects.map(p => ({
       prospect_id: p.id,
       action: 'keep' as const,
+      fit_score: 50,
+      fit_grade: 'C' as const,
       reason: 'AI error - keeping by default',
-      confidence: 'low' as const,
+      buying_signals: [],
+      concerns: ['AI error'],
+      hotel_size_estimate: 'unknown' as const,
+      decision_maker_access: 'unknown' as const,
+      automation_opportunity: 'medium' as const,
+      recommended_approach: 'Standard outreach',
     }));
   }
 }
 
 /**
- * Main cleanup function - runs after scraping
+ * Convert fit grade to tier
+ */
+function gradeToTier(grade: string): 'hot' | 'warm' | 'cold' {
+  switch (grade) {
+    case 'A': return 'hot';
+    case 'B': return 'warm';
+    default: return 'cold';
+  }
+}
+
+/**
+ * Main cleanup and scoring function - runs after scraping
  */
 export async function cleanupProspects(options: {
   dryRun?: boolean;
@@ -271,15 +385,17 @@ export async function cleanupProspects(options: {
   analyzed: number;
   archived: number;
   kept: number;
+  scored: number;
+  scoreBreakdown: { A: number; B: number; C: number; D: number; F: number };
   results: CleanupResult[];
 }> {
   const supabase = createServerClient();
   const { dryRun = false, limit = 100, stage = 'new' } = options;
 
-  // Get prospects to analyze
+  // Get prospects to analyze - include job description and pain points
   const { data: prospects, error } = await supabase
     .from('prospects')
-    .select('id, name, city, country, source_job_title, chain_affiliation, property_type, tags, notes')
+    .select('id, name, city, country, source_job_title, source_job_description, job_pain_points, chain_affiliation, property_type, tags, notes')
     .eq('stage', stage)
     .eq('archived', false)
     .order('created_at', { ascending: false })
@@ -287,33 +403,84 @@ export async function cleanupProspects(options: {
 
   if (error || !prospects) {
     console.error('Error fetching prospects:', error);
-    return { analyzed: 0, archived: 0, kept: 0, results: [] };
+    return { analyzed: 0, archived: 0, kept: 0, scored: 0, scoreBreakdown: { A: 0, B: 0, C: 0, D: 0, F: 0 }, results: [] };
   }
 
   const results: CleanupResult[] = [];
   const needsAiReview: ProspectForReview[] = [];
+  const scoreBreakdown = { A: 0, B: 0, C: 0, D: 0, F: 0 };
 
   // First pass: quick rule-based filtering
   for (const prospect of prospects) {
     const quickResult = quickFilter(prospect);
     if (quickResult) {
       results.push(quickResult);
+      scoreBreakdown.F++; // Rule-filtered = F grade
     } else {
       needsAiReview.push(prospect);
     }
   }
 
-  // Second pass: AI review for uncertain prospects
+  // Second pass: AI scoring for prospects that passed quick filter
+  let scored = 0;
   if (needsAiReview.length > 0) {
-    // Process in batches of 20 for AI
-    for (let i = 0; i < needsAiReview.length; i += 20) {
-      const batch = needsAiReview.slice(i, i + 20);
-      const aiResults = await aiAnalyzeProspects(batch);
-      results.push(...aiResults);
+    // Process in batches of 10 for detailed AI analysis
+    for (let i = 0; i < needsAiReview.length; i += 10) {
+      const batch = needsAiReview.slice(i, i + 10);
+      const aiResults = await aiAnalyzeAndScoreProspects(batch);
+
+      for (const result of aiResults) {
+        // Track grade breakdown
+        scoreBreakdown[result.fit_grade]++;
+
+        // Convert to CleanupResult for backward compatibility
+        results.push({
+          prospect_id: result.prospect_id,
+          action: result.action,
+          reason: result.reason,
+          confidence: result.fit_score >= 60 ? 'high' : result.fit_score >= 40 ? 'medium' : 'low',
+        });
+
+        // Update prospect with AI scores (unless dry run)
+        if (!dryRun && result.action === 'keep') {
+          const tier = gradeToTier(result.fit_grade);
+
+          await supabase
+            .from('prospects')
+            .update({
+              tier,
+              ai_score: result.fit_score,
+              ai_grade: result.fit_grade,
+              ai_analysis: {
+                reason: result.reason,
+                buying_signals: result.buying_signals,
+                concerns: result.concerns,
+                hotel_size_estimate: result.hotel_size_estimate,
+                decision_maker_access: result.decision_maker_access,
+                automation_opportunity: result.automation_opportunity,
+                recommended_approach: result.recommended_approach,
+                analyzed_at: new Date().toISOString(),
+              },
+            })
+            .eq('id', result.prospect_id);
+
+          // Add activity log for high-scoring prospects
+          if (result.fit_score >= 70) {
+            await supabase.from('activities').insert({
+              prospect_id: result.prospect_id,
+              type: 'note',
+              title: `AI Score: ${result.fit_score}/100 (Grade ${result.fit_grade})`,
+              description: `${result.reason}\n\nBuying signals: ${result.buying_signals.join(', ') || 'None identified'}\n\nRecommended approach: ${result.recommended_approach}`,
+            });
+          }
+
+          scored++;
+        }
+      }
     }
   }
 
-  // Apply actions (unless dry run)
+  // Apply archive actions (unless dry run)
   let archived = 0;
   let kept = 0;
 
@@ -326,6 +493,8 @@ export async function cleanupProspects(options: {
             archived: true,
             archived_at: new Date().toISOString(),
             archive_reason: `AI Cleanup: ${result.reason}`,
+            ai_score: 0,
+            ai_grade: 'F',
           })
           .eq('id', result.prospect_id);
 
@@ -351,8 +520,49 @@ export async function cleanupProspects(options: {
     analyzed: prospects.length,
     archived,
     kept,
+    scored,
+    scoreBreakdown,
     results,
   };
+}
+
+/**
+ * Score a single prospect with detailed analysis
+ */
+export async function scoreProspect(prospectId: string): Promise<AIScoreResult | null> {
+  const supabase = createServerClient();
+
+  const { data: prospect, error } = await supabase
+    .from('prospects')
+    .select('id, name, city, country, source_job_title, source_job_description, job_pain_points, chain_affiliation, property_type, tags, notes')
+    .eq('id', prospectId)
+    .single();
+
+  if (error || !prospect) {
+    console.error('Error fetching prospect:', error);
+    return null;
+  }
+
+  // Check quick filter first
+  const quickResult = quickFilter(prospect);
+  if (quickResult) {
+    return {
+      prospect_id: prospect.id,
+      action: 'archive',
+      fit_score: 0,
+      fit_grade: 'F',
+      reason: quickResult.reason,
+      buying_signals: [],
+      concerns: [quickResult.reason],
+      hotel_size_estimate: 'unknown',
+      decision_maker_access: 'unknown',
+      automation_opportunity: 'low',
+      recommended_approach: 'Do not contact - not a fit',
+    };
+  }
+
+  const results = await aiAnalyzeAndScoreProspects([prospect]);
+  return results[0] || null;
 }
 
 /**
@@ -360,7 +570,8 @@ export async function cleanupProspects(options: {
  */
 export async function previewCleanup(limit = 50): Promise<{
   toArchive: Array<{ id: string; name: string; reason: string }>;
-  toKeep: Array<{ id: string; name: string }>;
+  toKeep: Array<{ id: string; name: string; score?: number; grade?: string }>;
+  scoreBreakdown: { A: number; B: number; C: number; D: number; F: number };
 }> {
   const result = await cleanupProspects({ dryRun: true, limit });
 
@@ -386,5 +597,6 @@ export async function previewCleanup(limit = 50): Promise<{
         id: r.prospect_id,
         name: prospectMap.get(r.prospect_id) || 'Unknown',
       })),
+    scoreBreakdown: result.scoreBreakdown,
   };
 }
