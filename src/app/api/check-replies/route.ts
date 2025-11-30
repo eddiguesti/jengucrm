@@ -580,7 +580,7 @@ export async function POST(request: NextRequest) {
               });
 
               // Log activity with response time
-              const prospectData = originalEmail.prospects;
+              const prospectData = originalEmail.prospects as { id: string; name: string } | { id: string; name: string }[] | null;
               const prospectName = Array.isArray(prospectData) ? prospectData[0]?.name : prospectData?.name;
               await supabase.from('activities').insert({
                 prospect_id: originalEmail.prospect_id,
