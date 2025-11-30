@@ -11,6 +11,120 @@ export interface ScrapedProperty {
   property_type?: string;
 }
 
+// Priority tiers for job roles - higher = more likely to need Jengu
+// HOT (100 points): IT/Tech/Digital/Innovation roles - DEFINITELY need automation
+// WARM (70 points): Front office, reservations, guest services - deal with guest communication daily
+// MEDIUM (40 points): Revenue, marketing, operations - influence tech decisions
+// COLD (20 points): GM, F&B, HR, spa - general decision makers but not primary target
+
+export const ROLE_PRIORITY_SCORES: Record<string, number> = {
+  // HOT - Technology & Innovation (100 points) - Primary targets!
+  'it manager': 100,
+  'it director': 100,
+  'cto': 100,
+  'chief technology officer': 100,
+  'technology director': 100,
+  'technology manager': 100,
+  'digital director': 100,
+  'digital manager': 100,
+  'innovation manager': 100,
+  'innovation director': 100,
+  'ai manager': 100,
+  'automation manager': 100,
+  'systems manager': 100,
+  'digital transformation': 100,
+  'cio': 100,
+
+  // WARM - Front Office & Guest Communication (70 points) - Direct beneficiaries
+  'front office manager': 70,
+  'guest services manager': 70,
+  'guest relations manager': 70,
+  'guest experience manager': 70,
+  'rooms division manager': 70,
+  'reservations manager': 70,
+  'reservations director': 70,
+  'e-commerce manager': 70,
+  'online manager': 70,
+
+  // MEDIUM - Revenue & Marketing (40 points) - Influence decisions
+  'revenue manager': 40,
+  'revenue director': 40,
+  'commercial director': 40,
+  'sales director': 40,
+  'marketing director': 40,
+  'marketing manager': 40,
+  'digital marketing manager': 40,
+  'operations manager': 40,
+  'hotel manager': 40,
+  'resort manager': 40,
+
+  // COLD - General Leadership (20 points) - Decision makers but not primary
+  'general manager': 20,
+  'gm': 20,
+  'managing director': 20,
+  'ceo': 20,
+  'coo': 20,
+  'cfo': 20,
+  'owner': 20,
+  'director': 20,
+  'f&b director': 20,
+  'f&b manager': 20,
+  'hr director': 20,
+  'hr manager': 20,
+  'spa director': 20,
+  'spa manager': 20,
+  'training manager': 20,
+};
+
+/**
+ * Get priority score for a job title (0-100)
+ * Higher = more likely to need/want Jengu
+ */
+export function getJobPriorityScore(jobTitle: string): number {
+  const titleLower = jobTitle.toLowerCase();
+
+  // Check exact matches first
+  for (const [role, score] of Object.entries(ROLE_PRIORITY_SCORES)) {
+    if (titleLower.includes(role)) {
+      return score;
+    }
+  }
+
+  // Check for tech-related keywords (high priority)
+  const techKeywords = ['it ', 'tech', 'digital', 'innovation', 'automation', 'ai ', 'system'];
+  if (techKeywords.some(kw => titleLower.includes(kw))) {
+    return 100;
+  }
+
+  // Check for front office keywords (medium-high priority)
+  const frontOfficeKeywords = ['front office', 'guest', 'reservation', 'rooms division'];
+  if (frontOfficeKeywords.some(kw => titleLower.includes(kw))) {
+    return 70;
+  }
+
+  // Check for revenue/marketing keywords (medium priority)
+  const revenueKeywords = ['revenue', 'marketing', 'commercial', 'sales', 'e-commerce'];
+  if (revenueKeywords.some(kw => titleLower.includes(kw))) {
+    return 40;
+  }
+
+  // Default for other management roles
+  if (titleLower.includes('manager') || titleLower.includes('director')) {
+    return 20;
+  }
+
+  return 0; // Not a relevant role
+}
+
+/**
+ * Get tier based on priority score
+ */
+export function getTierFromScore(score: number): 'hot' | 'warm' | 'cold' {
+  if (score >= 70) return 'hot';
+  if (score >= 40) return 'warm';
+  return 'cold';
+}
+
 // Roles that indicate decision-makers we want to target
 export const RELEVANT_ROLE_KEYWORDS = [
   // C-Suite & Directors
@@ -76,6 +190,53 @@ export const EXCLUDED_ROLE_KEYWORDS = [
   'intern', 'trainee', 'apprentice', 'assistant', 'coordinator', 'agent',
 ];
 
+// Large hotel chains/corporations to exclude - they have their own tech departments
+export const EXCLUDED_CHAINS = [
+  // Major international chains
+  'marriott', 'hilton', 'hyatt', 'ihg', 'intercontinental', 'accor',
+  'wyndham', 'choice hotels', 'best western', 'radisson', 'carlson',
+  'starwood', 'sheraton', 'westin', 'w hotels', 'le meridien', 'aloft',
+  'four points', 'courtyard', 'residence inn', 'springhill', 'fairfield',
+  'hampton inn', 'homewood suites', 'embassy suites', 'doubletree', 'conrad',
+  'waldorf astoria', 'canopy', 'curio', 'tapestry', 'lxr', 'signia',
+  'park hyatt', 'andaz', 'grand hyatt', 'hyatt regency', 'hyatt place',
+  'hyatt house', 'thompson', 'joie de vivre', 'destination', 'alila',
+  'crowne plaza', 'holiday inn', 'indigo', 'even hotels', 'avid', 'staybridge',
+  'candlewood', 'kimpton', 'regent', 'voco', 'vignette',
+  'novotel', 'sofitel', 'pullman', 'mgallery', 'mercure', 'ibis',
+  'adagio', 'jo&joe', 'tribe', 'movenpick', 'swissotel', 'fairmont',
+  'raffles', 'banyan tree', 'angsana', 'cassia', 'dhawa', 'garrya',
+  'days inn', 'super 8', 'ramada', 'wingate', 'microtel', 'la quinta',
+  'baymont', 'travelodge', 'howard johnson', 'hawthorn',
+  // Luxury chains (still corporate)
+  'four seasons', 'ritz carlton', 'ritz-carlton', 'mandarin oriental', 'peninsula',
+  'rosewood', 'aman', 'one&only', 'belmond', 'como', 'six senses',
+  'st regis', 'luxury collection', 'edition', 'jw marriott', 'bvlgari',
+  'capella', 'oetker', 'rocco forte', 'dorchester', 'langham',
+  'shangri-la', 'shangri la', 'kempinski', 'jumeirah', 'anantara',
+  'oberoi', 'taj', 'leela', 'itc', 'park', 'peninsula',
+  // Casino/resort chains
+  'mgm', 'caesars', 'wynn', 'venetian', 'bellagio', 'aria',
+  'mandalay', 'mirage', 'luxor', 'excalibur', 'flamingo',
+  // Cruise & vacation
+  'club med', 'sandals', 'beaches', 'all inclusive', 'barcelo',
+  'riu', 'melia', 'iberostar', 'palladium', 'hard rock hotel',
+  // OTAs and travel companies (not hotels)
+  'booking.com', 'expedia', 'hotels.com', 'trivago', 'kayak',
+  'tripadvisor', 'airbnb', 'vrbo', 'agoda',
+  // Recruitment/staffing agencies
+  'caterer.com', 'hcareers', 'hosco', 'hospitalityonline',
+  'recruitment', 'staffing', 'agency', 'headhunter', 'talent acquisition',
+];
+
+/**
+ * Check if a company name belongs to a large chain/corporation
+ */
+export function isLargeChain(companyName: string): boolean {
+  const nameLower = companyName.toLowerCase();
+  return EXCLUDED_CHAINS.some(chain => nameLower.includes(chain));
+}
+
 /**
  * Check if a job title indicates a relevant decision-maker role
  */
@@ -122,17 +283,26 @@ export function isRelevantRole(jobTitle: string, jobDescription?: string): boole
 }
 
 /**
- * Filter properties to only include relevant management roles
+ * Filter properties to only include relevant management roles AND exclude large chains
  */
 export function filterRelevantProperties(properties: ScrapedProperty[]): {
   relevant: ScrapedProperty[];
   filtered: number;
   filteredRoles: string[];
+  filteredChains: string[];
 } {
   const relevant: ScrapedProperty[] = [];
   const filteredRoles: string[] = [];
+  const filteredChains: string[] = [];
 
   for (const property of properties) {
+    // First check if it's a large chain - skip entirely
+    if (isLargeChain(property.name)) {
+      filteredChains.push(property.name);
+      continue;
+    }
+
+    // Then check if role is relevant
     if (isRelevantRole(property.job_title, property.job_description)) {
       relevant.push(property);
     } else {
@@ -144,6 +314,7 @@ export function filterRelevantProperties(properties: ScrapedProperty[]): {
     relevant,
     filtered: properties.length - relevant.length,
     filteredRoles: [...new Set(filteredRoles)], // unique roles filtered
+    filteredChains: [...new Set(filteredChains)], // unique chains filtered
   };
 }
 

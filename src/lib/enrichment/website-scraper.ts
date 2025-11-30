@@ -210,9 +210,10 @@ export function findEmailsInText(text: string): string[] {
   ];
 
   const fakePatterns = [
-    /^(john|jane|user|test|demo|sample|admin|webmaster)@/i,
+    /^(john|jane|user|test|demo|sample|admin|webmaster|johndoe|janedoe)@/i,
     /^(your|my|the|a)email@/i,
-    /name@/i,
+    /^(name|email|contact|placeholder|example)@/i,
+    /@(website|domain|example|test|placeholder|sample)\./i,
   ];
 
   return matches.filter(email => {

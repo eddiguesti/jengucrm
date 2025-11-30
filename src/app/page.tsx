@@ -12,7 +12,9 @@ import {
   TrendingUp,
   ArrowRight,
   Loader2,
-  AlertTriangle,
+  Star,
+  Search,
+  Kanban,
 } from 'lucide-react';
 import Link from 'next/link';
 import type { Prospect } from '@/types';
@@ -40,7 +42,7 @@ function getTierBadge(tier: string) {
     case 'warm':
       return <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30">Warm</Badge>;
     default:
-      return <Badge className="bg-zinc-500/20 text-zinc-400 border-zinc-500/30">Cold</Badge>;
+      return <Badge className="bg-white/10 text-white/60 border-white/20">Cold</Badge>;
   }
 }
 
@@ -52,9 +54,9 @@ function formatTimeAgo(dateString: string) {
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
 
-  if (diffMins < 60) return `${diffMins} minutes ago`;
-  if (diffHours < 24) return `${diffHours} hours ago`;
-  if (diffDays < 7) return `${diffDays} days ago`;
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
   return date.toLocaleDateString();
 }
 
@@ -114,7 +116,7 @@ export default function DashboardPage() {
             change={loading ? '' : `${stats?.byTier.hot || 0} hot leads`}
             changeType="neutral"
             icon={Users}
-            iconColor="text-blue-500"
+            iconColor="text-blue-400"
           />
           <StatsCard
             title="Hot Leads"
@@ -122,7 +124,7 @@ export default function DashboardPage() {
             change={loading ? '' : 'High priority'}
             changeType="positive"
             icon={Flame}
-            iconColor="text-red-500"
+            iconColor="text-red-400"
           />
           <StatsCard
             title="Warm Leads"
@@ -130,7 +132,7 @@ export default function DashboardPage() {
             change={loading ? '' : 'Following up'}
             changeType="neutral"
             icon={Mail}
-            iconColor="text-amber-500"
+            iconColor="text-amber-400"
           />
           <StatsCard
             title="In Pipeline"
@@ -138,48 +140,48 @@ export default function DashboardPage() {
             change={loading ? '' : 'Active opportunities'}
             changeType="positive"
             icon={TrendingUp}
-            iconColor="text-emerald-500"
+            iconColor="text-emerald-400"
           />
         </div>
 
         {/* Content Grid */}
         <div className="grid gap-6 lg:grid-cols-2">
           {/* Top Prospects */}
-          <Card className="bg-zinc-900 border-zinc-800">
+          <Card>
             <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-white">Top Prospects</CardTitle>
+              <CardTitle>Top Prospects</CardTitle>
               <Link
                 href="/prospects"
-                className="text-sm text-amber-500 hover:text-amber-400 flex items-center gap-1"
+                className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 macos-transition"
               >
-                View all <ArrowRight className="h-4 w-4" />
+                View all <ArrowRight className="h-3 w-3" />
               </Link>
             </CardHeader>
             <CardContent>
               {loading ? (
                 <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-6 w-6 animate-spin text-amber-500" />
+                  <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
                 </div>
               ) : topProspects.length > 0 ? (
-                <div className="space-y-4">
+                <div className="space-y-2">
                   {topProspects.map((prospect) => (
                     <Link
                       key={prospect.id}
                       href={`/prospects/${prospect.id}`}
-                      className="flex items-center justify-between p-3 rounded-lg bg-zinc-800/50 hover:bg-zinc-800 transition-colors"
+                      className="flex items-center justify-between p-3 rounded-lg bg-white/[0.03] hover:bg-white/[0.06] border border-transparent hover:border-white/[0.08] macos-transition"
                     >
                       <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-lg bg-zinc-700 flex items-center justify-center text-sm font-medium">
+                        <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center text-xs font-medium text-white/80">
                           {prospect.name.charAt(0)}
                         </div>
                         <div>
-                          <p className="font-medium text-white">{prospect.name}</p>
-                          <p className="text-sm text-zinc-400">{prospect.city}{prospect.country ? `, ${prospect.country}` : ''}</p>
+                          <p className="text-sm font-medium text-foreground">{prospect.name}</p>
+                          <p className="text-xs text-muted-foreground">{prospect.city}{prospect.country ? `, ${prospect.country}` : ''}</p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2">
                         {getTierBadge(prospect.tier)}
-                        <span className="text-sm font-medium text-zinc-400">
+                        <span className="text-xs font-medium text-muted-foreground">
                           {prospect.score || 0}
                         </span>
                       </div>
@@ -187,11 +189,11 @@ export default function DashboardPage() {
                   ))}
                 </div>
               ) : (
-                <div className="text-center py-8 text-zinc-500">
-                  <p className="mb-4">No prospects yet</p>
+                <div className="text-center py-8">
+                  <p className="text-sm text-muted-foreground mb-3">No prospects yet</p>
                   <Link
                     href="/scraper"
-                    className="text-amber-500 hover:text-amber-400"
+                    className="text-xs text-blue-400 hover:text-blue-300 macos-transition"
                   >
                     Run the scraper to find prospects
                   </Link>
@@ -201,35 +203,35 @@ export default function DashboardPage() {
           </Card>
 
           {/* Recent Activity */}
-          <Card className="bg-zinc-900 border-zinc-800">
+          <Card>
             <CardHeader>
-              <CardTitle className="text-white">Recent Activity</CardTitle>
+              <CardTitle>Recent Activity</CardTitle>
             </CardHeader>
             <CardContent>
               {loading ? (
                 <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-6 w-6 animate-spin text-amber-500" />
+                  <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
                 </div>
               ) : recentActivity.length > 0 ? (
-                <div className="space-y-4">
+                <div className="space-y-3">
                   {recentActivity.slice(0, 5).map((activity) => (
                     <div key={activity.id} className="flex items-start gap-3">
-                      <div className="h-2 w-2 mt-2 rounded-full bg-amber-500" />
+                      <div className="h-1.5 w-1.5 mt-2 rounded-full bg-blue-400" />
                       <div className="flex-1">
-                        <p className="text-sm text-white">
+                        <p className="text-sm text-foreground/90">
                           {activity.title}
                           {activity.prospects?.name && (
-                            <span className="font-medium"> - {activity.prospects.name}</span>
+                            <span className="font-medium text-foreground"> - {activity.prospects.name}</span>
                           )}
                         </p>
-                        <p className="text-xs text-zinc-500">{formatTimeAgo(activity.created_at)}</p>
+                        <p className="text-[11px] text-muted-foreground">{formatTimeAgo(activity.created_at)}</p>
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="text-center py-8 text-zinc-500">
-                  <p>No recent activity</p>
+                <div className="text-center py-8">
+                  <p className="text-sm text-muted-foreground">No recent activity</p>
                 </div>
               )}
             </CardContent>
@@ -237,48 +239,65 @@ export default function DashboardPage() {
         </div>
 
         {/* Quick Actions */}
-        <Card className="bg-zinc-900 border-zinc-800">
+        <Card>
           <CardHeader>
-            <CardTitle className="text-white">Quick Actions</CardTitle>
+            <CardTitle>Quick Actions</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
               <Link
                 href="/scraper"
-                className="p-4 rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors"
+                className="group p-4 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.06] hover:border-white/[0.12] macos-transition"
               >
-                <h3 className="font-medium text-white">Run Job Scraper</h3>
-                <p className="text-sm text-zinc-400 mt-1">
-                  Find hotels hiring on job boards
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="p-1.5 rounded-lg bg-blue-500/10">
+                    <Search className="h-3.5 w-3.5 text-blue-400" />
+                  </div>
+                  <h3 className="text-sm font-medium text-foreground">Run Job Scraper</h3>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Find hotels hiring on 10 job boards
                 </p>
               </Link>
               <Link
                 href="/review-mining"
-                className="p-4 rounded-lg bg-gradient-to-r from-red-500/10 to-orange-500/10 border border-red-500/20 hover:from-red-500/20 hover:to-orange-500/20 transition-colors"
+                className="group p-4 rounded-xl bg-gradient-to-br from-orange-500/5 to-red-500/5 border border-orange-500/10 hover:border-orange-500/20 macos-transition"
               >
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="h-4 w-4 text-red-500" />
-                  <h3 className="font-medium text-white">Review Mining</h3>
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="p-1.5 rounded-lg bg-orange-500/10">
+                    <Star className="h-3.5 w-3.5 text-orange-400" />
+                  </div>
+                  <h3 className="text-sm font-medium text-foreground">Review Mining</h3>
                 </div>
-                <p className="text-sm text-zinc-400 mt-1">
+                <p className="text-xs text-muted-foreground">
                   Find hotels with communication issues
                 </p>
               </Link>
               <Link
                 href="/prospects?tier=hot"
-                className="p-4 rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors"
+                className="group p-4 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.06] hover:border-white/[0.12] macos-transition"
               >
-                <h3 className="font-medium text-white">Review Hot Leads</h3>
-                <p className="text-sm text-zinc-400 mt-1">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="p-1.5 rounded-lg bg-red-500/10">
+                    <Flame className="h-3.5 w-3.5 text-red-400" />
+                  </div>
+                  <h3 className="text-sm font-medium text-foreground">Review Hot Leads</h3>
+                </div>
+                <p className="text-xs text-muted-foreground">
                   {stats?.byTier.hot || 0} leads ready for outreach
                 </p>
               </Link>
               <Link
                 href="/pipeline"
-                className="p-4 rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors"
+                className="group p-4 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.06] hover:border-white/[0.12] macos-transition"
               >
-                <h3 className="font-medium text-white">View Pipeline</h3>
-                <p className="text-sm text-zinc-400 mt-1">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="p-1.5 rounded-lg bg-purple-500/10">
+                    <Kanban className="h-3.5 w-3.5 text-purple-400" />
+                  </div>
+                  <h3 className="text-sm font-medium text-foreground">View Pipeline</h3>
+                </div>
+                <p className="text-xs text-muted-foreground">
                   Track your sales pipeline
                 </p>
               </Link>

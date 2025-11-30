@@ -69,13 +69,18 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Create email record in database
+    // Create email record in database with full tracking
     const { data: email, error: emailError } = await supabase
       .from('emails')
       .insert({
         prospect_id,
         subject,
         body,
+        to_email,
+        from_email: process.env.AZURE_MAIL_FROM || 'edd@jengu.ai',
+        message_id: messageId,
+        email_type: 'outreach',
+        direction: 'outbound',
         status: 'sent',
         sent_at: new Date().toISOString(),
       })

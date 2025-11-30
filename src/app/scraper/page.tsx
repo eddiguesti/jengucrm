@@ -60,16 +60,25 @@ const jobTitles = [
 ];
 
 const availableScrapers: Scraper[] = [
+  // 8 Base scrapers (no API keys needed)
   { id: 'hosco', name: 'Hosco', baseUrl: 'hosco.com' },
   { id: 'hcareers', name: 'Hcareers', baseUrl: 'hcareers.com' },
   { id: 'hotelcareer', name: 'Hotelcareer', baseUrl: 'hotelcareer.com' },
   { id: 'talentshotels', name: 'TalentsHotels', baseUrl: 'talentshotels.com' },
   { id: 'journaldespalaces', name: 'Journal des Palaces', baseUrl: 'journaldespalaces.com' },
-  { id: 'caterer', name: 'Caterer.com (slow)', baseUrl: 'caterer.com' },
+  { id: 'hospitalityonline', name: 'HospitalityOnline', baseUrl: 'hospitalityonline.com' },
+  { id: 'hoteljobs', name: 'HotelJobs', baseUrl: 'hoteljobs.com' },
+  { id: 'ehotelier', name: 'eHotelier', baseUrl: 'ehotelier.com' },
+  // 2 Optional scrapers (with API keys configured)
+  { id: 'indeed', name: 'Indeed (via ScraperAPI)', baseUrl: 'indeed.com' },
+  { id: 'adzuna', name: 'Adzuna', baseUrl: 'adzuna.com' },
 ];
 
-// Recommended scrapers that reliably work
-const recommendedScrapers = ['hosco', 'hcareers', 'hotelcareer', 'talentshotels', 'journaldespalaces'];
+// All 10 scrapers - recommended for full coverage
+const recommendedScrapers = [
+  'hosco', 'hcareers', 'hotelcareer', 'talentshotels', 'journaldespalaces',
+  'hospitalityonline', 'hoteljobs', 'ehotelier', 'indeed', 'adzuna'
+];
 
 export default function ScraperPage() {
   const [isRunning, setIsRunning] = useState(false);

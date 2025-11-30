@@ -7,18 +7,26 @@ import { LinkedInScraper } from './linkedin';
 import { GlassdoorScraper } from './glassdoor';
 import { TalentsHotelsScraper } from './talentshotels';
 import { JournalDesPalacesScraper } from './journaldespalaces';
+import { HospitalityOnlineScraper } from './hospitalityonline';
+import { HotelJobsScraper } from './hoteljobs';
+import { EHotelierScraper } from './ehotelier';
+import { AdzunaScraper } from './adzuna';
 import { BaseScraper, ScrapedProperty, ScraperResult } from './types';
 
 export * from './types';
 
 // Scraper status:
-// ✅ hosco - Working (extracts from __NEXT_DATA__ JSON)
-// ✅ hcareers - Working (extracts from logo alt tags)
-// ✅ hotelcareer - Working (extracts from job URLs)
-// ✅ talentshotels - Working (extracts from __NEXT_DATA__ JSON)
-// ✅ journaldespalaces - Working (extracts from hotel listing page)
-// ⚠️ caterer - Often blocked/timeout
-// ⚠️ indeed - Returns HTTP 403 (blocked)
+// ✅ hosco - Working (extracts from __NEXT_DATA__ JSON) - Global hospitality jobs
+// ✅ hcareers - Working (extracts from logo alt tags) - US/UK hospitality
+// ✅ hotelcareer - Working (extracts from job URLs) - German/European hotels
+// ✅ talentshotels - Working (extracts from __NEXT_DATA__ JSON) - French luxury hotels
+// ✅ journaldespalaces - Working (extracts from hotel listing page) - French palace hotels
+// ✅ hospitalityonline - Working (JSON-LD structured data) - Global hospitality
+// ✅ hoteljobs - Working - European hotel jobs
+// ✅ ehotelier - Working - Global hotel industry
+// ✅ indeed - Working with ScraperAPI proxy - Largest job site globally
+// ✅ adzuna - Working (scraper-friendly) - Global job aggregator
+// ⚠️ caterer - Often blocked/timeout - UK hospitality
 // ⚠️ linkedin - Requires authentication
 // ⚠️ glassdoor - Requires authentication
 
@@ -30,13 +38,32 @@ export const scrapers: Record<string, BaseScraper> = {
   hotelcareer: new HotelcareerScraper(),
   talentshotels: new TalentsHotelsScraper(),
   journaldespalaces: new JournalDesPalacesScraper(),
+  hospitalityonline: new HospitalityOnlineScraper(),
+  hoteljobs: new HotelJobsScraper(),
+  ehotelier: new EHotelierScraper(),
   indeed: new IndeedScraper(),
+  adzuna: new AdzunaScraper(),
   linkedin: new LinkedInScraper(),
   glassdoor: new GlassdoorScraper(),
 };
 
-// Recommended scrapers that reliably work
-export const recommendedScrapers = ['hosco', 'hcareers', 'hotelcareer', 'talentshotels', 'journaldespalaces'];
+// Recommended scrapers that reliably work WITHOUT any API keys (8 sites!)
+export const recommendedScrapers = [
+  'hosco',           // Global - Best for international luxury
+  'hcareers',        // US/UK - Hospitality careers
+  'hotelcareer',     // German/European
+  'talentshotels',   // French luxury
+  'journaldespalaces', // French palace hotels
+  'hospitalityonline', // Global hospitality
+  'hoteljobs',       // European hotels
+  'ehotelier',       // Global hotel industry
+];
+
+// Optional scrapers that need API keys for best results
+export const optionalScrapers = [
+  'indeed',          // Largest job site - needs SCRAPERAPI_KEY (free: 5k/month at scraperapi.com)
+  'adzuna',          // Global aggregator - needs ADZUNA_APP_ID & ADZUNA_API_KEY (free at developer.adzuna.com)
+];
 
 export const scraperList = Object.values(scrapers).map(s => ({
   id: s.id,

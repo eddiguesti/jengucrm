@@ -1,12 +1,34 @@
 {
   "crons": [
     {
-      "path": "/api/cron/scrape-jobs",
-      "schedule": "0 6 * * *"
-    },
-    {
-      "path": "/api/cron/mine-reviews",
-      "schedule": "0 8 * * *"
+      "path": "/api/cron/daily",
+      "schedule": "0 7 * * *"
     }
-  ]
+  ],
+  "functions": {
+    "src/app/api/cron/daily/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/cron/check-replies/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/cron/scrape-jobs/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/cron/mine-reviews/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/check-replies/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/auto-email/route.ts": {
+      "maxDuration": 120
+    },
+    "src/app/api/follow-up/route.ts": {
+      "maxDuration": 120
+    },
+    "src/app/api/scrape/route.ts": {
+      "maxDuration": 300
+    }
+  }
 }

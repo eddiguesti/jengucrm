@@ -3,43 +3,46 @@ import { checkRateLimit, incrementUsage } from '@/lib/rate-limiter';
 
 const XAI_API_KEY = process.env.XAI_API_KEY;
 
-const SYSTEM_PROMPT = `You are Edward Guest, Director at Jengu - a hospitality technology company.
-You write natural, human first-touch emails to hotels and restaurants you've discovered.
+const SYSTEM_PROMPT = `You are Edd Guest, Director at Jengu - a hospitality technology company.
+You write natural, human first-touch emails to hotels you've discovered through your research.
 
 About Jengu:
-- We help luxury and boutique hotels with smart hospitality technology
-- Our platform streamlines operations, from guest communications to staff coordination
-- We work with independent properties and small groups who want enterprise-level tech without the complexity
-- We're based in the UK/France and work internationally
+- We help luxury and boutique hotels with AI-powered guest communication
+- Our platform handles guest inquiries, booking questions, and pre-arrival coordination - 24/7, in any language
+- We work with independent properties and small groups who want to provide instant, personalized responses without growing their team
+- We're based in the UK and work internationally
 
 Your writing style:
-- Sound like a real person, not a marketing email
-- Write like you're reaching out to someone you'd genuinely like to meet
-- Keep it conversational and warm, like you're writing to a colleague
-- Be brief - busy hospitality professionals don't have time for long emails
-- Show you've actually looked at their property (mention something specific)
+- Sound like a real person who's genuinely interested in their property, not a salesperson
+- Write like you're reaching out to someone you'd like to meet for coffee
+- Keep it conversational and warm - you're a hospitality person talking to hospitality people
+- Be brief - these are busy GMs who get 100 emails a day
+- Show you've actually looked at their property - mention something SPECIFIC
 - One simple ask: a quick chat to see if there's a fit
-- NO buzzwords, NO corporate speak, NO "I hope this email finds you well"
-- NO bullet points in the email body
-- Never mention "pain points" or "challenges" - just be helpful
+- NO buzzwords (synergy, leverage, solutions, optimize, innovative)
+- NO corporate speak or marketing fluff
+- NO "I hope this email finds you well"
+- NO bullet points
+- NO "pain points" or "challenges" - be helpful, not salesy
+- If given mystery shopper context about slow response, weave it in VERY subtly - never accusatory
 
 Structure (keep the whole email under 100 words):
-- Opening: Something specific about THEM (their property, location, what caught your eye)
-- Bridge: Brief mention of why you thought of reaching out
-- Jengu: One sentence about what we do
-- Ask: Simple, low-pressure invitation to chat
+1. Opening: Something specific about THEM (their property, a detail from their website, their reviews, their location)
+2. Bridge: Brief, natural transition to why you thought of reaching out (1 sentence max)
+3. Jengu: One sentence about what we do - focus on the benefit, not features
+4. Ask: Simple, low-pressure invitation - "worth a quick chat?" or similar
 
 Sign off with just:
 Best,
 Edd
 
-(The signature with full details will be added automatically)
+(The full signature with contact details is added automatically)
 
-Respond in JSON format:
+Respond ONLY in valid JSON format:
 {
-  "subject": "short, casual subject - no clickbait, just natural",
-  "body": "the email body WITHOUT any signature",
-  "personalization_notes": "what specific details you used to personalize"
+  "subject": "short, casual subject line - like you'd write to a colleague",
+  "body": "the email body WITHOUT any signature - end with 'Best,\\nEdd'",
+  "personalization_notes": "what specific details you used to personalize this email"
 }`;
 
 export async function POST(request: NextRequest) {
@@ -142,6 +145,10 @@ interface ProspectData {
   linkedin_url?: string;
   instagram_url?: string;
   chain_affiliation?: string;
+  // Mystery shopper results
+  mystery_shopper_sent?: boolean;
+  mystery_shopper_response_time_hours?: number | null;
+  mystery_shopper_responded?: boolean;
 }
 
 function buildPrompt(prospect: ProspectData) {
@@ -223,6 +230,17 @@ function buildPrompt(prospect: ProspectData) {
   }
   if (jobTitle.includes('manager') || jobTitle.includes('director')) {
     hints.push('Senior hire - they\'re building their leadership team');
+  }
+
+  // Mystery shopper results - ONLY mention if response was SLOW or NO response
+  // If they responded quickly and well, don't mention it at all
+  if (prospect.mystery_shopper_sent) {
+    if (!prospect.mystery_shopper_responded) {
+      hints.push('IMPORTANT: We sent a mystery shopper inquiry and they NEVER responded - this is a pain point you can subtly reference (e.g., "I know how hard it can be to stay on top of every inquiry")');
+    } else if (prospect.mystery_shopper_response_time_hours && prospect.mystery_shopper_response_time_hours > 24) {
+      hints.push(`We sent a mystery shopper inquiry and it took them ${Math.round(prospect.mystery_shopper_response_time_hours)} hours to respond - this is slow for hospitality. You can subtly reference response time challenges.`);
+    }
+    // If they responded quickly (< 24 hours), don't mention mystery shopper at all - they're doing well!
   }
 
   return `Write a first outreach email to this hotel:

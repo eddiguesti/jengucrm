@@ -85,9 +85,11 @@ export class TalentsHotelsScraper extends BaseScraper {
         const jobs = nextData.props?.pageProps?.postes || [];
 
         for (const job of jobs) {
-          // Get hotel/establishment name
-          const companyName = job.etablissement_nom || job.Nom_Entreprise;
-          if (!companyName || companyName === 'Établissement') continue;
+          // Get hotel/establishment name - prioritize etablissement_nom (actual hotel name)
+          const companyName = job.etablissement_nom && job.etablissement_nom !== 'Établissement'
+            ? job.etablissement_nom
+            : job.Nom_Entreprise;
+          if (!companyName || companyName === 'Établissement' || companyName === 'Établissement') continue;
 
           // Skip duplicates
           const key = companyName.toLowerCase();

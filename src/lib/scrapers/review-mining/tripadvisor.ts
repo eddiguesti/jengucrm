@@ -177,8 +177,7 @@ export class TripAdvisorScraper {
       return this.parseHotelList(html);
     } catch (err) {
       console.error('Failed to get hotel list:', err);
-      // Return mock data for development/testing
-      return this.getMockHotelList(locationName);
+      return [];
     }
   }
 
@@ -244,8 +243,7 @@ export class TripAdvisorScraper {
       const html = await this.fetchPage(lowRatingUrl);
       return this.parseReviews(html, hotelUrl);
     } catch {
-      // Return mock data for development
-      return this.getMockReviews(hotelName);
+      return { reviews: [], total: 0 };
     }
   }
 
@@ -339,52 +337,6 @@ export class TripAdvisorScraper {
       return { city: parts[0], country: parts[parts.length - 1] };
     }
     return { city: parts[0] || defaultLocation, country: '' };
-  }
-
-  // Mock data for development when actual scraping fails
-  private getMockHotelList(location: string): TripAdvisorProperty[] {
-    return [
-      {
-        name: `The Grand Resort ${location}`,
-        url: '/Hotel_Review-mock-1',
-        rating: 4.5,
-        review_count: 1250,
-        price_level: '$$$$$',
-        location: location,
-      },
-      {
-        name: `Paradise Beach Hotel ${location}`,
-        url: '/Hotel_Review-mock-2',
-        rating: 4.2,
-        review_count: 890,
-        price_level: '$$$$',
-        location: location,
-      },
-    ];
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private getMockReviews(hotelName: string): { reviews: TripAdvisorReview[]; total: number } {
-    // Sample reviews with pain signals for testing
-    return {
-      reviews: [
-        {
-          text: `Beautiful hotel but terrible communication. I emailed them 3 times about our room request and never got a response. When we arrived, no one knew about our booking. The staff at the front desk couldn't reach anyone and we waited for hours. Extremely frustrating for a 5-star hotel.`,
-          rating: 2,
-          date: '2024-11-15',
-          reviewer_name: 'TravelLover2024',
-          review_url: '/reviews/mock-1',
-        },
-        {
-          text: `The property is stunning but the service was disappointing. Slow response to requests, took days to get simple things done. We asked for extra towels and no one answered our call. Had to go down to reception twice.`,
-          rating: 3,
-          date: '2024-11-10',
-          reviewer_name: 'LuxuryTraveler',
-          review_url: '/reviews/mock-2',
-        },
-      ],
-      total: 2,
-    };
   }
 }
 

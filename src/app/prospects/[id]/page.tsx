@@ -26,9 +26,16 @@ import {
   Copy,
   Check,
   Sparkles,
+  Archive,
+  Bell,
+  MessageSquare,
+  Send,
+  Inbox,
+  Calendar,
+  XCircle,
 } from 'lucide-react';
 import Link from 'next/link';
-import type { Prospect, Email, Activity, ProspectStage, PainSignal } from '@/types';
+import type { Prospect, Email, Activity, ProspectStage, PainSignal, EmailThread } from '@/types';
 import {
   NextActionCard,
   HiringSignalCard,
@@ -72,6 +79,74 @@ function formatTimeAgo(dateString: string) {
   if (diffHours < 24) return `${diffHours} hours ago`;
   if (diffDays < 7) return `${diffDays} days ago`;
   return date.toLocaleDateString();
+}
+
+function groupEmailsIntoThreads(emails: Email[]): EmailThread[] {
+  const threadMap = new Map<string, Email[]>();
+
+  // Group by thread_id or create individual threads
+  emails.forEach(email => {
+    const threadKey = email.thread_id || email.id;
+    if (!threadMap.has(threadKey)) {
+      threadMap.set(threadKey, []);
+    }
+    threadMap.get(threadKey)!.push(email);
+  });
+
+  // Convert to threads and sort by last activity
+  const threads: EmailThread[] = Array.from(threadMap.entries()).map(([threadId, threadEmails]) => {
+    // Sort emails in thread by date (oldest first)
+    threadEmails.sort((a, b) =>
+      new Date(a.sent_at || a.created_at).getTime() - new Date(b.sent_at || b.created_at).getTime()
+    );
+
+    const lastEmail = threadEmails[threadEmails.length - 1];
+    const hasReply = threadEmails.some(e => e.direction === 'inbound');
+    const hasMeetingRequest = threadEmails.some(e => e.email_type === 'meeting_request');
+
+    return {
+      thread_id: threadId,
+      emails: threadEmails,
+      lastActivity: lastEmail.sent_at || lastEmail.created_at,
+      hasReply,
+      hasMeetingRequest,
+    };
+  });
+
+  // Sort threads by last activity (newest first)
+  threads.sort((a, b) => new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime());
+
+  return threads;
+}
+
+function getEmailTypeLabel(type: string | null): { label: string; className: string } {
+  switch (type) {
+    case 'meeting_request':
+      return { label: 'Meeting Request', className: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' };
+    case 'positive_reply':
+      return { label: 'Positive', className: 'bg-blue-500/20 text-blue-400 border-blue-500/30' };
+    case 'not_interested':
+      return { label: 'Not Interested', className: 'bg-red-500/20 text-red-400 border-red-500/30' };
+    case 'mystery_shopper':
+      return { label: 'Mystery Shopper', className: 'bg-purple-500/20 text-purple-400 border-purple-500/30' };
+    case 'outreach':
+      return { label: 'Outreach', className: 'bg-amber-500/20 text-amber-400 border-amber-500/30' };
+    case 'follow_up':
+      return { label: 'Follow Up', className: 'bg-zinc-500/20 text-zinc-400 border-zinc-500/30' };
+    default:
+      return { label: 'Email', className: 'bg-zinc-500/20 text-zinc-400 border-zinc-500/30' };
+  }
+}
+
+function getArchiveReasonLabel(reason: string | null): string {
+  switch (reason) {
+    case 'not_interested': return 'Not Interested';
+    case 'competitor': return 'Using Competitor';
+    case 'budget': return 'Budget Issues';
+    case 'timing': return 'Bad Timing';
+    case 'wrong_contact': return 'Wrong Contact';
+    default: return reason || 'Archived';
+  }
 }
 
 export default function ProspectDetailPage() {
@@ -263,6 +338,44 @@ export default function ProspectDetailPage() {
           </Link>
         </div>
 
+        {/* Archived Banner */}
+        {prospect.archived && (
+          <div className="mb-6 p-4 rounded-lg bg-red-500/10 border border-red-500/30 flex items-center gap-3">
+            <div className="p-2 rounded-full bg-red-500/20">
+              <Archive className="h-5 w-5 text-red-400" />
+            </div>
+            <div className="flex-1">
+              <p className="text-red-400 font-medium">This prospect has been archived</p>
+              <p className="text-sm text-zinc-400">
+                Reason: {getArchiveReasonLabel(prospect.archive_reason)}
+                {prospect.archived_at && (
+                  <span className="ml-2">
+                    ({new Date(prospect.archived_at).toLocaleDateString()})
+                  </span>
+                )}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-red-500/30 text-red-400 hover:bg-red-500/10"
+              onClick={async () => {
+                try {
+                  const response = await fetch(`/api/prospects/${id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ archived: false, archive_reason: null }),
+                  });
+                  if (response.ok) fetchProspect();
+                } catch {}
+              }}
+            >
+              <XCircle className="h-4 w-4 mr-1" />
+              Unarchive
+            </Button>
+          </div>
+        )}
+
         <div className="grid gap-6 lg:grid-cols-3">
           {/* Main Content */}
           <div className="lg:col-span-2 space-y-6">
@@ -366,7 +479,10 @@ export default function ProspectDetailPage() {
               <TabsContent value="emails" className="space-y-4">
                 <Card className="bg-zinc-900 border-zinc-800">
                   <CardHeader className="flex flex-row items-center justify-between">
-                    <CardTitle className="text-white">Email Outreach</CardTitle>
+                    <CardTitle className="text-white flex items-center gap-2">
+                      <MessageSquare className="h-5 w-5" />
+                      Email Conversations
+                    </CardTitle>
                     <Button
                       onClick={handleGenerateEmail}
                       disabled={isGenerating}
@@ -395,23 +511,92 @@ export default function ProspectDetailPage() {
                     )}
 
                     {emails.length > 0 ? (
-                      <div className="space-y-4">
-                        {emails.map((email) => (
-                          <div key={email.id} className="p-4 rounded-lg bg-zinc-800 border border-zinc-700">
-                            <div className="flex items-center justify-between mb-2">
-                              <h4 className="font-medium text-white">{email.subject}</h4>
-                              <Badge className={
-                                email.status === 'sent' ? 'bg-emerald-500/20 text-emerald-400' :
-                                email.status === 'opened' ? 'bg-blue-500/20 text-blue-400' :
-                                'bg-zinc-700 text-zinc-300'
-                              }>
-                                {email.status.charAt(0).toUpperCase() + email.status.slice(1)}
-                              </Badge>
+                      <div className="space-y-6">
+                        {groupEmailsIntoThreads(emails).map((thread) => (
+                          <div key={thread.thread_id} className="rounded-lg border border-zinc-700 overflow-hidden">
+                            {/* Thread Header */}
+                            <div className="bg-zinc-800/50 px-4 py-3 flex items-center justify-between border-b border-zinc-700">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-medium text-white">
+                                  {thread.emails[0].subject}
+                                </span>
+                                {thread.hasReply && (
+                                  <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
+                                    <Inbox className="h-3 w-3 mr-1" />
+                                    Reply
+                                  </Badge>
+                                )}
+                                {thread.hasMeetingRequest && (
+                                  <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30">
+                                    <Calendar className="h-3 w-3 mr-1" />
+                                    Meeting
+                                  </Badge>
+                                )}
+                              </div>
+                              <span className="text-xs text-zinc-500">
+                                {thread.emails.length} message{thread.emails.length !== 1 ? 's' : ''}
+                              </span>
                             </div>
-                            <p className="text-sm text-zinc-400 line-clamp-2">{email.body}</p>
-                            <p className="text-xs text-zinc-500 mt-2">
-                              {new Date(email.created_at).toLocaleDateString()}
-                            </p>
+
+                            {/* Thread Messages */}
+                            <div className="divide-y divide-zinc-800">
+                              {thread.emails.map((email, idx) => {
+                                const isInbound = email.direction === 'inbound';
+                                const typeLabel = getEmailTypeLabel(email.email_type);
+
+                                return (
+                                  <div
+                                    key={email.id}
+                                    className={`p-4 ${isInbound ? 'bg-zinc-800/30' : 'bg-zinc-900'}`}
+                                  >
+                                    <div className="flex items-start gap-3">
+                                      {/* Direction Icon */}
+                                      <div className={`mt-1 p-1.5 rounded-full ${isInbound ? 'bg-emerald-500/20' : 'bg-amber-500/20'}`}>
+                                        {isInbound ? (
+                                          <Inbox className="h-3 w-3 text-emerald-400" />
+                                        ) : (
+                                          <Send className="h-3 w-3 text-amber-400" />
+                                        )}
+                                      </div>
+
+                                      <div className="flex-1 min-w-0">
+                                        {/* Email Header */}
+                                        <div className="flex items-center justify-between gap-2 mb-2">
+                                          <div className="flex items-center gap-2 text-sm">
+                                            <span className={isInbound ? 'text-emerald-400 font-medium' : 'text-amber-400 font-medium'}>
+                                              {isInbound ? 'From:' : 'To:'}
+                                            </span>
+                                            <span className="text-zinc-300">
+                                              {isInbound ? email.from_email : email.to_email}
+                                            </span>
+                                          </div>
+                                          <div className="flex items-center gap-2">
+                                            <Badge className={typeLabel.className}>
+                                              {typeLabel.label}
+                                            </Badge>
+                                            <span className="text-xs text-zinc-500">
+                                              {new Date(email.sent_at || email.created_at).toLocaleString()}
+                                            </span>
+                                          </div>
+                                        </div>
+
+                                        {/* Show subject only if different from thread subject */}
+                                        {idx > 0 && email.subject !== thread.emails[0].subject && (
+                                          <p className="text-sm text-zinc-400 mb-2">
+                                            Re: {email.subject}
+                                          </p>
+                                        )}
+
+                                        {/* Email Body */}
+                                        <div className="text-sm text-zinc-300 whitespace-pre-wrap">
+                                          {email.body}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
                         ))}
                       </div>

@@ -226,13 +226,21 @@ export async function autoEnrichProspect(prospectId: string): Promise<{
       phone = websiteData.phones[0];
     }
 
-    // Find primary contact (filter fake names)
-    const fakeNamePatterns = /fallback|placeholder|cookie|consent|privacy|test|demo|sample|john doe|jane doe|btn|button|click|submit|form|input|select|toggle|menu|nav|header|footer|modal|popup/i;
+    // Find primary contact (filter fake names and HTML artifacts)
+    const fakeNamePatterns = /fallback|placeholder|cookie|consent|privacy|test|demo|sample|john doe|jane doe|btn|button|click|submit|form|input|select|toggle|menu|nav|header|footer|modal|popup|website|facebook|twitter|instagram|linkedin|youtube|using fb|js$/i;
     const validTeamMembers = websiteData.teamMembers.filter(m => {
-      const words = m.name.trim().split(/\s+/);
+      const name = m.name.trim();
+      const words = name.split(/\s+/);
+      // Must have at least 2 words (first and last name)
       if (words.length < 2) return false;
-      if (fakeNamePatterns.test(m.name)) return false;
+      // Filter out fake patterns
+      if (fakeNamePatterns.test(name)) return false;
+      // Each word should be at least 2 characters
       if (words.some(w => w.length < 2)) return false;
+      // Name shouldn't be too long (likely HTML content)
+      if (name.length > 40) return false;
+      // Should look like a real name (starts with capital letters)
+      if (!words.every(w => /^[A-Z]/.test(w))) return false;
       return true;
     });
 

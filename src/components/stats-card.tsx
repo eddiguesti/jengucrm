@@ -17,30 +17,33 @@ export function StatsCard({
   change,
   changeType = 'neutral',
   icon: Icon,
-  iconColor = 'text-zinc-400',
+  iconColor = 'text-muted-foreground',
 }: StatsCardProps) {
   return (
-    <Card className="bg-zinc-900 border-zinc-800">
-      <CardContent className="p-6">
+    <Card className="hover-lift">
+      <CardContent className="p-5">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm text-zinc-400">{title}</p>
-            <p className="text-3xl font-bold text-white mt-1">{value}</p>
+            <p className="text-xs text-muted-foreground font-medium">{title}</p>
+            <p className="text-2xl font-bold text-foreground mt-1">{value}</p>
             {change && (
               <p
                 className={cn(
-                  'text-sm mt-1',
-                  changeType === 'positive' && 'text-emerald-500',
-                  changeType === 'negative' && 'text-red-500',
-                  changeType === 'neutral' && 'text-zinc-400'
+                  'text-[11px] mt-1',
+                  changeType === 'positive' && 'text-emerald-400',
+                  changeType === 'negative' && 'text-red-400',
+                  changeType === 'neutral' && 'text-muted-foreground'
                 )}
               >
                 {change}
               </p>
             )}
           </div>
-          <div className={cn('h-12 w-12 rounded-lg bg-zinc-800 flex items-center justify-center', iconColor)}>
-            <Icon className="h-6 w-6" />
+          <div className={cn(
+            'h-10 w-10 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center',
+            iconColor
+          )}>
+            <Icon className="h-5 w-5" />
           </div>
         </div>
       </CardContent>

@@ -66,7 +66,22 @@ export interface Prospect {
   tags: string[] | null;
   created_at: string;
   updated_at: string;
+  // Archive fields
+  archived: boolean;
+  archived_at: string | null;
+  archive_reason: string | null;
 }
+
+export type EmailDirection = 'inbound' | 'outbound';
+
+export type EmailType =
+  | 'outreach'
+  | 'follow_up'
+  | 'mystery_shopper'
+  | 'reply'
+  | 'meeting_request'
+  | 'not_interested'
+  | 'positive_reply';
 
 export interface Email {
   id: string;
@@ -82,6 +97,36 @@ export interface Email {
   opened_at: string | null;
   replied_at: string | null;
   sequence_number: number;
+  created_at: string;
+  // New email tracking fields
+  to_email: string | null;
+  from_email: string | null;
+  message_id: string | null;
+  email_type: EmailType | null;
+  direction: EmailDirection;
+  thread_id: string | null;
+  reply_to_id: string | null;
+}
+
+export interface EmailThread {
+  thread_id: string;
+  emails: Email[];
+  lastActivity: string;
+  hasReply: boolean;
+  hasMeetingRequest: boolean;
+}
+
+export interface Notification {
+  id: string;
+  prospect_id: string;
+  email_id: string | null;
+  type: 'meeting_request' | 'positive_reply' | 'urgent';
+  title: string;
+  message: string | null;
+  read: boolean;
+  read_at: string | null;
+  sent_email: boolean;
+  sent_push: boolean;
   created_at: string;
 }
 

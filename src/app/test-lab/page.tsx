@@ -662,7 +662,7 @@ export default function TestLabPage() {
           </CardHeader>
           <CardContent className="space-y-4 text-sm text-zinc-400">
             <ol className="list-decimal list-inside space-y-2">
-              <li>Add a test prospect with andy.chukwuat@gmail.com as the email</li>
+              <li>Add a test prospect with edd.guest@gmail.com as the email</li>
               <li>Click &quot;Send Test&quot; to generate an AI email with Grok 4</li>
               <li>The email will be sent from edd@jengu.ai via Microsoft Graph</li>
               <li>Check the test inbox - delivery is typically under 5 seconds</li>
@@ -673,7 +673,7 @@ export default function TestLabPage() {
             <p className="text-zinc-500">
               <strong className="text-zinc-300">Sender:</strong> edd@jengu.ai (Edward Guest)
               <br />
-              <strong className="text-zinc-300">Test inbox:</strong> andy.chukwuat@gmail.com
+              <strong className="text-zinc-300">Test prospect email:</strong> edd.guest@gmail.com
             </p>
           </CardContent>
         </Card>

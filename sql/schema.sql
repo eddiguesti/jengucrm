@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS prospects (
     source TEXT, -- 'hosco', 'caterer', 'linkedin', 'manual', 'referral'
     source_url TEXT,
     source_job_title TEXT, -- If from job board
+    source_job_description TEXT, -- Full job description text
+    job_pain_points JSONB, -- AI-extracted pain points from job description
 
     -- Activity
     last_contacted_at TIMESTAMPTZ,
