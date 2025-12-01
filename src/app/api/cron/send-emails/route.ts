@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
         'Authorization': `Bearer ${cronSecret}`,
       },
       body: JSON.stringify({
-        max_emails: 40, // Daily batch with staggered 30-90s delays
+        max_emails: 60, // 3 inboxes × 20/day = 60 capacity (auto-email respects inbox limits)
         min_score: 50,
         stagger_delay: true, // Random delays between emails
       }),
