@@ -8,6 +8,7 @@ import {
   extractDomain,
   calculateScore,
   getTier,
+  findDecisionMakerContact,
 } from '@/lib/enrichment';
 
 export async function POST(request: NextRequest) {
@@ -61,16 +62,38 @@ export async function POST(request: NextRequest) {
       websiteData = await scrapeWebsite(websiteUrl);
     }
 
-    // Determine best email - prioritized list already sorted
+    // Use enhanced contact finder (Google search + WHOIS + website scrape)
+    const contactResult = await findDecisionMakerContact(
+      prospect.name,
+      websiteUrl,
+      prospect.city
+    );
+
+    // Determine best email - prioritize decision-maker email
     let email = prospect.email;
-    if (!email && websiteData.emails.length > 0) {
+    let contactName = null;
+    let contactTitle = null;
+
+    if (contactResult.decisionMaker?.email) {
+      // Found decision-maker with email - use it
+      email = contactResult.decisionMaker.email;
+      contactName = contactResult.decisionMaker.name;
+      contactTitle = contactResult.decisionMaker.title;
+    } else if (!email && websiteData.emails.length > 0) {
+      // Fallback to website scraped emails (already prioritized)
       email = websiteData.emails[0];
-    }
-    if (!email && websiteUrl) {
+    } else if (!email && websiteUrl) {
+      // Last resort: generic info@ email
       const domain = extractDomain(websiteUrl);
       if (domain) {
         email = `info@${domain}`;
       }
+    }
+
+    // Use WHOIS registrant as fallback contact
+    if (!contactName && contactResult.whoisInfo?.registrantName) {
+      contactName = contactResult.whoisInfo.registrantName;
+      contactTitle = 'Owner (WHOIS)';
     }
 
     // Determine best phone
@@ -110,8 +133,11 @@ export async function POST(request: NextRequest) {
     if (email) updateData.email = email;
     if (phone) updateData.phone = phone;
 
-    // Contact person
-    if (primaryContact) {
+    // Contact person - prioritize contact finder result over website scrape
+    if (contactName) {
+      updateData.contact_name = contactName;
+      updateData.contact_title = contactTitle;
+    } else if (primaryContact) {
       updateData.contact_name = primaryContact.name;
       updateData.contact_title = primaryContact.title;
     }
