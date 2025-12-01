@@ -243,16 +243,22 @@ export async function PUT(request: NextRequest) {
     if (error) throw error;
 
     const results = [];
+    // Pass through auth cookie for internal requests
+    const cookieHeader = request.headers.get('cookie') || '';
+
     for (const prospect of prospects || []) {
       try {
         const response = await fetch(`${request.nextUrl.origin}/api/enrich`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'Cookie': cookieHeader,
+          },
           body: JSON.stringify({ prospect_id: prospect.id }),
         });
 
         const result = await response.json();
-        results.push({ id: prospect.id, success: result.success });
+        results.push({ id: prospect.id, success: result.success, error: result.error });
       } catch (e) {
         results.push({ id: prospect.id, success: false, error: String(e) });
       }
