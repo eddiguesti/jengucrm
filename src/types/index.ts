@@ -4,6 +4,7 @@ export type ProspectStage =
   | 'new'
   | 'researching'
   | 'outreach'
+  | 'contacted'
   | 'engaged'
   | 'meeting'
   | 'proposal'
@@ -60,6 +61,24 @@ export interface Prospect {
   source: string | null;
   source_url: string | null;
   source_job_title: string | null;
+  source_job_description: string | null;
+  job_pain_points: {
+    responsibilities?: string[];
+    pain_points?: string[];
+    communication_tasks?: string[];
+    admin_tasks?: string[];
+    speed_requirements?: string[];
+    summary?: string;
+  } | null;
+  // Lead classification
+  lead_source: LeadSource | null;
+  lead_quality: 'hot' | 'warm' | 'cold' | null;
+  email_confidence: 'low' | 'medium' | 'high' | null;
+  pain_signal_count: number;
+  // AI scoring
+  ai_score: number | null;
+  ai_grade: 'A' | 'B' | 'C' | 'D' | 'F' | null;
+  ai_analysis: Record<string, unknown> | null;
   last_contacted_at: string | null;
   next_follow_up_at: string | null;
   notes: string | null;
@@ -86,6 +105,7 @@ export type EmailType =
 export interface Email {
   id: string;
   prospect_id: string;
+  campaign_id: string | null;
   subject: string;
   body: string;
   template_id: string | null;

@@ -43,13 +43,23 @@ const authorityScarcityStrategy: CampaignStrategy = {
   name: 'Direct & Confident',
   description: 'Short, punchy, authority-first. 70-90 words. Ends with "Worth 15 mins?"',
   generatePrompt: (prospect) => {
-    const jobContext = prospect.jobTitle
-      ? `BUYING SIGNAL: They're hiring for ${prospect.jobTitle} - USE THIS. Praise: "Saw you're hiring for ${prospect.jobTitle} - that's usually a sign things are scaling up."`
-      : '';
+    // Build subtle personalization from job pain points
+    const painPoints = prospect.jobPainPoints;
+    const commTasks = painPoints?.communicationTasks?.slice(0, 2).join(', ') || '';
+    const adminTasks = painPoints?.adminTasks?.slice(0, 2).join(', ') || '';
+    const speedReqs = painPoints?.speedRequirements?.slice(0, 1).join('') || '';
 
-    const painContext = prospect.jobPainPoints?.summary
-      ? `PAIN INSIGHT: "${prospect.jobPainPoints.summary}" - weave this naturally`
-      : '';
+    // Subtle context - reference the pain, not the job posting
+    let subtleContext = '';
+    if (painPoints?.summary) {
+      subtleContext = `PAIN INSIGHT (use subtly, don't mention job posting): "${painPoints.summary}"`;
+    }
+    if (commTasks) {
+      subtleContext += `\nCOMMUNICATION TASKS they deal with: ${commTasks}`;
+    }
+    if (speedReqs) {
+      subtleContext += `\nSPEED PRESSURE they face: ${speedReqs}`;
+    }
 
     return `You are Edd, an automation expert. Write a SHORT, CONFIDENT cold email.
 
@@ -57,27 +67,44 @@ const authorityScarcityStrategy: CampaignStrategy = {
 Property: ${prospect.name}
 Location: ${prospect.city}${prospect.country ? `, ${prospect.country}` : ''}
 Type: ${prospect.propertyType || 'hotel'}
-${jobContext}
-${painContext}
+${subtleContext}
+
+=== PERSONALIZATION APPROACH ===
+${subtleContext ? `
+**IMPORTANT**: We have intel about their specific pain points. Use this SUBTLY:
+- DON'T say "I saw you're hiring" or "I noticed your job posting"
+- DO reference specific tasks like "handling late-night inquiries" or "managing booking confirmations"
+- Make it feel like you understand hotels, not like you scraped their data
+- The goal: they think "how did he know we struggle with that?"
+` : `
+No specific intel available. Use generic hotel pain points:
+- Response times to guest inquiries
+- After-hours coverage
+- Repetitive booking confirmations
+`}
 
 === STRATEGY: DIRECT & CONFIDENT ===
 
 **SUBJECT LINE (lowercase, cryptic, 3-4 words max):**
 Creates curiosity gap. Examples:
-- "${prospect.city} + 30 seconds"
+- "${prospect.city} + 1 minute"
 - "re: response times"
 - "whoever replies first"
 - "${prospect.name} quick one"
 
+**GREETING:**
+- If you have a contact name, use "Hey [FirstName]," or "Hi [FirstName],"
+- If no contact name, use "Hey ${prospect.name} Team," or "Hi Team,"
+- NEVER use generic "Hello," or "Hi there,"
+
 **STRUCTURE - Use the 3Ps:**
 
 1. PRAISE (specific, genuine - 1 sentence):
-${prospect.jobTitle
-  ? `"Saw you're hiring for ${prospect.jobTitle} - smart move, that role's always a sign things are moving."`
-  : `"${prospect.name} looks like a solid operation from what I can see online."`}
+"${prospect.name} looks like a solid operation" OR reference something specific about their location/type.
 
 2. PICTURE + LOSS (make them feel the cost - 2 sentences):
-"Here's the thing - whoever replies to a booking inquiry first usually wins it. Most properties don't realise how many they're losing to faster competitors."
+"But here's the thing - when a guest messages 3 hotels and you reply in 2 hours but someone else replies in 1 minute... that booking's gone. Most properties don't realise how many they're losing to faster competitors."
+${subtleContext ? '\n**If you have pain point intel, weave it in here subtly**' : ''}
 
 3. PUSH + FREEDOM (specific CTA + escape hatch):
 "Worth 15 mins to see if there's low-hanging fruit? Totally fine if timing's off."
@@ -86,7 +113,6 @@ ${prospect.jobTitle
 End with an escape hatch. Paradoxically increases responses:
 - "Totally fine if timing's off"
 - "No stress if it's not a priority right now"
-- "You're free to ignore this completely"
 
 === RULES ===
 - 70-90 words MAX (SHORT!)
@@ -95,6 +121,7 @@ End with an escape hatch. Paradoxically increases responses:
 - NO uncertainty ("not sure if", "might be wrong person")
 - Sound like an expert qualifying THEM
 - NO bullet points, NO signature
+- NEVER mention "job posting", "hiring", or "saw you're looking for"
 - Use "here's the thing", "honestly", "the reality is"
 
 Output ONLY valid JSON:
@@ -103,79 +130,120 @@ Output ONLY valid JSON:
 };
 
 /**
- * STRATEGY B: Curious & Generous
- * Longer, story-driven, value-heavy. Ask for thoughts, not meetings.
- * Psychology: Curiosity Gap, Reciprocity, Foot-in-Door, "Because" Principle, Tension
+ * STRATEGY B: Pattern Interrupt + Vulnerability
+ * Uses pattern interrupt, confession, labeling, and negative reverse selling.
  *
- * KEY DIFFERENTIATORS:
- * - 100-120 words (LONGER)
- * - Question format subject line
- * - Lead with genuine praise about THEM specifically
- * - Frame as research/curiosity, not selling
- * - Heavy value-first (free process map)
- * - NO meeting ask - only ask for THOUGHTS (foot-in-door)
- * - Uses "because" principle throughout
+ * 2025 RESEARCH-BACKED (Belkins, Martal, Instantly.ai):
+ * - 50-125 words = 50% reply rate sweet spot
+ * - 2-4 word subject lines = 46% open rate
+ * - Personalized first line = +50% opens
+ * - Soft CTA = +10-20% replies
+ * - Pain point focus = +15-25% replies
+ *
+ * Psychology: Pattern Interrupt, Vulnerability Loop, Labeling, Future Pacing, Micro-Commitment
+ *
+ * KEY DIFFERENTIATORS FROM STRATEGY A:
+ * - 70-90 words (OPTIMAL for 50% reply rate zone)
+ * - Pattern interrupt subject (unexpected, lowercase)
+ * - Opens with vulnerability/confession (builds trust instantly)
+ * - Uses LABELING ("You seem like the kind of property that...")
+ * - Negative reverse: "This probably isn't for everyone"
+ * - Future pacing: paint the outcome, not the process
+ * - Micro-commitment: soft ask (just a reply, not a call)
  */
 const curiosityValueStrategy: CampaignStrategy = {
   key: 'curiosity_value',
-  name: 'Curious & Generous',
-  description: 'Longer, story-driven. Offers free value. Ends with "What do you think?"',
+  name: 'Pattern Interrupt + Vulnerable',
+  description: 'Pattern interrupt, vulnerability opener, negative reverse. 70-90 words.',
   generatePrompt: (prospect) => {
-    const jobContext = prospect.jobTitle
-      ? `BUYING SIGNAL: They're hiring for ${prospect.jobTitle} - work this into your curiosity: "I noticed you're hiring for ${prospect.jobTitle}, which got me wondering..."`
-      : '';
+    // Build subtle personalization from job pain points
+    const painPoints = prospect.jobPainPoints;
+    const commTasks = painPoints?.communicationTasks?.slice(0, 2).join(', ') || '';
+    const adminTasks = painPoints?.adminTasks?.slice(0, 2).join(', ') || '';
+    const speedReqs = painPoints?.speedRequirements?.slice(0, 1).join('') || '';
 
-    const painContext = prospect.jobPainPoints?.summary
-      ? `PAIN INSIGHT: "${prospect.jobPainPoints.summary}" - this is GOLD. Reference it naturally.`
-      : '';
+    // Subtle context - reference the pain, not the job posting
+    let subtleContext = '';
+    if (painPoints?.summary) {
+      subtleContext = `PAIN INSIGHT (weave subtly): "${painPoints.summary}"`;
+    }
+    if (commTasks) {
+      subtleContext += `\nTASKS they juggle: ${commTasks}`;
+    }
+    if (speedReqs) {
+      subtleContext += `\nSPEED PRESSURE: ${speedReqs}`;
+    }
 
-    return `You are Edd. Write a CURIOUS, VALUE-FIRST cold email. Longer, more conversational.
+    return `You are Edd. Write a PATTERN-INTERRUPT cold email with vulnerability and labeling.
 
 === TARGET ===
 Property: ${prospect.name}
 Location: ${prospect.city}${prospect.country ? `, ${prospect.country}` : ''}
 Type: ${prospect.propertyType || 'hotel'}
-${jobContext}
-${painContext}
+${subtleContext}
 
-=== STRATEGY: CURIOUS & GENEROUS ===
+=== PERSONALIZATION APPROACH ===
+${subtleContext ? `
+**CRITICAL**: We have specific intel about their pain points. Use SUBTLY:
+- NEVER say "I saw you're hiring" or "noticed your job posting" - that's creepy
+- DO reference specific tasks naturally: "handling after-hours inquiries", "managing confirmation emails"
+- Frame it like you deeply understand the hotel industry, not like you scraped their data
+- Goal: they think "this guy really gets what we deal with"
 
-**SUBJECT LINE (question format, creates open loop):**
-The brain NEEDS to close open loops. Examples:
-- "question about ${prospect.name}'s response times?"
-- "do you automate guest messages?"
-- "curious about something at ${prospect.name}"
-- "quick poll for ${prospect.city} hotels"
+Example of GOOD subtle personalization:
+"Properties like yours that handle a lot of direct bookings usually spend hours on confirmation emails alone..."
 
-**STRUCTURE:**
+Example of BAD obvious personalization:
+"I saw you're hiring a reservations manager, so I assume you need help with bookings..."
+` : `
+Use generic hotel industry knowledge:
+- Response times to guest inquiries
+- After-hours/overnight coverage gaps
+- Repetitive confirmation emails and booking updates
+`}
 
-1. OPENER - "Hey!" + Genuine Compliment (warm, friendly):
-"Hey! I came across ${prospect.name} while researching ${prospect.city} properties and honestly, [specific genuine observation - their reviews, their vibe, their location]."
+=== STRATEGY: PATTERN INTERRUPT + VULNERABILITY ===
 
-2. CURIOSITY + "BECAUSE" (create intrigue, explain why):
-"I'm reaching out because I've been looking at how hospitality businesses handle the booking inquiry race - you know, the 'whoever replies first wins the guest' thing."
+**SUBJECT LINE (2-4 words, lowercase, pattern interrupt):**
+Break their mental script. NOT a typical sales subject. Examples:
+- "probably ignore this"
+- "weird ask"
+- "this might be dumb"
+- "random thought"
+- "honest question"
 
-3. TENSION WITHOUT CRITICISM (challenge an assumption):
-"Here's the counterintuitive thing I've noticed - it's usually not the biggest properties that reply fastest. It's the ones who've automated the predictable stuff."
+**GREETING:**
+- If you have a contact name, use "Hey [FirstName]," (casual, no exclamation)
+- If no contact name, use "Hey ${prospect.name} Team," or "Hey Team,"
+- NEVER use exclamation marks - stay calm, not salesy
 
-4. VALUE OFFER (free, no strings, reciprocity):
-"I do free process maps for properties like yours - basically a quick look at what could be automated for the best ROI. No strings attached, genuinely useful even if we never work together."
+**STRUCTURE (70-90 words total):**
 
-5. FOOT-IN-THE-DOOR (ask for THOUGHTS, not a meeting):
-"Does this resonate at all? Curious what you think."
+1. VULNERABILITY OPENER (1 sentence - disarms instantly):
+- "I'll be honest - I have no idea if this is even relevant to you."
+- "This might be completely off-base, but..."
+- "Full transparency - you probably get a lot of these."
 
-**THE "BECAUSE" PRINCIPLE (use throughout):**
-"I'm reaching out because...", "I mention this because...", "Worth asking because..."
+2. LABELING + LOSS (2 sentences - make them feel it):
+Label them with a positive trait, then hit the pain:
+- "But you seem like the kind of property that actually cares about response times."
+- "But here's the thing - when a guest messages 3 hotels and you reply in 2 hours but someone else replies in 1 minute... that booking's gone."
+${subtleContext ? '\n**Weave in their specific pain point here if relevant**' : ''}
+
+3. FUTURE PACE + NEGATIVE REVERSE (2 sentences):
+- "Imagine every inquiry getting a perfect reply in under 1 minute, 24/7."
+- "This isn't for everyone - most properties are fine being reactive. But if you've wondered how much slips away overnight... might be worth a quick reply?"
 
 === RULES ===
-- 100-120 words (LONGER than Strategy A)
-- Start with "Hey!" - be warm and approachable
-- 3-4 SHORT paragraphs with \\n\\n between
-- Sound genuinely curious, like you're researching
-- DO NOT ask for a meeting - only ask for their THOUGHTS
-- Use "I'm curious", "wondering", "I noticed"
-- NO bullet points, NO signature
-- End with a QUESTION about their situation
+- 70-90 words MAX (optimal reply zone)
+- 2-4 word subject line
+- NO excitement, NO hype - calm and honest tone
+- NEVER mention "job posting", "hiring", or "saw you're looking for"
+- Sound slightly uncertain (builds trust)
+- Use "I'll be honest", "This might be...", "Full transparency"
+- End with soft CTA: "worth a reply?" or "curious if this lands?"
+- NO bullet points, NO signature (added automatically)
+- 2-3 short paragraphs with \\n\\n between
 
 Output ONLY valid JSON:
 {"subject": "subject here", "body": "email body here"}`;

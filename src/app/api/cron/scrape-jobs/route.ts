@@ -151,11 +151,37 @@ export async function GET(request: NextRequest) {
     }
 
     // Run all scrapers in parallel
-    const { uniqueProperties, totalErrors } = await runScrapers(
+    const { uniqueProperties, totalErrors, healthResults } = await runScrapers(
       scrapersToRun,
       todaysLocations,
       todaysJobTitles
     );
+
+    // Record scraper health to database
+    for (const health of healthResults) {
+      try {
+        await supabase.rpc('update_scraper_health', {
+          p_scraper_id: health.scraperId,
+          p_success: health.success,
+          p_properties_found: health.propertiesFound,
+          p_duration_ms: health.durationMs,
+          p_error: health.error || null,
+        });
+      } catch (healthErr) {
+        console.error(`Failed to record health for ${health.scraperId}:`, healthErr);
+      }
+    }
+
+    // Check for unhealthy scrapers and log them
+    const { data: unhealthyScrapers } = await supabase
+      .from('scraper_health')
+      .select('scraper_id, consecutive_failures, last_error')
+      .eq('is_healthy', false);
+
+    if (unhealthyScrapers && unhealthyScrapers.length > 0) {
+      console.warn('[Scrape Jobs] Unhealthy scrapers detected:', unhealthyScrapers);
+      totalErrors.push(`ALERT: ${unhealthyScrapers.length} scraper(s) flagged unhealthy: ${unhealthyScrapers.map(s => s.scraper_id).join(', ')}`);
+    }
 
     // Filter out irrelevant roles (kitchen staff, housekeeping, etc.) AND large chains
     const { relevant: relevantProperties, filtered: irrelevantCount, filteredRoles, filteredChains } = filterRelevantProperties(uniqueProperties);
@@ -169,7 +195,7 @@ export async function GET(request: NextRequest) {
     // Insert new prospects with smart tier based on job role
     let inserted = 0;
     let painPointsExtracted = 0;
-    let tierCounts = { hot: 0, warm: 0, cold: 0 };
+    const tierCounts = { hot: 0, warm: 0, cold: 0 };
     for (const property of newProperties) {
       // Calculate tier based on job title priority
       const priorityScore = getJobPriorityScore(property.job_title);
@@ -276,6 +302,14 @@ export async function GET(request: NextRequest) {
           adzuna: !!(process.env.ADZUNA_APP_ID && process.env.ADZUNA_API_KEY),
           xai: !!process.env.XAI_API_KEY,
         },
+        scraper_health: healthResults.map(h => ({
+          scraper: h.scraperId,
+          success: h.success,
+          found: h.propertiesFound,
+          duration_ms: h.durationMs,
+          error: h.error || null,
+        })),
+        unhealthy_scrapers: unhealthyScrapers?.map(s => s.scraper_id) || [],
       },
     });
   } catch (error) {

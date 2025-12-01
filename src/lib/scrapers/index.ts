@@ -145,7 +145,16 @@ export async function filterNewProperties(
   return { new: newProperties, duplicates };
 }
 
-// Run multiple scrapers - now in PARALLEL for speed
+// Scraper health result for tracking
+export interface ScraperHealthResult {
+  scraperId: string;
+  success: boolean;
+  propertiesFound: number;
+  durationMs: number;
+  error?: string;
+}
+
+// Run multiple scrapers - now in PARALLEL for speed with health tracking
 export async function runScrapers(
   scraperIds: string[],
   locations: string[],
@@ -156,8 +165,10 @@ export async function runScrapers(
   allProperties: ScrapedProperty[];
   uniqueProperties: ScrapedProperty[];
   totalErrors: string[];
+  healthResults: ScraperHealthResult[];
 }> {
   const totalErrors: string[] = [];
+  const healthResults: ScraperHealthResult[] = [];
 
   // Run all scrapers in parallel
   const scraperPromises = scraperIds.map(async (scraperId) => {
@@ -168,15 +179,38 @@ export async function runScrapers(
     }
 
     onProgress?.(scraper.name, 'running');
+    const startTime = Date.now();
 
     try {
       const result = await scraper.scrape(locations, jobTitles);
+      const durationMs = Date.now() - startTime;
+
       onProgress?.(scraper.name, `completed - ${result.properties.length} found`);
+
+      // Track successful scraper health
+      healthResults.push({
+        scraperId,
+        success: true,
+        propertiesFound: result.properties.length,
+        durationMs,
+      });
+
       return result;
     } catch (error) {
+      const durationMs = Date.now() - startTime;
       const errorMsg = `${scraper.name} failed: ${error}`;
       totalErrors.push(errorMsg);
       onProgress?.(scraper.name, 'failed');
+
+      // Track failed scraper health
+      healthResults.push({
+        scraperId,
+        success: false,
+        propertiesFound: 0,
+        durationMs,
+        error: String(error),
+      });
+
       return null;
     }
   });
@@ -194,5 +228,6 @@ export async function runScrapers(
     allProperties,
     uniqueProperties,
     totalErrors,
+    healthResults,
   };
 }

@@ -288,7 +288,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Save to database
-      const { data: savedEmail } = await supabase.from('emails').insert({
+      const { data: savedEmail, error: emailSaveError } = await supabase.from('emails').insert({
         prospect_id: prospect.id,
         subject: followUp.subject,
         body: followUp.body,
@@ -302,20 +302,36 @@ export async function POST(request: NextRequest) {
         sequence_number: outboundEmails.length + 1,
       }).select().single();
 
+      if (emailSaveError || !savedEmail) {
+        console.error(`Failed to save follow-up email for ${prospect.email}:`, emailSaveError);
+        results.errors.push(`Follow-up sent but failed to save: ${prospect.email}`);
+        // Continue counting as sent since email was delivered
+      }
+
       // Update prospect
-      await supabase
+      const { error: prospectUpdateError } = await supabase
         .from('prospects')
         .update({ last_contacted_at: new Date().toISOString() })
         .eq('id', prospect.id);
 
-      // Log activity
-      await supabase.from('activities').insert({
-        prospect_id: prospect.id,
-        type: 'email_sent',
-        title: `Follow-up #${followUpNumber} sent`,
-        description: `Subject: ${followUp.subject}`,
-        email_id: savedEmail?.id,
-      });
+      if (prospectUpdateError) {
+        console.error(`Failed to update prospect ${prospect.id}:`, prospectUpdateError);
+      }
+
+      // Log activity (only if email was saved successfully)
+      if (savedEmail) {
+        const { error: activityError } = await supabase.from('activities').insert({
+          prospect_id: prospect.id,
+          type: 'email_sent',
+          title: `Follow-up #${followUpNumber} sent`,
+          description: `Subject: ${followUp.subject}`,
+          email_id: savedEmail.id,
+        });
+
+        if (activityError) {
+          console.error(`Failed to log activity for ${prospect.id}:`, activityError);
+        }
+      }
 
       results.sent++;
 

@@ -16,6 +16,25 @@ const FETCH_HEADERS = {
   'Accept-Language': 'en-US,en;q=0.9',
 };
 
+// Timeout wrapper for fetch requests
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 10000): Promise<Response | null> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    console.log('[ContactFinder] Fetch timeout/error for:', url.substring(0, 50));
+    return null;
+  }
+}
+
 export interface ContactFinderResult {
   decisionMaker: {
     name: string | null;
@@ -34,9 +53,55 @@ export interface ContactFinderResult {
   confidence: 'high' | 'medium' | 'low';
 }
 
+// Common first names to help validate person names
+const COMMON_FIRST_NAMES = new Set([
+  'james', 'john', 'robert', 'michael', 'william', 'david', 'richard', 'joseph', 'thomas', 'charles',
+  'christopher', 'daniel', 'matthew', 'anthony', 'mark', 'donald', 'steven', 'paul', 'andrew', 'joshua',
+  'mary', 'patricia', 'jennifer', 'linda', 'elizabeth', 'barbara', 'susan', 'jessica', 'sarah', 'karen',
+  'lisa', 'nancy', 'betty', 'margaret', 'sandra', 'ashley', 'kimberly', 'emily', 'donna', 'michelle',
+  'anna', 'maria', 'emma', 'sophie', 'julia', 'laura', 'peter', 'george', 'edward', 'brian', 'kevin',
+  'jean', 'pierre', 'marie', 'françois', 'philippe', 'michel', 'isabelle', 'catherine', 'nicolas', 'laurent',
+  'hans', 'klaus', 'stefan', 'andreas', 'thomas', 'martin', 'frank', 'wolfgang', 'jürgen', 'helmut',
+  'marco', 'luca', 'giovanni', 'giuseppe', 'alessandro', 'andrea', 'francesca', 'giulia', 'chiara', 'valentina',
+  'carlos', 'jose', 'juan', 'miguel', 'antonio', 'francisco', 'manuel', 'pedro', 'pablo', 'luis',
+  'alex', 'max', 'ben', 'sam', 'tom', 'chris', 'nick', 'mike', 'dan', 'joe', 'tim', 'matt', 'rob', 'steve',
+]);
+
+// Words that indicate this is NOT a person's name
+const NOT_PERSON_PATTERNS = /hotel|resort|spa|restaurant|bar|cafe|group|ltd|inc|company|corporation|gmbh|sarl|limited|holdings|management|hospitality|collection|brands?|international|global|luxury|boutique|grand|royal|palace|manor|house|inn|lodge|suites|amsterdam|paris|london|berlin|rome|madrid|barcelona|copenhagen|vienna|munich|milan|lisbon|dublin|brussels|stockholm|oslo|zurich|geneva|prague|budapest|warsaw|athens|helsinki|dubai|singapore|tokyo|hong kong|sydney|melbourne|vancouver|toronto|new york|los angeles|miami|chicago|boston|san francisco/i;
+
+/**
+ * Validate if a string looks like a real person's name
+ */
+function isValidPersonName(name: string): boolean {
+  if (!name || name.length < 5 || name.length > 40) return false;
+
+  const words = name.split(/\s+/);
+  if (words.length < 2 || words.length > 4) return false;
+
+  // Each word should be capitalized and reasonable length
+  if (!words.every(w => /^[A-Z][a-z]+$/.test(w) && w.length >= 2 && w.length <= 15)) return false;
+
+  // Check for company/location patterns
+  if (NOT_PERSON_PATTERNS.test(name)) return false;
+
+  // First word should look like a first name (either in list or reasonable length)
+  const firstName = words[0].toLowerCase();
+  const looksLikeFirstName = COMMON_FIRST_NAMES.has(firstName) ||
+    (firstName.length >= 3 && firstName.length <= 10);
+
+  // Last word should look like a last name (not a city, brand, etc.)
+  const lastName = words[words.length - 1].toLowerCase();
+  const looksLikeLastName = lastName.length >= 3 && lastName.length <= 15 &&
+    !NOT_PERSON_PATTERNS.test(lastName);
+
+  return looksLikeFirstName && looksLikeLastName;
+}
+
 /**
  * Google search for decision-maker names
  * Uses DuckDuckGo HTML (no API key needed)
+ * OPTIMIZED: Single query with timeout
  */
 async function searchForDecisionMaker(
   hotelName: string,
@@ -44,59 +109,47 @@ async function searchForDecisionMaker(
 ): Promise<Array<{ name: string; title: string; source: string }>> {
   const results: Array<{ name: string; title: string; source: string }> = [];
 
-  const searchQueries = [
-    `"${hotelName}" "general manager"`,
-    `"${hotelName}" "hotel manager"`,
-    `"${hotelName}" "director"`,
-    `"${hotelName}" "owner"`,
-  ];
+  // Single optimized query
+  const query = `"${hotelName}" "general manager" OR "hotel manager" OR "director"`;
+  console.log('[ContactFinder] Quick search for:', hotelName);
 
-  for (const query of searchQueries.slice(0, 2)) { // Limit to 2 queries
-    try {
-      // Use DuckDuckGo HTML search (no API needed)
-      const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+  try {
+    const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+    const response = await fetchWithTimeout(searchUrl, { headers: FETCH_HEADERS }, 8000);
 
-      const response = await fetch(searchUrl, {
-        headers: FETCH_HEADERS,
-      });
+    if (!response || !response.ok) {
+      console.log('[ContactFinder] Search failed or timed out');
+      return results;
+    }
 
-      if (!response.ok) continue;
+    const html = await response.text();
+    console.log('[ContactFinder] Got HTML:', html.length, 'chars');
 
-      const html = await response.text();
+    // Extract names with titles from search results
+    const namePatterns = [
+      /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s*[,–-]\s*(General Manager|Hotel Manager|Director|Owner|Managing Director)/gi,
+      /(General Manager|Hotel Manager|Director|Owner|Managing Director)\s*[,–:-]?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/gi,
+      /([A-Z][a-z]+\s+[A-Z][a-z]+)\s*[-–]\s*(General Manager|Hotel Manager|Director|Owner)/gi,
+    ];
 
-      // Extract names with titles from search results
-      const namePatterns = [
-        // "John Smith, General Manager"
-        /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s*[,–-]\s*(General Manager|Hotel Manager|Director|Owner|Managing Director)/gi,
-        // "General Manager John Smith"
-        /(General Manager|Hotel Manager|Director|Owner|Managing Director)\s*[,–:-]?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/gi,
-      ];
+    for (const pattern of namePatterns) {
+      let match;
+      while ((match = pattern.exec(html)) !== null) {
+        const name = match[1]?.includes('Manager') || match[1]?.includes('Director')
+          ? match[2]?.trim()
+          : match[1]?.trim();
+        const title = match[1]?.includes('Manager') || match[1]?.includes('Director')
+          ? match[1]?.trim()
+          : match[2]?.trim();
 
-      for (const pattern of namePatterns) {
-        let match;
-        while ((match = pattern.exec(html)) !== null) {
-          const name = match[1]?.includes('Manager') || match[1]?.includes('Director')
-            ? match[2]?.trim()
-            : match[1]?.trim();
-          const title = match[1]?.includes('Manager') || match[1]?.includes('Director')
-            ? match[1]?.trim()
-            : match[2]?.trim();
-
-          if (name && name.length > 3 && name.length < 40 && !name.match(/hotel|resort|spa/i)) {
-            // Validate it looks like a real name (2+ words, capitalized)
-            const words = name.split(/\s+/);
-            if (words.length >= 2 && words.every(w => /^[A-Z]/.test(w))) {
-              results.push({ name, title, source: 'google_search' });
-            }
-          }
+        if (name && isValidPersonName(name)) {
+          console.log('[ContactFinder] Found:', name, '-', title);
+          results.push({ name, title, source: 'google_search' });
         }
       }
-
-      // Small delay between searches
-      await new Promise(resolve => setTimeout(resolve, 500));
-    } catch (error) {
-      console.error('Search error:', error);
     }
+  } catch (error) {
+    console.error('[ContactFinder] Search error:', error);
   }
 
   // Dedupe by name
@@ -111,76 +164,56 @@ async function searchForDecisionMaker(
 
 /**
  * WHOIS lookup for domain registrant info
+ * OPTIMIZED: Single quick request with timeout, skip if not .com
  */
 async function lookupWhois(domain: string): Promise<ContactFinderResult['whoisInfo']> {
-  try {
-    // Use RDAP (modern WHOIS API) - no API key needed
-    // Try common RDAP servers
-    const rdapServers = [
-      `https://rdap.verisign.com/com/v1/domain/${domain}`,
-      `https://rdap.org/domain/${domain}`,
-    ];
-
-    for (const rdapUrl of rdapServers) {
-      try {
-        const response = await fetch(rdapUrl, {
-          headers: { 'Accept': 'application/rdap+json' },
-        });
-
-        if (!response.ok) continue;
-
-        const data = await response.json();
-
-        // Extract registrant info from RDAP response
-        const entities = data.entities || [];
-        for (const entity of entities) {
-          if (entity.roles?.includes('registrant')) {
-            const vcard = entity.vcardArray?.[1] || [];
-            let name = null;
-            let email = null;
-            let org = null;
-
-            for (const field of vcard) {
-              if (field[0] === 'fn') name = field[3];
-              if (field[0] === 'email') email = field[3];
-              if (field[0] === 'org') org = field[3];
-            }
-
-            return {
-              registrantName: name,
-              registrantEmail: email,
-              registrantOrg: org,
-            };
-          }
-        }
-      } catch {
-        // Try next server
-      }
-    }
-
-    // Fallback: try whoisjson.com (free tier)
-    try {
-      const response = await fetch(`https://whoisjson.com/api/v1/whois?domain=${domain}`, {
-        headers: FETCH_HEADERS,
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        return {
-          registrantName: data.registrant?.name || data.registrant_name || null,
-          registrantEmail: data.registrant?.email || data.registrant_email || null,
-          registrantOrg: data.registrant?.organization || data.registrant_org || null,
-        };
-      }
-    } catch {
-      // WHOIS lookup failed
-    }
-
-    return null;
-  } catch (error) {
-    console.error('WHOIS error:', error);
+  // Only try WHOIS for .com domains (most reliable)
+  if (!domain.endsWith('.com')) {
+    console.log('[ContactFinder] Skipping WHOIS for non-.com domain');
     return null;
   }
+
+  console.log('[ContactFinder] Quick WHOIS lookup:', domain);
+
+  try {
+    const rdapUrl = `https://rdap.verisign.com/com/v1/domain/${domain}`;
+    const response = await fetchWithTimeout(rdapUrl, {
+      headers: { 'Accept': 'application/rdap+json' },
+    }, 5000);
+
+    if (!response || !response.ok) {
+      console.log('[ContactFinder] WHOIS failed/timeout');
+      return null;
+    }
+
+    const data = await response.json();
+
+    // Extract registrant info
+    const entities = data.entities || [];
+    for (const entity of entities) {
+      if (entity.roles?.includes('registrant')) {
+        const vcard = entity.vcardArray?.[1] || [];
+        let name = null;
+        let email = null;
+        let org = null;
+
+        for (const field of vcard) {
+          if (field[0] === 'fn') name = field[3];
+          if (field[0] === 'email') email = field[3];
+          if (field[0] === 'org') org = field[3];
+        }
+
+        if (name || email) {
+          console.log('[ContactFinder] WHOIS found:', { name, email });
+          return { registrantName: name, registrantEmail: email, registrantOrg: org };
+        }
+      }
+    }
+  } catch (error) {
+    console.log('[ContactFinder] WHOIS error');
+  }
+
+  return null;
 }
 
 /**
@@ -212,6 +245,8 @@ export async function findDecisionMakerContact(
   websiteUrl: string | null,
   city: string | null
 ): Promise<ContactFinderResult> {
+  console.log('[ContactFinder] Starting for:', hotelName, '| URL:', websiteUrl);
+
   const result: ContactFinderResult = {
     decisionMaker: null,
     allEmails: [],
@@ -224,36 +259,47 @@ export async function findDecisionMakerContact(
   // Step 1: Get domain
   if (websiteUrl) {
     result.domain = extractDomain(websiteUrl);
+    console.log('[ContactFinder] Extracted domain:', result.domain);
   }
 
   // Step 2: Deep website scrape (already includes team/about/contact pages)
   if (websiteUrl) {
+    console.log('[ContactFinder] Step 2: Website scrape');
     const websiteData = await scrapeWebsite(websiteUrl);
     result.allEmails = [...websiteData.emails];
+    console.log('[ContactFinder] Found emails from website:', result.allEmails.length);
 
-    // Add team members found on website
+    // Add team members found on website (validate names)
     for (const member of websiteData.teamMembers) {
-      result.allNames.push({
-        name: member.name,
-        title: member.title,
-        source: 'website',
-      });
-      if (member.email) {
-        result.allEmails.push(member.email);
+      if (isValidPersonName(member.name)) {
+        console.log('[ContactFinder] Valid team member from website:', member.name);
+        result.allNames.push({
+          name: member.name,
+          title: member.title,
+          source: 'website',
+        });
+        if (member.email) {
+          result.allEmails.push(member.email);
+        }
+      } else {
+        console.log('[ContactFinder] Rejected invalid team member:', member.name);
       }
     }
   }
 
   // Step 3: Google search for decision-maker names
+  console.log('[ContactFinder] Step 3: Google search');
   const searchResults = await searchForDecisionMaker(hotelName, city);
   result.allNames.push(...searchResults);
+  console.log('[ContactFinder] Total names after search:', result.allNames.length);
 
-  // Step 4: WHOIS lookup
-  if (result.domain) {
+  // Step 4: WHOIS lookup (only if no names found yet)
+  if (result.domain && result.allNames.length === 0) {
     result.whoisInfo = await lookupWhois(result.domain);
 
     // Add WHOIS registrant as potential contact
-    if (result.whoisInfo?.registrantName) {
+    if (result.whoisInfo?.registrantName && isValidPersonName(result.whoisInfo.registrantName)) {
+      console.log('[ContactFinder] WHOIS registrant:', result.whoisInfo.registrantName);
       result.allNames.push({
         name: result.whoisInfo.registrantName,
         title: 'Domain Registrant',
@@ -266,6 +312,9 @@ export async function findDecisionMakerContact(
   }
 
   // Step 5: Find best decision-maker
+  console.log('[ContactFinder] Step 5: Select best decision-maker');
+  console.log('[ContactFinder] All names found:', result.allNames.map(n => `${n.name} (${n.title})`).join(', ') || 'NONE');
+
   const priorityTitles = [
     'general manager', 'gm', 'owner', 'managing director',
     'hotel manager', 'director', 'operations manager',
@@ -279,41 +328,44 @@ export async function findDecisionMakerContact(
   });
 
   // Find the best match with an email
+  // First pass: look for exact matches (last name must be in email)
   for (const person of sortedNames) {
-    // Check if we already have their email
-    const personEmails = result.allEmails.filter(e => {
-      const nameParts = person.name.toLowerCase().split(/\s+/);
+    const nameParts = person.name.toLowerCase().split(/\s+/);
+    const lastName = nameParts[nameParts.length - 1];
+
+    // Check if we have an email with this person's last name
+    const exactMatchEmails = result.allEmails.filter(e => {
       const emailLocal = e.split('@')[0].toLowerCase();
-      return nameParts.some(part => emailLocal.includes(part));
+      return emailLocal.includes(lastName) && lastName.length >= 3;
     });
 
-    if (personEmails.length > 0) {
+    if (exactMatchEmails.length > 0) {
+      console.log('[ContactFinder] Found exact email match for:', person.name, '->', exactMatchEmails[0]);
       result.decisionMaker = {
         name: person.name,
         title: person.title,
-        email: personEmails[0],
+        email: exactMatchEmails[0],
         source: person.source,
       };
       result.confidence = 'high';
       break;
     }
+  }
 
-    // Generate email permutations if we have a domain
-    if (result.domain) {
-      const permutations = generateEmailPermutations(person.name, result.domain);
-      result.allEmails.push(...permutations);
+  // Second pass: if no exact match, generate email for first decision-maker
+  if (!result.decisionMaker && result.domain && sortedNames.length > 0) {
+    const person = sortedNames[0];
+    const permutations = generateEmailPermutations(person.name, result.domain);
+    result.allEmails.push(...permutations);
 
-      // Take first person with generated email as medium confidence
-      if (!result.decisionMaker) {
-        result.decisionMaker = {
-          name: person.name,
-          title: person.title,
-          email: permutations[0], // first.last@domain
-          source: person.source,
-        };
-        result.confidence = 'medium';
-      }
-    }
+    console.log('[ContactFinder] Generating email for:', person.name, '->', permutations[0]);
+    result.decisionMaker = {
+      name: person.name,
+      title: person.title,
+      email: permutations[0], // first.last@domain
+      source: person.source,
+    };
+    result.confidence = 'medium';
   }
 
   // Dedupe emails
@@ -328,10 +380,18 @@ export async function findDecisionMakerContact(
       .some(fake => email.includes(fake));
 
     if (isGeneric || isFake) {
+      console.log('[ContactFinder] Rejected generic/fake email:', email);
       result.decisionMaker.email = null;
       result.confidence = 'low';
     }
   }
+
+  console.log('[ContactFinder] Final result:', {
+    decisionMaker: result.decisionMaker,
+    confidence: result.confidence,
+    totalNames: result.allNames.length,
+    totalEmails: result.allEmails.length,
+  });
 
   return result;
 }

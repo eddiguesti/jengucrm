@@ -1,7 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { checkRateLimit, incrementUsage } from '@/lib/rate-limiter';
-
-const XAI_API_KEY = process.env.XAI_API_KEY;
+import { NextRequest } from 'next/server';
+import { z } from 'zod';
+import { checkAndIncrement } from '@/lib/rate-limiter-db';
+import { success, errors } from '@/lib/api-response';
+import { parseBody, ValidationError } from '@/lib/validation';
+import { logger } from '@/lib/logger';
+import { config } from '@/lib/config';
 
 const SYSTEM_PROMPT = `You are Edd Guest, Director at Jengu - a hospitality technology company.
 You write natural, human first-touch emails to hotels you've discovered through your research.
@@ -45,46 +48,55 @@ Respond ONLY in valid JSON format:
   "personalization_notes": "what specific details you used to personalize this email"
 }`;
 
+const prospectSchema = z.object({
+  name: z.string(),
+  city: z.string().optional(),
+  country: z.string().optional(),
+  website: z.string().optional(),
+  google_rating: z.number().optional(),
+  google_review_count: z.number().optional(),
+  star_rating: z.number().optional(),
+  room_count: z.number().optional(),
+  source_job_title: z.string().optional(),
+  tier: z.string().optional(),
+  contact_name: z.string().optional(),
+  contact_title: z.string().optional(),
+  notes: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  linkedin_url: z.string().optional(),
+  instagram_url: z.string().optional(),
+  chain_affiliation: z.string().optional(),
+  mystery_shopper_sent: z.boolean().optional(),
+  mystery_shopper_response_time_hours: z.number().nullable().optional(),
+  mystery_shopper_responded: z.boolean().optional(),
+});
+
+const generateEmailSchema = z.object({
+  prospect: prospectSchema,
+});
+
+type ProspectData = z.infer<typeof prospectSchema>;
+
 export async function POST(request: NextRequest) {
-  // Check rate limit for Grok API
-  const rateLimit = checkRateLimit('xai_emails');
-  if (!rateLimit.allowed) {
-    return NextResponse.json({
-      error: 'Daily email generation limit reached',
-      remaining: rateLimit.remaining,
-      limit: rateLimit.limit,
-      message: 'Max 100 emails per day. Try again tomorrow.',
-    }, { status: 429 });
-  }
-
-  if (!XAI_API_KEY) {
-    return NextResponse.json(
-      { error: 'XAI_API_KEY not configured' },
-      { status: 500 }
-    );
-  }
-
   try {
-    const body = await request.json();
-    const { prospect } = body;
-
-    if (!prospect) {
-      return NextResponse.json(
-        { error: 'Prospect data required' },
-        { status: 400 }
-      );
+    // Check rate limit
+    const rateLimit = await checkAndIncrement('xai_emails');
+    if (!rateLimit.allowed) {
+      return errors.tooManyRequests('Daily email generation limit reached. Try again tomorrow.');
     }
 
-    // Increment usage before making API call
-    incrementUsage('xai_emails');
+    if (!config.ai.apiKey) {
+      return errors.internal('AI API key not configured');
+    }
 
+    const { prospect } = await parseBody(request, generateEmailSchema);
     const prompt = buildPrompt(prospect);
 
     const response = await fetch('https://api.x.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${XAI_API_KEY}`,
+        'Authorization': `Bearer ${config.ai.apiKey}`,
       },
       body: JSON.stringify({
         model: 'grok-4-latest',
@@ -92,69 +104,46 @@ export async function POST(request: NextRequest) {
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user', content: prompt },
         ],
-        temperature: 0.8, // Slightly higher for more natural variation
+        temperature: 0.8,
         stream: false,
       }),
     });
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`Grok API error: ${error}`);
+      logger.error({ error, status: response.status }, 'Grok API error');
+      return errors.internal(`Grok API error: ${error}`);
     }
 
     const data = await response.json();
     const responseText = data.choices?.[0]?.message?.content || '';
 
-    // Parse JSON response
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      throw new Error('Failed to parse email response');
+      logger.error({ responseText }, 'Failed to parse email response');
+      return errors.internal('Failed to parse email response');
     }
 
     const emailData = JSON.parse(jsonMatch[0]);
 
-    return NextResponse.json({
+    logger.info({ prospect: prospect.name }, 'Email generated');
+    return success({
       subject: emailData.subject,
       body: emailData.body,
       personalization_notes: emailData.personalization_notes,
     });
   } catch (error) {
-    console.error('Email generation error:', error);
-    return NextResponse.json(
-      { error: 'Failed to generate email' },
-      { status: 500 }
-    );
+    if (error instanceof ValidationError) {
+      return errors.badRequest(error.message);
+    }
+    logger.error({ error }, 'Email generation failed');
+    return errors.internal('Failed to generate email', error);
   }
-}
-
-interface ProspectData {
-  name: string;
-  city?: string;
-  country?: string;
-  website?: string;
-  google_rating?: number;
-  google_review_count?: number;
-  star_rating?: number;
-  room_count?: number;
-  source_job_title?: string;
-  tier?: string;
-  contact_name?: string;
-  contact_title?: string;
-  notes?: string;
-  tags?: string[];
-  linkedin_url?: string;
-  instagram_url?: string;
-  chain_affiliation?: string;
-  // Mystery shopper results
-  mystery_shopper_sent?: boolean;
-  mystery_shopper_response_time_hours?: number | null;
-  mystery_shopper_responded?: boolean;
 }
 
 function buildPrompt(prospect: ProspectData) {
   const details: string[] = [];
 
-  // Basic info
   details.push(`Property name: ${prospect.name}`);
 
   if (prospect.city || prospect.country) {
@@ -162,7 +151,6 @@ function buildPrompt(prospect: ProspectData) {
     details.push(`Location: ${location}`);
   }
 
-  // Property characteristics
   if (prospect.star_rating) {
     details.push(`Star rating: ${prospect.star_rating}-star property`);
   }
@@ -177,7 +165,6 @@ function buildPrompt(prospect: ProspectData) {
     details.push(`Type: Independent/boutique property`);
   }
 
-  // Online presence
   if (prospect.google_rating) {
     details.push(`Google rating: ${prospect.google_rating}/5 stars`);
   }
@@ -190,23 +177,19 @@ function buildPrompt(prospect: ProspectData) {
     details.push(`Website: ${prospect.website}`);
   }
 
-  // Contact info
   if (prospect.contact_name) {
     const title = prospect.contact_title ? ` (${prospect.contact_title})` : '';
     details.push(`Contact: ${prospect.contact_name}${title}`);
   }
 
-  // Context clues
   if (prospect.source_job_title) {
     details.push(`Found via job posting for: ${prospect.source_job_title}`);
   }
 
-  // AI-generated notes from enrichment
   if (prospect.notes && prospect.notes.length > 50) {
     details.push(`Research notes: ${prospect.notes}`);
   }
 
-  // Build strategy hints
   const hints: string[] = [];
 
   if (prospect.tier === 'hot') {
@@ -232,15 +215,12 @@ function buildPrompt(prospect: ProspectData) {
     hints.push('Senior hire - they\'re building their leadership team');
   }
 
-  // Mystery shopper results - ONLY mention if response was SLOW or NO response
-  // If they responded quickly and well, don't mention it at all
   if (prospect.mystery_shopper_sent) {
     if (!prospect.mystery_shopper_responded) {
-      hints.push('IMPORTANT: We sent a mystery shopper inquiry and they NEVER responded - this is a pain point you can subtly reference (e.g., "I know how hard it can be to stay on top of every inquiry")');
+      hints.push('IMPORTANT: We sent a mystery shopper inquiry and they NEVER responded - this is a pain point you can subtly reference');
     } else if (prospect.mystery_shopper_response_time_hours && prospect.mystery_shopper_response_time_hours > 24) {
-      hints.push(`We sent a mystery shopper inquiry and it took them ${Math.round(prospect.mystery_shopper_response_time_hours)} hours to respond - this is slow for hospitality. You can subtly reference response time challenges.`);
+      hints.push(`We sent a mystery shopper inquiry and it took them ${Math.round(prospect.mystery_shopper_response_time_hours)} hours to respond - this is slow for hospitality.`);
     }
-    // If they responded quickly (< 24 hours), don't mention mystery shopper at all - they're doing well!
   }
 
   return `Write a first outreach email to this hotel:

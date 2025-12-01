@@ -1,10 +1,13 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 import { sendEmail, isSmtpConfigured, getInboxStats, getTotalRemainingCapacity, getSmtpInboxes, syncInboxCountsFromDb } from '@/lib/email';
-import { getStrategy, CAMPAIGN_STRATEGIES } from '@/lib/campaign-strategies';
+import { getStrategy } from '@/lib/campaign-strategies';
+import { success, errors } from '@/lib/api-response';
+import { parseBody, autoEmailSchema, ValidationError } from '@/lib/validation';
+import { logger } from '@/lib/logger';
+import { config } from '@/lib/config';
+import { EMAIL, SCORING, FAKE_EMAIL_PATTERNS, GENERIC_CORPORATE_EMAILS } from '@/lib/constants';
 import Anthropic from '@anthropic-ai/sdk';
-
-const AZURE_MAIL_FROM = process.env.AZURE_MAIL_FROM || 'edd@jengu.ai';
 
 interface Campaign {
   id: string;
@@ -13,15 +16,6 @@ interface Campaign {
   active: boolean;
   daily_limit: number;
   emails_sent: number;
-}
-
-interface JobPainPoints {
-  responsibilities?: string[];
-  pain_points?: string[];
-  communication_tasks?: string[];
-  admin_tasks?: string[];
-  speed_requirements?: string[];
-  summary?: string;
 }
 
 interface Prospect {
@@ -34,63 +28,57 @@ interface Prospect {
   google_rating: number | null;
   google_review_count: number | null;
   source_job_title: string | null;
-  job_pain_points: JobPainPoints | null;
+  source_job_description: string | null;
+  job_pain_points: {
+    summary?: string;
+    communicationTasks?: string[];
+    adminTasks?: string[];
+    speedRequirements?: string[];
+  } | null;
   pain_signals?: { keyword_matched: string; review_snippet: string }[];
   score: number;
   tier: string;
 }
 
-// Generate personalized email using Claude with campaign strategy
 async function generateEmail(
   prospect: Prospect,
   campaign: Campaign
 ): Promise<{ subject: string; body: string } | null> {
-  const apiKey = process.env.XAI_API_KEY || process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return null;
+  if (!config.ai.apiKey) return null;
 
-  // Get the strategy for this campaign
   const strategy = getStrategy(campaign.strategy_key);
   if (!strategy) {
-    console.error(`Unknown strategy: ${campaign.strategy_key}`);
+    logger.error({ strategyKey: campaign.strategy_key }, 'Unknown strategy');
     return null;
   }
 
   try {
     const anthropic = new Anthropic({
-      apiKey,
-      baseURL: process.env.XAI_API_KEY ? 'https://api.x.ai' : undefined,
+      apiKey: config.ai.apiKey,
+      baseURL: config.ai.baseUrl,
     });
 
-    // Build prospect context for strategy
-    const jp = prospect.job_pain_points;
     const prospectContext = {
       name: prospect.name,
       city: prospect.city,
       country: prospect.country,
       propertyType: prospect.property_type,
       jobTitle: prospect.source_job_title,
+      jobPainPoints: prospect.job_pain_points || undefined,
       painSignals: prospect.pain_signals?.map(ps => ({
         keyword: ps.keyword_matched,
         snippet: ps.review_snippet,
       })),
-      jobPainPoints: jp ? {
-        summary: jp.summary,
-        communicationTasks: jp.communication_tasks,
-        adminTasks: jp.admin_tasks,
-        speedRequirements: jp.speed_requirements,
-      } : undefined,
     };
 
-    // Generate prompt using campaign strategy
     const prompt = strategy.generatePrompt(prospectContext);
 
     const response = await anthropic.messages.create({
-      model: process.env.XAI_API_KEY ? 'grok-4-1-fast-non-reasoning' : 'claude-sonnet-4-20250514',
+      model: config.ai.model,
       max_tokens: 500,
       messages: [{ role: 'user', content: prompt }],
     });
 
-    // Grok returns thinking blocks first, so find the text block
     const textContent = response.content.find(c => c.type === 'text');
     if (!textContent || textContent.type !== 'text') return null;
 
@@ -99,31 +87,23 @@ async function generateEmail(
 
     return JSON.parse(jsonMatch[0]);
   } catch (err) {
-    console.error('Email generation error:', err);
+    logger.error({ error: err, prospect: prospect.name }, 'Email generation failed');
     return null;
   }
 }
-
 
 export async function POST(request: NextRequest) {
   const supabase = createServerClient();
 
   try {
-    const body = await request.json().catch(() => ({}));
-    const maxEmails = body.max_emails || 10;
-    const minScore = body.min_score || 50; // Only email prospects with score >= 50
-    const staggerDelay = body.stagger_delay || false; // Add random delays between emails
+    const body = await parseBody(request, autoEmailSchema);
+    const { max_emails: maxEmails, min_score: minScore, stagger_delay: staggerDelay } = body;
 
-    // Check if email sending is configured
     if (!isSmtpConfigured()) {
-      return NextResponse.json({
-        success: false,
-        error: 'Email sending not configured (missing Azure credentials)',
-        sent: 0,
-      });
+      return success({ error: 'Email sending not configured', sent: 0 });
     }
 
-    // Sync inbox counts from database (handles server restarts/deploys)
+    // Sync inbox counts from database
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const { data: todaysEmails } = await supabase
@@ -141,18 +121,14 @@ export async function POST(request: NextRequest) {
     }
     syncInboxCountsFromDb(sentTodayByInbox);
 
-    // Fetch active campaigns for A/B testing
+    // Fetch active campaigns
     const { data: campaigns } = await supabase
       .from('campaigns')
       .select('id, name, strategy_key, active, daily_limit, emails_sent')
       .eq('active', true);
 
     if (!campaigns || campaigns.length === 0) {
-      return NextResponse.json({
-        success: false,
-        error: 'No active campaigns found. Create campaigns in the database first.',
-        sent: 0,
-      });
+      return success({ error: 'No active campaigns found', sent: 0 });
     }
 
     // Count emails sent today per campaign
@@ -170,14 +146,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Filter campaigns that haven't hit their daily limit
     const availableCampaigns = campaigns.filter(c =>
       (sentTodayByCampaign[c.id] || 0) < c.daily_limit
     );
 
     if (availableCampaigns.length === 0) {
-      return NextResponse.json({
-        success: false,
+      return success({
         error: 'All campaigns have hit their daily limit',
         sent: 0,
         campaigns: campaigns.map(c => ({
@@ -188,76 +162,27 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Find prospects to email:
-    // - Stage is 'new' or 'researching'
-    // - Has email address
-    // - Score >= minScore
-    // - Not archived
-    // - Never been emailed before
-    // PRIORITY ORDER: hot leads first, then warm, then cold (by score within each tier)
-    let prospects;
+    // Find eligible prospects
     const baseSelect = `id, name, email, city, country, property_type,
         google_rating, google_review_count, source_job_title,
-        score, tier, lead_quality, pain_signals(keyword_matched, review_snippet)`;
+        source_job_description, job_pain_points,
+        score, tier, pain_signals(keyword_matched, review_snippet)`;
 
-    // First: Get HOT leads (job boards, review pain points)
-    const { data: hotLeads } = await supabase
+    const { data: prospects } = await supabase
       .from('prospects')
-      .select(`${baseSelect}, job_pain_points`)
+      .select(baseSelect)
       .in('stage', ['new', 'researching'])
       .eq('archived', false)
-      .eq('lead_quality', 'hot')
       .not('email', 'is', null)
       .gte('score', minScore)
       .order('score', { ascending: false })
-      .limit(maxEmails);
-
-    // Second: Get WARM leads if not enough hot
-    let warmLeads: typeof hotLeads = [];
-    if ((hotLeads?.length || 0) < maxEmails) {
-      const { data } = await supabase
-        .from('prospects')
-        .select(`${baseSelect}, job_pain_points`)
-        .in('stage', ['new', 'researching'])
-        .eq('archived', false)
-        .eq('lead_quality', 'warm')
-        .not('email', 'is', null)
-        .gte('score', minScore)
-        .order('score', { ascending: false })
-        .limit(maxEmails - (hotLeads?.length || 0));
-      warmLeads = data || [];
-    }
-
-    // Third: Get COLD leads only if hot + warm not enough
-    let coldLeads: typeof hotLeads = [];
-    const hotWarmCount = (hotLeads?.length || 0) + (warmLeads?.length || 0);
-    if (hotWarmCount < maxEmails) {
-      const { data } = await supabase
-        .from('prospects')
-        .select(`${baseSelect}, job_pain_points`)
-        .in('stage', ['new', 'researching'])
-        .eq('archived', false)
-        .eq('lead_quality', 'cold')
-        .not('email', 'is', null)
-        .gte('score', Math.max(minScore - 20, 30)) // Lower threshold for cold
-        .order('score', { ascending: false })
-        .limit(maxEmails - hotWarmCount);
-      coldLeads = data || [];
-    }
-
-    // Combine all leads (hot first, then warm, then cold)
-    prospects = [...(hotLeads || []), ...(warmLeads || []), ...(coldLeads || [])];
+      .limit(maxEmails * 2);
 
     if (!prospects || prospects.length === 0) {
-      return NextResponse.json({
-        success: true,
-        message: 'No eligible prospects to email',
-        sent: 0,
-        checked: 0,
-      });
+      return success({ message: 'No eligible prospects to email', sent: 0, checked: 0 });
     }
 
-    // Filter out prospects who have already been emailed
+    // Filter already-emailed prospects
     const prospectIds = prospects.map(p => p.id);
     const { data: existingEmails } = await supabase
       .from('emails')
@@ -266,7 +191,14 @@ export async function POST(request: NextRequest) {
       .eq('direction', 'outbound');
 
     const emailedIds = new Set((existingEmails || []).map(e => e.prospect_id));
-    const eligibleProspects = prospects.filter(p => !emailedIds.has(p.id));
+
+    const eligibleProspects = prospects.filter(p => {
+      if (emailedIds.has(p.id)) return false;
+      if (!p.email) return false;
+      if (FAKE_EMAIL_PATTERNS.some(pattern => pattern.test(p.email!))) return false;
+      if (GENERIC_CORPORATE_EMAILS.some(pattern => pattern.test(p.email!))) return false;
+      return true;
+    });
 
     const results = {
       sent: 0,
@@ -276,34 +208,37 @@ export async function POST(request: NextRequest) {
       byCampaign: {} as Record<string, { name: string; sent: number }>,
     };
 
-    // Initialize campaign tracking
+    const prospectIdsToUpdate: string[] = [];
+    const activitiesToInsert: {
+      prospect_id: string;
+      type: string;
+      title: string;
+      description: string;
+      email_id: string;
+    }[] = [];
+
     for (const c of availableCampaigns) {
       results.byCampaign[c.id] = { name: c.name, sent: 0 };
     }
 
-    // Campaign round-robin index
     let campaignIndex = 0;
 
-    // Process up to maxEmails
     for (const prospect of eligibleProspects.slice(0, maxEmails)) {
       if (!prospect.email) {
         results.skipped++;
         continue;
       }
 
-      // Round-robin campaign assignment
       const campaign = availableCampaigns[campaignIndex % availableCampaigns.length];
       campaignIndex++;
 
-      // Generate personalized email using campaign strategy
       const email = await generateEmail(prospect as Prospect, campaign as Campaign);
       if (!email) {
         results.failed++;
-        results.errors.push(`Failed to generate email for ${prospect.name} (${campaign.name})`);
+        results.errors.push(`Failed to generate email for ${prospect.name}`);
         continue;
       }
 
-      // Send the email with HTML formatting and signature
       const sendResult = await sendEmail({
         to: prospect.email,
         subject: email.subject,
@@ -316,14 +251,13 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      // Save to database - use the actual inbox that sent the email
-      const { data: savedEmail } = await supabase.from('emails').insert({
+      const { data: savedEmail, error: emailSaveError } = await supabase.from('emails').insert({
         prospect_id: prospect.id,
-        campaign_id: campaign.id, // Track which campaign
+        campaign_id: campaign.id,
         subject: email.subject,
         body: email.body,
         to_email: prospect.email,
-        from_email: sendResult.sentFrom || AZURE_MAIL_FROM,
+        from_email: sendResult.sentFrom || config.azure.mailFrom,
         message_id: sendResult.messageId,
         email_type: 'outreach',
         direction: 'outbound',
@@ -331,133 +265,113 @@ export async function POST(request: NextRequest) {
         sent_at: new Date().toISOString(),
       }).select().single();
 
-      // Update campaign metrics
-      await supabase
-        .from('campaigns')
-        .update({ emails_sent: campaign.emails_sent + 1 })
-        .eq('id', campaign.id);
+      if (emailSaveError) {
+        logger.error({ error: emailSaveError, prospect: prospect.email }, 'Failed to save email');
+      }
 
-      // Track results by campaign
+      // Update campaign metrics atomically
+      try {
+        const { error: rpcError } = await supabase.rpc('increment_counter', {
+          table_name: 'campaigns',
+          column_name: 'emails_sent',
+          row_id: campaign.id
+        });
+
+        if (rpcError) {
+          await supabase.from('campaigns').update({ emails_sent: campaign.emails_sent + 1 }).eq('id', campaign.id);
+        }
+      } catch {
+        await supabase.from('campaigns').update({ emails_sent: campaign.emails_sent + 1 }).eq('id', campaign.id);
+      }
+
       results.byCampaign[campaign.id].sent++;
+      prospectIdsToUpdate.push(prospect.id);
 
-      // Update prospect stage
-      await supabase
-        .from('prospects')
-        .update({
-          stage: 'contacted',
-          last_contacted_at: new Date().toISOString(),
-        })
-        .eq('id', prospect.id);
-
-      // Log activity
-      await supabase.from('activities').insert({
-        prospect_id: prospect.id,
-        type: 'email_sent',
-        title: `Auto-email sent to ${prospect.email}`,
-        description: `Subject: ${email.subject}`,
-        email_id: savedEmail?.id,
-      });
+      if (savedEmail) {
+        activitiesToInsert.push({
+          prospect_id: prospect.id,
+          type: 'email_sent',
+          title: `Auto-email sent to ${prospect.email}`,
+          description: `Subject: ${email.subject}`,
+          email_id: savedEmail.id,
+        });
+      }
 
       results.sent++;
+      logger.info({ to: prospect.email, campaign: campaign.name }, 'Auto-email sent');
 
-      // Delay between emails - staggered for natural sending pattern
       if (staggerDelay) {
-        // Random delay between 30-90 seconds to look more human
-        const delay = 30000 + Math.random() * 60000;
-        console.log(`Stagger delay: waiting ${Math.round(delay/1000)}s before next email...`);
+        const delay = EMAIL.STAGGER_DELAY_MIN + Math.random() * (EMAIL.STAGGER_DELAY_MAX - EMAIL.STAGGER_DELAY_MIN);
         await new Promise(resolve => setTimeout(resolve, delay));
       } else {
-        // Small delay to avoid rate limits
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, EMAIL.MIN_DELAY));
       }
     }
 
-    return NextResponse.json({
-      success: true,
+    // Batch operations
+    if (prospectIdsToUpdate.length > 0) {
+      const { error: batchUpdateError } = await supabase
+        .from('prospects')
+        .update({ stage: 'contacted', last_contacted_at: new Date().toISOString() })
+        .in('id', prospectIdsToUpdate);
+      if (batchUpdateError) logger.error({ error: batchUpdateError }, 'Batch prospect update failed');
+    }
+
+    if (activitiesToInsert.length > 0) {
+      const { error: batchInsertError } = await supabase.from('activities').insert(activitiesToInsert);
+      if (batchInsertError) logger.error({ error: batchInsertError }, 'Batch activity insert failed');
+    }
+
+    logger.info({ sent: results.sent, failed: results.failed }, 'Auto-email completed');
+    return success({
       message: `Auto-email completed: ${results.sent} sent, ${results.failed} failed, ${results.skipped} skipped`,
       ...results,
       checked: eligibleProspects.length,
     });
   } catch (error) {
-    console.error('Auto-email error:', error);
-    return NextResponse.json(
-      { error: 'Auto-email failed', details: String(error) },
-      { status: 500 }
-    );
+    if (error instanceof ValidationError) {
+      return errors.badRequest(error.message);
+    }
+    logger.error({ error }, 'Auto-email failed');
+    return errors.internal('Auto-email failed', error);
   }
 }
 
-// GET: Check auto-email status with lead quality breakdown
 export async function GET() {
   const supabase = createServerClient();
 
-  // Count eligible prospects by lead quality
-  const { count: hotCount } = await supabase
-    .from('prospects')
-    .select('*', { count: 'exact', head: true })
-    .in('stage', ['new', 'researching'])
-    .eq('archived', false)
-    .eq('lead_quality', 'hot')
-    .not('email', 'is', null)
-    .gte('score', 50);
+  try {
+    const [highResult, mediumResult, lowerResult] = await Promise.all([
+      supabase.from('prospects').select('*', { count: 'exact', head: true })
+        .in('stage', ['new', 'researching']).eq('archived', false).not('email', 'is', null).gte('score', SCORING.HOT_THRESHOLD),
+      supabase.from('prospects').select('*', { count: 'exact', head: true })
+        .in('stage', ['new', 'researching']).eq('archived', false).not('email', 'is', null).gte('score', SCORING.AUTO_EMAIL_MIN_SCORE).lt('score', SCORING.HOT_THRESHOLD),
+      supabase.from('prospects').select('*', { count: 'exact', head: true })
+        .in('stage', ['new', 'researching']).eq('archived', false).not('email', 'is', null).gte('score', 30).lt('score', SCORING.AUTO_EMAIL_MIN_SCORE),
+    ]);
 
-  const { count: warmCount } = await supabase
-    .from('prospects')
-    .select('*', { count: 'exact', head: true })
-    .in('stage', ['new', 'researching'])
-    .eq('archived', false)
-    .eq('lead_quality', 'warm')
-    .not('email', 'is', null)
-    .gte('score', 50);
+    const highPriority = highResult.count || 0;
+    const mediumPriority = mediumResult.count || 0;
+    const lowerPriority = lowerResult.count || 0;
 
-  const { count: coldCount } = await supabase
-    .from('prospects')
-    .select('*', { count: 'exact', head: true })
-    .in('stage', ['new', 'researching'])
-    .eq('archived', false)
-    .eq('lead_quality', 'cold')
-    .not('email', 'is', null)
-    .gte('score', 30);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const { count: sentToday } = await supabase.from('emails').select('*', { count: 'exact', head: true })
+      .eq('direction', 'outbound').eq('email_type', 'outreach').gte('sent_at', today.toISOString());
 
-  // Count emails sent today
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+    const inboxStats = getInboxStats();
+    const remainingCapacity = getTotalRemainingCapacity();
 
-  const { count: sentToday } = await supabase
-    .from('emails')
-    .select('*', { count: 'exact', head: true })
-    .eq('direction', 'outbound')
-    .eq('email_type', 'outreach')
-    .gte('sent_at', today.toISOString());
-
-  const totalEligible = (hotCount || 0) + (warmCount || 0) + (coldCount || 0);
-
-  // Get inbox stats for warmup monitoring
-  const inboxStats = getInboxStats();
-  const remainingCapacity = getTotalRemainingCapacity();
-  const smtpInboxCount = getSmtpInboxes().length;
-
-  return NextResponse.json({
-    configured: isSmtpConfigured(),
-    eligible_prospects: {
-      hot: hotCount || 0,
-      warm: warmCount || 0,
-      cold: coldCount || 0,
-      total: totalEligible,
-    },
-    sent_today: sentToday || 0,
-    sender: AZURE_MAIL_FROM,
-    // Inbox rotation stats (for warmup monitoring)
-    inboxes: {
-      count: smtpInboxCount,
-      remaining_capacity: remainingCapacity,
-      daily_limit: parseInt(process.env.SMTP_DAILY_LIMIT || '20'),
-      details: inboxStats,
-    },
-    recommendation: remainingCapacity === 0
-      ? 'All inboxes at daily limit! Wait for tomorrow or add more inboxes.'
-      : (hotCount || 0) < 20
-        ? 'Hot leads running low! Run job board scrapers or scrape cold leads from Google Maps.'
-        : 'Hot lead pool healthy - prioritizing high-intent prospects.',
-  });
+    return success({
+      configured: isSmtpConfigured(),
+      eligible_prospects: { high_priority: highPriority, medium_priority: mediumPriority, lower_priority: lowerPriority, total: highPriority + mediumPriority + lowerPriority },
+      sent_today: sentToday || 0,
+      sender: config.azure.mailFrom,
+      inboxes: { count: getSmtpInboxes().length, remaining_capacity: remainingCapacity, daily_limit: config.smtp.dailyLimit, details: inboxStats },
+      recommendation: remainingCapacity === 0 ? 'All inboxes at daily limit!' : (highPriority + mediumPriority + lowerPriority) < 20 ? 'Low on prospects!' : 'Ready to send.',
+    });
+  } catch (error) {
+    logger.error({ error }, 'Failed to get auto-email status');
+    return errors.internal('Failed to get auto-email status', error);
+  }
 }
