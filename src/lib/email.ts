@@ -26,17 +26,21 @@ export interface SmtpInbox {
 }
 
 // Parse SMTP inboxes from environment
+// Format uses | (pipe) as delimiter to allow special chars in passwords
+// SMTP_INBOX_N=email|password|host|port|name
 export function getSmtpInboxes(): SmtpInbox[] {
   const inboxes: SmtpInbox[] = [];
 
-  // Check for SMTP_INBOXES (comma-separated)
-  const inboxesEnv = process.env.SMTP_INBOXES;
-  if (inboxesEnv) {
-    const configs = inboxesEnv.split(',');
-    for (const config of configs) {
-      const [email, password, host, port, name] = config.split(':');
+  // Helper to parse a single inbox config (supports both | and : delimiters for backwards compat)
+  const parseInboxConfig = (config: string): SmtpInbox | null => {
+    // Remove surrounding quotes if present (dotenv might include them)
+    const cleanConfig = config.replace(/^['"]|['"]$/g, '');
+
+    // Try pipe delimiter first (new format, supports special chars in passwords)
+    if (cleanConfig.includes('|')) {
+      const [email, password, host, port, name] = cleanConfig.split('|');
       if (email && password && host) {
-        inboxes.push({
+        return {
           email: email.trim(),
           password: password.trim(),
           host: host.trim(),
@@ -44,8 +48,35 @@ export function getSmtpInboxes(): SmtpInbox[] {
           secure: true,
           dailyLimit: parseInt(process.env.SMTP_DAILY_LIMIT || '20'),
           name: name?.trim() || 'Edward Guest',
-        });
+        };
       }
+    }
+    // Fall back to colon delimiter (old format) - only works if password has no colons
+    const parts = cleanConfig.split(':');
+    if (parts.length >= 3) {
+      const [email, password, host, port, name] = parts;
+      if (email && password && host) {
+        return {
+          email: email.trim(),
+          password: password.trim(),
+          host: host.trim(),
+          port: parseInt(port) || 465,
+          secure: true,
+          dailyLimit: parseInt(process.env.SMTP_DAILY_LIMIT || '20'),
+          name: name?.trim() || 'Edward Guest',
+        };
+      }
+    }
+    return null;
+  };
+
+  // Check for SMTP_INBOXES (comma-separated)
+  const inboxesEnv = process.env.SMTP_INBOXES;
+  if (inboxesEnv) {
+    const configs = inboxesEnv.split(',');
+    for (const config of configs) {
+      const inbox = parseInboxConfig(config);
+      if (inbox) inboxes.push(inbox);
     }
   }
 
@@ -53,18 +84,8 @@ export function getSmtpInboxes(): SmtpInbox[] {
   for (let i = 1; i <= 10; i++) {
     const config = process.env[`SMTP_INBOX_${i}`];
     if (config) {
-      const [email, password, host, port, name] = config.split(':');
-      if (email && password && host) {
-        inboxes.push({
-          email: email.trim(),
-          password: password.trim(),
-          host: host.trim(),
-          port: parseInt(port) || 465,
-          secure: true,
-          dailyLimit: parseInt(process.env.SMTP_DAILY_LIMIT || '20'),
-          name: name?.trim() || 'Edward Guest',
-        });
-      }
+      const inbox = parseInboxConfig(config);
+      if (inbox) inboxes.push(inbox);
     }
   }
 
@@ -643,6 +664,17 @@ export interface IncomingEmail {
 async function checkImapInbox(inbox: SmtpInbox, sinceDate: Date): Promise<IncomingEmail[]> {
   return new Promise((resolve) => {
     const emails: IncomingEmail[] = [];
+    let resolved = false;
+    let pendingParsing = 0;
+
+    // Timeout after 30 seconds per inbox
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        console.log(`IMAP timeout for ${inbox.email} with ${emails.length} emails collected`);
+        resolved = true;
+        resolve(emails);
+      }
+    }, 30000);
 
     // Spacemail IMAP config (same credentials, port 993 for IMAP SSL)
     const imap = new Imap({
@@ -652,14 +684,28 @@ async function checkImapInbox(inbox: SmtpInbox, sinceDate: Date): Promise<Incomi
       port: 993,
       tls: true,
       tlsOptions: { rejectUnauthorized: false },
+      connTimeout: 10000,
+      authTimeout: 5000,
     });
+
+    const finishIfComplete = () => {
+      if (pendingParsing <= 0 && !resolved) {
+        clearTimeout(timeout);
+        resolved = true;
+        resolve(emails);
+      }
+    };
 
     imap.once('ready', () => {
       imap.openBox('INBOX', true, (err) => {
         if (err) {
           console.error(`IMAP error opening inbox ${inbox.email}:`, err);
+          clearTimeout(timeout);
           imap.end();
-          resolve([]);
+          if (!resolved) {
+            resolved = true;
+            resolve([]);
+          }
           return;
         }
 
@@ -667,10 +713,16 @@ async function checkImapInbox(inbox: SmtpInbox, sinceDate: Date): Promise<Incomi
         const searchDate = sinceDate.toISOString().split('T')[0]; // YYYY-MM-DD format
         imap.search(['ALL', ['SINCE', searchDate]], (searchErr, results) => {
           if (searchErr || !results || results.length === 0) {
+            clearTimeout(timeout);
             imap.end();
-            resolve([]);
+            if (!resolved) {
+              resolved = true;
+              resolve([]);
+            }
             return;
           }
+
+          pendingParsing = results.length;
 
           const fetch = imap.fetch(results, {
             bodies: '',
@@ -691,25 +743,30 @@ async function checkImapInbox(inbox: SmtpInbox, sinceDate: Date): Promise<Incomi
                     ? parsed.to.value?.[0]?.address || inbox.email
                     : inbox.email;
 
-                  // Get body preview (first 500 chars of text)
-                  const textBody = parsed.text || '';
-                  const bodyPreview = textBody.substring(0, 500).replace(/\n+/g, ' ').trim();
+                  // Skip emails from the inbox itself (our own sent items)
+                  if (fromAddress.toLowerCase() !== inbox.email.toLowerCase()) {
+                    // Get body preview (first 500 chars of text)
+                    const textBody = parsed.text || '';
+                    const bodyPreview = textBody.substring(0, 500).replace(/\n+/g, ' ').trim();
 
-                  emails.push({
-                    messageId: parsed.messageId || `imap-${Date.now()}-${Math.random()}`,
-                    from: fromAddress,
-                    to: toAddress,
-                    subject: parsed.subject || '(No subject)',
-                    bodyPreview,
-                    body: textBody,
-                    receivedAt: parsed.date || new Date(),
-                    inReplyTo: parsed.inReplyTo,
-                    conversationId: parsed.references?.[0],
-                    inboxEmail: inbox.email,
-                  });
+                    emails.push({
+                      messageId: parsed.messageId || `imap-${Date.now()}-${Math.random()}`,
+                      from: fromAddress,
+                      to: toAddress,
+                      subject: parsed.subject || '(No subject)',
+                      bodyPreview,
+                      body: textBody,
+                      receivedAt: parsed.date || new Date(),
+                      inReplyTo: parsed.inReplyTo,
+                      conversationId: parsed.references?.[0],
+                      inboxEmail: inbox.email,
+                    });
+                  }
                 } catch (parseErr) {
                   console.error(`Error parsing email in ${inbox.email}:`, parseErr);
                 }
+                pendingParsing--;
+                finishIfComplete();
               });
             });
           });
@@ -719,7 +776,10 @@ async function checkImapInbox(inbox: SmtpInbox, sinceDate: Date): Promise<Incomi
           });
 
           fetch.once('end', () => {
-            imap.end();
+            // Wait a bit for all parsing to complete, then close
+            setTimeout(() => {
+              imap.end();
+            }, 500);
           });
         });
       });
@@ -727,11 +787,18 @@ async function checkImapInbox(inbox: SmtpInbox, sinceDate: Date): Promise<Incomi
 
     imap.once('error', (imapErr: Error) => {
       console.error(`IMAP connection error for ${inbox.email}:`, imapErr);
-      resolve([]);
+      clearTimeout(timeout);
+      if (!resolved) {
+        resolved = true;
+        resolve([]);
+      }
     });
 
     imap.once('end', () => {
-      resolve(emails);
+      // Wait for any remaining parsing to complete
+      setTimeout(() => {
+        finishIfComplete();
+      }, 500);
     });
 
     imap.connect();
@@ -783,6 +850,25 @@ export async function checkGmailForReplies(sinceDate: Date): Promise<IncomingEma
 
   return new Promise((resolve) => {
     const emails: IncomingEmail[] = [];
+    let resolved = false;
+    let pendingParsing = 0;
+
+    // Timeout after 30 seconds
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        console.log(`Gmail IMAP timeout with ${emails.length} emails collected`);
+        resolved = true;
+        resolve(emails);
+      }
+    }, 30000);
+
+    const finishIfComplete = () => {
+      if (pendingParsing <= 0 && !resolved) {
+        clearTimeout(timeout);
+        resolved = true;
+        resolve(emails);
+      }
+    };
 
     const imap = new Imap({
       user: GMAIL_SMTP_USER,
@@ -791,24 +877,36 @@ export async function checkGmailForReplies(sinceDate: Date): Promise<IncomingEma
       port: 993,
       tls: true,
       tlsOptions: { rejectUnauthorized: false },
+      connTimeout: 10000,
+      authTimeout: 5000,
     });
 
     imap.once('ready', () => {
       imap.openBox('INBOX', true, (err) => {
         if (err) {
           console.error('Gmail IMAP error opening inbox:', err);
+          clearTimeout(timeout);
           imap.end();
-          resolve([]);
+          if (!resolved) {
+            resolved = true;
+            resolve([]);
+          }
           return;
         }
 
         const searchDate = sinceDate.toISOString().split('T')[0];
         imap.search(['ALL', ['SINCE', searchDate]], (searchErr, results) => {
           if (searchErr || !results || results.length === 0) {
+            clearTimeout(timeout);
             imap.end();
-            resolve([]);
+            if (!resolved) {
+              resolved = true;
+              resolve([]);
+            }
             return;
           }
+
+          pendingParsing = results.length;
 
           const fetch = imap.fetch(results, {
             bodies: '',
@@ -847,6 +945,8 @@ export async function checkGmailForReplies(sinceDate: Date): Promise<IncomingEma
                 } catch (parseErr) {
                   console.error('Error parsing Gmail email:', parseErr);
                 }
+                pendingParsing--;
+                finishIfComplete();
               });
             });
           });
@@ -856,7 +956,9 @@ export async function checkGmailForReplies(sinceDate: Date): Promise<IncomingEma
           });
 
           fetch.once('end', () => {
-            imap.end();
+            setTimeout(() => {
+              imap.end();
+            }, 500);
           });
         });
       });
@@ -864,11 +966,17 @@ export async function checkGmailForReplies(sinceDate: Date): Promise<IncomingEma
 
     imap.once('error', (imapErr: Error) => {
       console.error('Gmail IMAP connection error:', imapErr);
-      resolve([]);
+      clearTimeout(timeout);
+      if (!resolved) {
+        resolved = true;
+        resolve([]);
+      }
     });
 
     imap.once('end', () => {
-      resolve(emails);
+      setTimeout(() => {
+        finishIfComplete();
+      }, 500);
     });
 
     imap.connect();

@@ -5,7 +5,7 @@ import type { NextRequest } from 'next/server';
 const publicRoutes = ['/login', '/api/auth/login'];
 
 // API routes that need to work for cron jobs (authenticated via header)
-const cronRoutes = ['/api/cron/', '/api/check-replies'];
+const cronRoutes = ['/api/cron/', '/api/check-replies', '/api/auto-email', '/api/setup-campaigns'];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;

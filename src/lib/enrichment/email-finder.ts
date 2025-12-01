@@ -21,6 +21,9 @@ import { extractDomain } from './website-scraper';
 // Apollo.io API (FREE unlimited email credits)
 const APOLLO_API_KEY = process.env.APOLLO_API_KEY;
 
+// Hunter.io API (for email verification)
+const HUNTER_API_KEY = process.env.HUNTER_API_KEY;
+
 // Decision-maker roles in priority order
 const DECISION_MAKER_ROLES = [
   'general manager',
