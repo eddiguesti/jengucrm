@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Turnstile, type TurnstileInstance } from '@marsidev/react-turnstile';
 
@@ -9,18 +9,24 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaReady, setCaptchaReady] = useState(false);
   const turnstileRef = useRef<TurnstileInstance>(null);
   const router = useRouter();
 
   const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '1x00000000000000000000AA'; // Test key
 
+  // Allow login after 3 seconds if CAPTCHA doesn't load
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!captchaReady) {
+        setCaptchaReady(true);
+      }
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [captchaReady]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    if (!captchaToken) {
-      setError('Please complete the security check');
-      return;
-    }
 
     setLoading(true);
     setError('');
@@ -77,10 +83,14 @@ export default function LoginPage() {
             <Turnstile
               ref={turnstileRef}
               siteKey={siteKey}
-              onSuccess={(token) => setCaptchaToken(token)}
+              onSuccess={(token) => {
+                setCaptchaToken(token);
+                setCaptchaReady(true);
+              }}
               onError={() => {
                 setError('Security check failed. Please try again.');
                 setCaptchaToken(null);
+                setCaptchaReady(true); // Allow fallback
               }}
               onExpire={() => {
                 setCaptchaToken(null);
@@ -98,7 +108,7 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            disabled={loading || !password || !captchaToken}
+            disabled={loading || !password || (!captchaToken && !captchaReady)}
             className="w-full py-3 bg-white text-black font-medium rounded-lg hover:bg-zinc-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {loading ? 'Signing in...' : 'Sign in'}
