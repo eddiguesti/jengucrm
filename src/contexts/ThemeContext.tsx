@@ -25,11 +25,8 @@ function getInitialTheme(): Theme {
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(getInitialTheme);
-  const [ready, setReady] = useState(typeof window !== 'undefined');
-
-  useEffect(() => {
-    setReady(true);
-  }, []);
+  // Always start as ready since we use lazy initialization
+  const ready = true;
 
   useEffect(() => {
     if (!ready) return;

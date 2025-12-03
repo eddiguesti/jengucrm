@@ -15,6 +15,7 @@ import {
   Inbox,
   Database,
   UserSearch,
+  Linkedin,
 } from 'lucide-react';
 
 const navigation = [
@@ -23,6 +24,7 @@ const navigation = [
   { name: 'Pipeline', href: '/pipeline', icon: Kanban },
   { name: 'Emails', href: '/emails', icon: Mail },
   { name: 'Mystery Shopper', href: '/mystery-shopper', icon: UserSearch },
+  { name: 'Sales Navigator', href: '/sales-navigator', icon: Linkedin },
   { name: 'Lead Sources', href: '/lead-sources', icon: Database },
   { name: 'Analytics', href: '/analytics', icon: BarChart3 },
   { name: 'Agents', href: '/agents', icon: Inbox },
