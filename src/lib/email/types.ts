@@ -29,6 +29,9 @@ export interface SendEmailResult {
   error?: string;
   deliveryTime: number;
   sentFrom?: string;
+  bounceType?: 'hard' | 'soft' | 'complaint';
+  blocked?: boolean;
+  blockReason?: string;
 }
 
 export interface IncomingEmail {
@@ -42,4 +45,5 @@ export interface IncomingEmail {
   inReplyTo?: string;
   conversationId?: string;
   inboxEmail: string;
+  gmailSenderName?: string; // For mystery shopper replies - the persona name
 }

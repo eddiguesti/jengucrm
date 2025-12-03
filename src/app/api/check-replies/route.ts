@@ -3,8 +3,12 @@ import { createServerClient } from '@/lib/supabase';
 import { ClientSecretCredential } from '@azure/identity';
 import { Client } from '@microsoft/microsoft-graph-client';
 import { TokenCredentialAuthenticationProvider } from '@microsoft/microsoft-graph-client/authProviders/azureTokenCredentials';
-import { sendEmail, checkAllInboxesForReplies, getSmtpInboxes, checkGmailForReplies, IncomingEmail, isGmailConfigured } from '@/lib/email';
+import { sendEmail, checkAllInboxesForReplies, getSmtpInboxes, checkGmailForReplies, isGmailConfigured } from '@/lib/email';
+import { getGmailInboxes } from '@/lib/email/config';
+import { processHotelReply, findGmailInboxByEmail, analyzeHotelReply } from '@/lib/email/mystery-shopper-responder';
 import { JENGU_KNOWLEDGE } from '@/lib/jengu-knowledge';
+import { analyzeReplyWithAI, getActionPriority, type ReplyAnalysis as AIReplyAnalysis } from '@/lib/reply-analysis';
+import { logger } from '@/lib/logger';
 import Anthropic from '@anthropic-ai/sdk';
 
 // Azure credentials for edd@jengu.ai
@@ -27,6 +31,7 @@ interface EmailMessage {
   inReplyTo?: string;
   conversationId?: string;
   receivedByInbox?: string; // Which of our inboxes received this (for thread continuity)
+  gmailSenderName?: string; // Persona name for mystery shopper replies
 }
 
 interface ReplyAnalysis {
@@ -183,43 +188,7 @@ async function sendInstantReply(
       senderName.length < 15 &&
       /^[A-Z][a-z]+$/.test(senderName);
 
-    // === AI DISCLOSURE TRIGGER LOGIC ===
-    // Check how many outbound emails we've sent to this prospect
-    const supabase = createServerClient();
-    const { data: outboundEmails } = await supabase
-      .from('emails')
-      .select('id')
-      .eq('prospect_id', prospect.id)
-      .eq('direction', 'outbound');
-
-    const outboundCount = outboundEmails?.length || 0;
-    const isThirdMessage = outboundCount >= 2; // They've had 2 emails, this will be 3rd
-
-    // Check if they're asking complex questions (price, technical, integration)
-    const messageText = (incomingEmail.bodyPreview + ' ' + incomingEmail.subject).toLowerCase();
-    const isComplexQuestion = /price|pricing|cost|how much|quote|technical|integrate|integration|api|connect|system|pms|opera|mews/i.test(messageText);
-
-    // Trigger AI disclosure on 3rd message OR complex questions
-    const shouldRevealAI = isThirdMessage || isComplexQuestion;
-
-    const aiDisclosureSection = shouldRevealAI ? `
-=== STRATEGIC AI DISCLOSURE ===
-**IMPORTANT: This is ${isComplexQuestion ? 'a complex question' : 'your 3rd message to this prospect'}.**
-
-Use the AI disclosure as a PATTERN INTERRUPT and PRODUCT DEMO. Work it naturally into your reply:
-
-"Quick confession - I'm an AI (it's what we build). If I've kept you reading this far, imagine what we could do for your guest messages. Edd's 100% human though - he's the automation expert you'd actually chat with."
-
-OR for pricing/technical questions:
-"I'll be honest - I'm an AI, so I can't give you exact pricing. But that's exactly why a quick chat with Edd makes sense. He's the human who builds this stuff and can give you a proper answer."
-
-This disclosure:
-1. Is a powerful pattern interrupt
-2. Demonstrates the product in action
-3. Creates curiosity about the technology
-4. Positions Edd as the expert human
-
-` : '';
+    // No AI disclosure - always respond as Edd
 
     const prompt = `You are Edd from Jengu. Your ONLY goal is to get them on a 30-minute call. Every reply should move towards booking that call using advanced persuasion psychology.
 
@@ -281,7 +250,7 @@ Giving an out INCREASES compliance by 42% (proven in 42 studies).
 - "No pressure at all..."
 - "Totally fine if timing's off..."
 
-${aiDisclosureSection}=== RESPONSE TEMPLATES (adapt these, don't copy exactly) ===
+=== RESPONSE TEMPLATES (adapt these, don't copy exactly) ===
 
 **They asked for info/details:**
 "${looksLikePersonName ? senderName + ',' : 'Hey,'}
@@ -608,15 +577,19 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 3. Check Gmail inbox for mystery shopper replies (to track response times)
-    const gmailUser = process.env.GMAIL_SMTP_USER;
-    if (isGmailConfigured() && gmailUser) {
-      results.inboxesChecked.push(gmailUser);
+    // 3. Check Gmail inboxes for mystery shopper replies (to track response times)
+    const gmailInboxes = getGmailInboxes();
+    const gmailEmails: string[] = gmailInboxes.map(i => i.email.toLowerCase());
+
+    if (isGmailConfigured()) {
+      for (const inbox of gmailInboxes) {
+        results.inboxesChecked.push(inbox.email);
+      }
       try {
-        const gmailEmails = await checkGmailForReplies(sinceDate);
-        for (const e of gmailEmails) {
-          // Skip emails FROM gmail (our own outbound)
-          if (e.from.toLowerCase() === gmailUser.toLowerCase()) {
+        const gmailReplies = await checkGmailForReplies(sinceDate);
+        for (const e of gmailReplies) {
+          // Skip our own outbound emails
+          if (gmailEmails.includes(e.from.toLowerCase())) {
             continue;
           }
           allEmails.push({
@@ -629,7 +602,8 @@ export async function POST(request: NextRequest) {
             receivedAt: e.receivedAt,
             inReplyTo: e.inReplyTo,
             conversationId: e.conversationId,
-            receivedByInbox: gmailUser, // Gmail inbox
+            receivedByInbox: e.inboxEmail, // Which Gmail inbox received it
+            gmailSenderName: e.gmailSenderName, // Persona name for replies
           });
         }
       } catch (gmailError) {
@@ -637,13 +611,21 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Legacy single Gmail support
+    const legacyGmailUser = process.env.GMAIL_SMTP_USER;
+    if (legacyGmailUser && !gmailEmails.includes(legacyGmailUser.toLowerCase())) {
+      gmailEmails.push(legacyGmailUser.toLowerCase());
+    }
+
     results.found = allEmails.length;
 
-    // Build list of all our inbox addresses to skip
+    // Build list of all our inbox addresses to skip (including test email)
+    const testEmail = process.env.TEST_EMAIL_ADDRESS?.toLowerCase();
     const ourInboxes = new Set([
       AZURE_MAIL_FROM.toLowerCase(),
       ...smtpInboxes.map(i => i.email.toLowerCase()),
-      ...(gmailUser ? [gmailUser.toLowerCase()] : []),
+      ...gmailEmails,
+      ...(testEmail ? [testEmail] : []),
     ]);
 
     // Process all found emails
@@ -666,14 +648,14 @@ export async function POST(request: NextRequest) {
 
           if (existing) continue;
 
-          // Check if this is a reply to a mystery shopper email (from Gmail inbox)
-          const isMysteryShopperReply = email.receivedByInbox?.toLowerCase() === gmailUser?.toLowerCase();
+          // Check if this is a reply to a mystery shopper email (from any Gmail inbox)
+          const isMysteryShopperReply = gmailEmails.includes(email.receivedByInbox?.toLowerCase() || '');
 
           if (isMysteryShopperReply) {
             // Find the original mystery shopper email we sent to this address
             const { data: originalEmail } = await supabase
               .from('emails')
-              .select('id, prospect_id, sent_at, prospects(id, name)')
+              .select('id, prospect_id, sent_at, subject, prospects(id, name)')
               .eq('to_email', email.from)
               .eq('email_type', 'mystery_shopper')
               .order('sent_at', { ascending: false })
@@ -687,12 +669,16 @@ export async function POST(request: NextRequest) {
               const responseTimeMinutes = Math.round(responseTimeMs / 60000);
               const responseTimeHours = (responseTimeMs / 3600000).toFixed(1);
 
+              // Get prospect data
+              const prospectData = originalEmail.prospects as { id: string; name: string } | { id: string; name: string }[] | null;
+              const prospectName = Array.isArray(prospectData) ? prospectData[0]?.name : prospectData?.name || 'Hotel';
+
               // Save the reply
               await supabase.from('emails').insert({
                 prospect_id: originalEmail.prospect_id,
                 subject: email.subject,
                 body: email.bodyPreview,
-                to_email: gmailUser,
+                to_email: email.receivedByInbox,
                 from_email: email.from,
                 message_id: email.messageId,
                 email_type: 'mystery_shopper_reply',
@@ -701,13 +687,74 @@ export async function POST(request: NextRequest) {
                 sent_at: email.receivedAt.toISOString(),
               });
 
+              // Analyze the reply for GM contact info
+              const analysis = analyzeHotelReply(email.body || email.bodyPreview, email.subject);
+
+              // If we got GM info, update the prospect
+              if (analysis.hasGmName || analysis.hasGmEmail || analysis.hasGmPhone) {
+                const updates: Record<string, string> = {};
+                if (analysis.gmName) updates.contact_name = analysis.gmName;
+                if (analysis.gmEmail) updates.email = analysis.gmEmail;
+                if (analysis.gmPhone) updates.phone = analysis.gmPhone;
+
+                await supabase
+                  .from('prospects')
+                  .update(updates)
+                  .eq('id', originalEmail.prospect_id);
+
+                await supabase.from('activities').insert({
+                  prospect_id: originalEmail.prospect_id,
+                  type: 'contact_discovered',
+                  title: `GM contact extracted from mystery shopper reply!`,
+                  description: `Found: ${analysis.gmName ? 'Name: ' + analysis.gmName + ' ' : ''}${analysis.gmEmail ? 'Email: ' + analysis.gmEmail + ' ' : ''}${analysis.gmPhone ? 'Phone: ' + analysis.gmPhone : ''}`,
+                });
+
+                logger.info({
+                  prospect: prospectName,
+                  gmName: analysis.gmName,
+                  gmEmail: analysis.gmEmail,
+                  gmPhone: analysis.gmPhone,
+                }, 'GM contact extracted from mystery shopper reply');
+              } else {
+                // No GM info yet - AUTO-RESPOND to push for it
+                const gmailInbox = findGmailInboxByEmail(email.receivedByInbox || '');
+                if (gmailInbox) {
+                  try {
+                    const autoResponse = await processHotelReply({
+                      hotelEmail: email.from,
+                      hotelName: prospectName,
+                      replyBody: email.body || email.bodyPreview,
+                      replySubject: email.subject,
+                      originalSubject: originalEmail.subject || 'Inquiry',
+                      senderName: gmailInbox.senderName,
+                      gmailInbox,
+                    });
+
+                    if (autoResponse.responded) {
+                      await supabase.from('activities').insert({
+                        prospect_id: originalEmail.prospect_id,
+                        type: 'mystery_shopper_auto_reply',
+                        title: `Auto-responded to hotel using ${autoResponse.approach} strategy`,
+                        description: `Sent follow-up email to push for GM contact. Strategy: ${autoResponse.approach}`,
+                      });
+
+                      logger.info({
+                        prospect: prospectName,
+                        approach: autoResponse.approach,
+                        from: gmailInbox.email,
+                      }, 'Mystery shopper auto-response sent');
+                    }
+                  } catch (autoReplyError) {
+                    logger.error({ error: autoReplyError, prospect: prospectName }, 'Mystery shopper auto-reply failed');
+                  }
+                }
+              }
+
               // Log activity with response time
-              const prospectData = originalEmail.prospects as { id: string; name: string } | { id: string; name: string }[] | null;
-              const prospectName = Array.isArray(prospectData) ? prospectData[0]?.name : prospectData?.name;
               await supabase.from('activities').insert({
                 prospect_id: originalEmail.prospect_id,
                 type: 'mystery_shopper_reply',
-                title: `Hotel responded to mystery shopper in ${responseTimeMinutes < 60 ? responseTimeMinutes + ' minutes' : responseTimeHours + ' hours'}`,
+                title: `Hotel responded in ${responseTimeMinutes < 60 ? responseTimeMinutes + ' minutes' : responseTimeHours + ' hours'}`,
                 description: `Response time: ${responseTimeMinutes} minutes\nSubject: ${email.subject}\n\n${email.bodyPreview.substring(0, 300)}...`,
               });
 
@@ -718,7 +765,6 @@ export async function POST(request: NextRequest) {
                   p_note: `\n\nMystery shopper response time: ${responseTimeMinutes < 60 ? responseTimeMinutes + ' minutes' : responseTimeHours + ' hours'} (${new Date().toISOString().split('T')[0]})`
                 });
               } catch {
-                // Fallback if RPC doesn't exist - just log it
                 console.log(`Mystery shopper response time for ${prospectName}: ${responseTimeMinutes} minutes`);
               }
 
@@ -734,19 +780,55 @@ export async function POST(request: NextRequest) {
           if (prospect) {
             results.matched++;
 
-            // Analyze the reply content
-            const analysis = analyzeReply(email.subject, email.bodyPreview);
+            // Get count of previous emails for context
+            const { count: prevEmailCount } = await supabase
+              .from('emails')
+              .select('*', { count: 'exact', head: true })
+              .eq('prospect_id', prospect.id);
 
-            // Determine email type based on analysis
+            // AI-powered reply analysis with context
+            const aiAnalysis = await analyzeReplyWithAI(
+              email.subject,
+              email.bodyPreview,
+              {
+                prospectName: prospect.name,
+                previousEmails: prevEmailCount || 0,
+                industry: 'Hospitality',
+              }
+            );
+
+            // Map AI analysis to legacy format for backwards compatibility
+            const analysis: ReplyAnalysis = {
+              isMeetingRequest: aiAnalysis.intent === 'meeting_request',
+              isNotInterested: aiAnalysis.intent === 'not_interested',
+              isPositive: aiAnalysis.intent === 'interested' || aiAnalysis.intent === 'needs_info',
+              notInterestedReason: aiAnalysis.objection?.type || (aiAnalysis.intent === 'not_interested' ? 'not_interested' : undefined),
+              confidence: aiAnalysis.confidence / 100,
+            };
+
+            // Log AI analysis for debugging
+            logger.info({
+              prospect: prospect.name,
+              intent: aiAnalysis.intent,
+              confidence: aiAnalysis.confidence,
+              action: aiAnalysis.recommendedAction,
+              priority: getActionPriority(aiAnalysis),
+            }, 'AI reply analysis');
+
+            // Determine email type based on AI analysis
             let emailType = 'reply';
-            if (analysis.isMeetingRequest) {
+            if (aiAnalysis.intent === 'meeting_request') {
               emailType = 'meeting_request';
               results.meetingRequests++;
-            } else if (analysis.isNotInterested) {
+            } else if (aiAnalysis.intent === 'not_interested') {
               emailType = 'not_interested';
               results.notInterested++;
-            } else if (analysis.isPositive) {
+            } else if (aiAnalysis.intent === 'interested' || aiAnalysis.intent === 'needs_info') {
               emailType = 'positive_reply';
+            } else if (aiAnalysis.intent === 'delegation') {
+              emailType = 'delegation';
+            } else if (aiAnalysis.intent === 'out_of_office') {
+              emailType = 'out_of_office';
             }
 
             // Save the reply
@@ -895,19 +977,20 @@ export async function POST(request: NextRequest) {
  */
 export async function GET() {
   const smtpInboxes = getSmtpInboxes();
-  const gmailUser = process.env.GMAIL_SMTP_USER;
-  const allMailboxes = [AZURE_MAIL_FROM, ...smtpInboxes.map(i => i.email)];
-  if (gmailUser && isGmailConfigured()) {
-    allMailboxes.push(gmailUser);
-  }
+  const gmailInboxes = getGmailInboxes();
+  const allMailboxes = [
+    AZURE_MAIL_FROM,
+    ...smtpInboxes.map(i => i.email),
+    ...gmailInboxes.map(i => i.email),
+  ];
 
   return NextResponse.json({
     configured: !!(AZURE_TENANT_ID && AZURE_CLIENT_ID && AZURE_CLIENT_SECRET) || smtpInboxes.length > 0 || isGmailConfigured(),
     mailboxes: allMailboxes,
     primary_mailbox: AZURE_MAIL_FROM,
     smtp_inboxes: smtpInboxes.map(i => i.email),
-    gmail_inbox: gmailUser || null,
-    gmail_purpose: 'Mystery shopper emails + response time tracking',
+    gmail_inboxes: gmailInboxes.map(i => ({ email: i.email, persona: i.senderName })),
+    gmail_purpose: 'Mystery shopper emails with AUTO-RESPONSE + GM contact extraction',
     notification_email: NOTIFICATION_EMAIL,
     features: [
       'Email threading by conversation ID',
@@ -917,6 +1000,8 @@ export async function GET() {
       'Instant email notification for meetings',
       'Sticky inbox assignment (maintains thread continuity)',
       'Mystery shopper response time tracking',
+      'AUTO-RESPOND to mystery shopper replies using persuasion psychology',
+      'Auto-extract GM contact info from hotel replies',
     ],
     usage: 'POST with { hours_back: 24 } to check for replies',
   });

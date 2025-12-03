@@ -113,13 +113,164 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * Check Gmail SMTP status
+ * GET /api/mystery-shopper
+ * Fetches all mystery shopper inquiries with their status and replies
  */
 export async function GET() {
-  return NextResponse.json({
-    configured: isGmailConfigured(),
-    sender: process.env.GMAIL_SMTP_USER || null,
-  });
+  const supabase = createServerClient();
+
+  try {
+    // Fetch all mystery shopper activities
+    const { data: activities, error: activitiesError } = await supabase
+      .from('activities')
+      .select(`
+        id,
+        prospect_id,
+        title,
+        description,
+        created_at,
+        prospects (
+          id,
+          name,
+          email,
+          contact_name,
+          tags
+        )
+      `)
+      .or('title.ilike.%Mystery Shopper%,title.ilike.%mystery inquiry%,type.eq.mystery_shopper')
+      .order('created_at', { ascending: false });
+
+    if (activitiesError) throw activitiesError;
+
+    // Process activities into inquiry objects
+    const inquiryMap = new Map<string, {
+      id: string;
+      prospect_id: string;
+      prospect_name: string;
+      prospect_email: string;
+      sent_at: string;
+      template: string;
+      from_email: string;
+      from_name: string;
+      status: 'sent' | 'replied' | 'gm_extracted';
+      reply_received_at?: string;
+      reply_body?: string;
+      extracted_gm_name?: string;
+      extracted_gm_email?: string;
+    }>();
+
+    for (const activity of activities || []) {
+      const prospectData = activity.prospects as unknown;
+      const prospect = (Array.isArray(prospectData) ? prospectData[0] : prospectData) as { id: string; name: string; email: string; contact_name?: string; tags?: string[] } | null;
+      if (!prospect) continue;
+
+      const prospectId = activity.prospect_id;
+      const description = activity.description || '';
+      const title = activity.title || '';
+
+      // Check if this is an inquiry sent activity
+      if (title.includes('Inquiry Sent') || title.includes('sent to') || title.includes('Mystery shopper email sent')) {
+        // Extract template name from description
+        const templateMatch = description.match(/Template:\s*([^.\n]+)/) || description.match(/Subject:\s*([^.\n]+)/);
+        const template = templateMatch ? templateMatch[1].trim() : 'Unknown Template';
+
+        // Extract from email - try multiple patterns
+        let fromName = 'Unknown';
+        let fromEmail = 'Unknown';
+
+        const fromMatch1 = description.match(/from\s+([^\s(]+)\s*\(([^)]+)\)/);
+        const fromMatch2 = description.match(/Sent from:\s*([^\s\n]+)/);
+
+        if (fromMatch1) {
+          fromName = fromMatch1[1];
+          fromEmail = fromMatch1[2];
+        } else if (fromMatch2) {
+          fromEmail = fromMatch2[1];
+          fromName = fromEmail.split('@')[0];
+        }
+
+        // Determine status based on tags and prospect data
+        let status: 'sent' | 'replied' | 'gm_extracted' = 'sent';
+        const tags = prospect.tags || [];
+
+        // Check if we have GM contact (non-generic email and contact name)
+        const hasGmContact = prospect.contact_name &&
+          prospect.email &&
+          !prospect.email.startsWith('info@') &&
+          !prospect.email.startsWith('reservations@') &&
+          !prospect.email.startsWith('reception@') &&
+          !prospect.email.startsWith('frontdesk@') &&
+          !prospect.email.startsWith('hello@');
+
+        if (hasGmContact) {
+          status = 'gm_extracted';
+        } else if (tags.includes('mystery-reply-received')) {
+          status = 'replied';
+        }
+
+        // Only keep the most recent inquiry per prospect
+        if (!inquiryMap.has(prospectId)) {
+          inquiryMap.set(prospectId, {
+            id: activity.id,
+            prospect_id: prospectId,
+            prospect_name: prospect.name,
+            prospect_email: prospect.email,
+            sent_at: activity.created_at,
+            template,
+            from_email: fromEmail,
+            from_name: fromName,
+            status,
+            extracted_gm_name: status === 'gm_extracted' ? prospect.contact_name : undefined,
+            extracted_gm_email: status === 'gm_extracted' ? prospect.email : undefined,
+          });
+        }
+      }
+
+      // Check if this is a reply activity
+      if (title.toLowerCase().includes('reply') || title.toLowerCase().includes('response received')) {
+        const existing = inquiryMap.get(prospectId);
+        if (existing) {
+          existing.status = existing.status === 'gm_extracted' ? 'gm_extracted' : 'replied';
+          existing.reply_received_at = activity.created_at;
+          existing.reply_body = description;
+        }
+      }
+
+      // Check if GM was extracted
+      if (title.includes('GM') || title.includes('Contact Found') || title.includes('contact extracted')) {
+        const existing = inquiryMap.get(prospectId);
+        if (existing) {
+          existing.status = 'gm_extracted';
+          const nameMatch = description.match(/GM:\s*([^,\n]+)/i) || description.match(/Name:\s*([^,\n]+)/i);
+          const emailMatch = description.match(/Email:\s*([^\s,\n]+)/i);
+          if (nameMatch) existing.extracted_gm_name = nameMatch[1].trim();
+          if (emailMatch) existing.extracted_gm_email = emailMatch[1].trim();
+        }
+      }
+    }
+
+    const inquiries = Array.from(inquiryMap.values());
+
+    // Calculate stats
+    const stats = {
+      total_sent: inquiries.length,
+      awaiting_reply: inquiries.filter(i => i.status === 'sent').length,
+      replied: inquiries.filter(i => i.status === 'replied').length,
+      gm_extracted: inquiries.filter(i => i.status === 'gm_extracted').length,
+      configured: isGmailConfigured(),
+    };
+
+    return NextResponse.json({
+      inquiries,
+      stats,
+    });
+  } catch (error) {
+    console.error('Mystery shopper API error:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch mystery shopper data', details: String(error) },
+      { status: 500 }
+    );
+  }
 }
 
 // Generate a realistic subject line

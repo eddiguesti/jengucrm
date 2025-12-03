@@ -7,7 +7,7 @@ import Imap from 'imap';
 import { simpleParser, ParsedMail } from 'mailparser';
 
 import type { SmtpInbox, IncomingEmail } from './types';
-import { getSmtpInboxes, GMAIL_SMTP_USER, GMAIL_SMTP_PASS } from './config';
+import { getSmtpInboxes, getGmailInboxes, GMAIL_SMTP_USER, GMAIL_SMTP_PASS, type GmailInbox } from './config';
 import { logger } from '../logger';
 import { TIMEOUTS } from '../constants';
 
@@ -172,13 +172,9 @@ export async function checkAllInboxesForReplies(sinceDate: Date): Promise<Incomi
 }
 
 /**
- * Check Gmail inbox for replies to mystery shopper emails
+ * Check a single Gmail inbox for replies
  */
-export async function checkGmailForReplies(sinceDate: Date): Promise<IncomingEmail[]> {
-  if (!GMAIL_SMTP_USER || !GMAIL_SMTP_PASS) {
-    return [];
-  }
-
+async function checkSingleGmailInbox(inbox: GmailInbox, sinceDate: Date): Promise<IncomingEmail[]> {
   return new Promise((resolve) => {
     const emails: IncomingEmail[] = [];
     let resolved = false;
@@ -186,7 +182,7 @@ export async function checkGmailForReplies(sinceDate: Date): Promise<IncomingEma
 
     const timeout = setTimeout(() => {
       if (!resolved) {
-        logger.info({ count: emails.length }, 'Gmail IMAP timeout');
+        logger.info({ inbox: inbox.email, count: emails.length }, 'Gmail IMAP timeout');
         resolved = true;
         resolve(emails);
       }
@@ -201,8 +197,8 @@ export async function checkGmailForReplies(sinceDate: Date): Promise<IncomingEma
     };
 
     const imap = new Imap({
-      user: GMAIL_SMTP_USER!,
-      password: GMAIL_SMTP_PASS!,
+      user: inbox.email,
+      password: inbox.password,
       host: 'imap.gmail.com',
       port: 993,
       tls: true,
@@ -214,7 +210,7 @@ export async function checkGmailForReplies(sinceDate: Date): Promise<IncomingEma
     imap.once('ready', () => {
       imap.openBox('INBOX', true, (err) => {
         if (err) {
-          logger.error({ error: err }, 'Gmail IMAP open box failed');
+          logger.error({ inbox: inbox.email, error: err }, 'Gmail IMAP open box failed');
           clearTimeout(timeout);
           imap.end();
           if (!resolved) {
@@ -254,8 +250,15 @@ export async function checkGmailForReplies(sinceDate: Date): Promise<IncomingEma
                   const parsed: ParsedMail = await simpleParser(buffer);
                   const fromAddress = parsed.from?.value?.[0]?.address || '';
                   const toAddress = parsed.to && !Array.isArray(parsed.to)
-                    ? parsed.to.value?.[0]?.address || GMAIL_SMTP_USER!
-                    : GMAIL_SMTP_USER!;
+                    ? parsed.to.value?.[0]?.address || inbox.email
+                    : inbox.email;
+
+                  // Skip our own outbound emails
+                  if (fromAddress.toLowerCase() === inbox.email.toLowerCase()) {
+                    pendingParsing--;
+                    finishIfComplete();
+                    return;
+                  }
 
                   const textBody = parsed.text || '';
                   const bodyPreview = textBody.substring(0, 500).replace(/\n+/g, ' ').trim();
@@ -270,10 +273,11 @@ export async function checkGmailForReplies(sinceDate: Date): Promise<IncomingEma
                     receivedAt: parsed.date || new Date(),
                     inReplyTo: parsed.inReplyTo,
                     conversationId: parsed.references?.[0],
-                    inboxEmail: GMAIL_SMTP_USER!,
+                    inboxEmail: inbox.email,
+                    gmailSenderName: inbox.senderName, // Include sender name for replies
                   });
                 } catch (parseErr) {
-                  logger.error({ error: parseErr }, 'Gmail parse failed');
+                  logger.error({ inbox: inbox.email, error: parseErr }, 'Gmail parse failed');
                 }
                 pendingParsing--;
                 finishIfComplete();
@@ -282,7 +286,7 @@ export async function checkGmailForReplies(sinceDate: Date): Promise<IncomingEma
           });
 
           fetch.once('error', (fetchErr) => {
-            logger.error({ error: fetchErr }, 'Gmail IMAP fetch error');
+            logger.error({ inbox: inbox.email, error: fetchErr }, 'Gmail IMAP fetch error');
           });
 
           fetch.once('end', () => {
@@ -295,7 +299,7 @@ export async function checkGmailForReplies(sinceDate: Date): Promise<IncomingEma
     });
 
     imap.once('error', (imapErr: Error) => {
-      logger.error({ error: imapErr }, 'Gmail IMAP connection error');
+      logger.error({ inbox: inbox.email, error: imapErr }, 'Gmail IMAP connection error');
       clearTimeout(timeout);
       if (!resolved) {
         resolved = true;
@@ -311,4 +315,34 @@ export async function checkGmailForReplies(sinceDate: Date): Promise<IncomingEma
 
     imap.connect();
   });
+}
+
+/**
+ * Check all Gmail inboxes for replies to mystery shopper emails
+ */
+export async function checkGmailForReplies(sinceDate: Date): Promise<IncomingEmail[]> {
+  const gmailInboxes = getGmailInboxes();
+
+  // If new multi-inbox format exists, use it
+  if (gmailInboxes.length > 0) {
+    const results = await Promise.all(
+      gmailInboxes.map(inbox => checkSingleGmailInbox(inbox, sinceDate))
+    );
+    const allEmails = results.flat();
+    allEmails.sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime());
+    return allEmails;
+  }
+
+  // Fall back to legacy single Gmail account
+  if (!GMAIL_SMTP_USER || !GMAIL_SMTP_PASS) {
+    return [];
+  }
+
+  const legacyInbox: GmailInbox = {
+    email: GMAIL_SMTP_USER,
+    password: GMAIL_SMTP_PASS,
+    senderName: GMAIL_SMTP_USER.split('@')[0],
+  };
+
+  return checkSingleGmailInbox(legacyInbox, sinceDate);
 }

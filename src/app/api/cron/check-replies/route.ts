@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${cronSecret}`, // Pass auth through
       },
-      body: JSON.stringify({ hours_back: 1 }), // Check last hour
+      body: JSON.stringify({ hours_back: 6 }), // Check last 6 hours (for external cron every 4 hours)
     });
 
     const result = await response.json();

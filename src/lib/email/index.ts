@@ -14,9 +14,12 @@ export type {
 // Config
 export {
   getSmtpInboxes,
+  getGmailInboxes,
   isSmtpConfigured,
   isGmailConfigured,
 } from './config';
+
+export type { GmailInbox } from './config';
 
 // Inbox tracking
 export {
@@ -47,3 +50,14 @@ export {
   checkAllInboxesForReplies,
   checkGmailForReplies,
 } from './imap';
+
+// Verification & Bounce Detection
+export {
+  validateEmail,
+  canSendTo,
+  parseBounceFromError,
+  recordBounce,
+  recordSuccessfulSend,
+} from './verification';
+
+export type { EmailValidationResult, BounceInfo } from './verification';

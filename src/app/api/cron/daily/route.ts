@@ -78,7 +78,7 @@ export async function GET(request: NextRequest) {
     const response = await fetch(`${baseUrl}/api/mystery-inquiry`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ limit: 5 }), // Send up to 5 mystery inquiries per day
+      body: JSON.stringify({ limit: 80, delay_ms: 60000, randomize: true }), // Send 80 mystery inquiries per day (40 per Gmail account), ~1min random delays
     });
     const data = await response.json();
     results.mystery_shopper = { success: response.ok, error: response.ok ? null : data.error, stats: data };

@@ -12,9 +12,41 @@ export const AZURE_CLIENT_SECRET = process.env.AZURE_CLIENT_SECRET;
 export const AZURE_MAIL_FROM = process.env.AZURE_MAIL_FROM || 'edd@jengu.ai';
 export const AZURE_MAIL_FROM_NAME = process.env.AZURE_MAIL_FROM_NAME || 'Edward Guest';
 
-// Gmail SMTP configuration for mystery shopper emails
+// Gmail SMTP configuration for mystery shopper emails (legacy single account)
 export const GMAIL_SMTP_USER = process.env.GMAIL_SMTP_USER;
 export const GMAIL_SMTP_PASS = process.env.GMAIL_SMTP_PASS;
+
+// Gmail inbox type for mystery shopper rotation
+export interface GmailInbox {
+  email: string;
+  password: string;
+  senderName: string;
+}
+
+/**
+ * Get all Gmail inboxes for mystery shopper
+ * Format: GMAIL_INBOX_N=email|password|displayName
+ */
+export function getGmailInboxes(): GmailInbox[] {
+  const inboxes: GmailInbox[] = [];
+
+  // Check GMAIL_INBOX_N env vars (1-10)
+  for (let i = 1; i <= 10; i++) {
+    const config = process.env[`GMAIL_INBOX_${i}`];
+    if (config) {
+      const [email, password, senderName] = config.split('|');
+      if (email && password) {
+        inboxes.push({
+          email: email.trim(),
+          password: password.trim(),
+          senderName: senderName?.trim() || email.split('@')[0],
+        });
+      }
+    }
+  }
+
+  return inboxes;
+}
 
 /**
  * Parse SMTP inboxes from environment
@@ -99,5 +131,9 @@ export function isAzureConfigured(): boolean {
 }
 
 export function isGmailConfigured(): boolean {
+  // Check for new multi-inbox format first
+  const gmailInboxes = getGmailInboxes();
+  if (gmailInboxes.length > 0) return true;
+  // Fall back to legacy single account
   return !!(GMAIL_SMTP_USER && GMAIL_SMTP_PASS);
 }

@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
-import { sendEmail, isSmtpConfigured, getInboxStats, getTotalRemainingCapacity, getSmtpInboxes, syncInboxCountsFromDb } from '@/lib/email';
+import { sendEmail, isSmtpConfigured, getInboxStats, getTotalRemainingCapacity, getSmtpInboxes, syncInboxCountsFromDb, canSendTo } from '@/lib/email';
 import { getStrategy } from '@/lib/campaign-strategies';
 import { success, errors } from '@/lib/api-response';
 import { parseBody, autoEmailSchema, ValidationError } from '@/lib/validation';
@@ -204,7 +204,10 @@ export async function POST(request: NextRequest) {
       sent: 0,
       failed: 0,
       skipped: 0,
+      blocked: 0,
+      bounced: 0,
       errors: [] as string[],
+      blockedEmails: [] as { email: string; reason: string }[],
       byCampaign: {} as Record<string, { name: string; sent: number }>,
     };
 
@@ -229,6 +232,15 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
+      // Pre-validate email before generating content
+      const validation = await canSendTo(prospect.email);
+      if (!validation.canSend) {
+        results.blocked++;
+        results.blockedEmails.push({ email: prospect.email, reason: validation.reason || 'Unknown' });
+        logger.info({ email: prospect.email, reason: validation.reason }, 'Email blocked by validation');
+        continue;
+      }
+
       const campaign = availableCampaigns[campaignIndex % availableCampaigns.length];
       campaignIndex++;
 
@@ -243,11 +255,20 @@ export async function POST(request: NextRequest) {
         to: prospect.email,
         subject: email.subject,
         body: email.body,
+        skipValidation: true, // Already validated above
       });
 
       if (!sendResult.success) {
-        results.failed++;
-        results.errors.push(`Failed to send to ${prospect.email}: ${sendResult.error}`);
+        if (sendResult.blocked) {
+          results.blocked++;
+          results.blockedEmails.push({ email: prospect.email, reason: sendResult.blockReason || 'Unknown' });
+        } else if (sendResult.bounceType) {
+          results.bounced++;
+          results.errors.push(`Bounced (${sendResult.bounceType}): ${prospect.email}`);
+        } else {
+          results.failed++;
+          results.errors.push(`Failed to send to ${prospect.email}: ${sendResult.error}`);
+        }
         continue;
       }
 
@@ -322,9 +343,9 @@ export async function POST(request: NextRequest) {
       if (batchInsertError) logger.error({ error: batchInsertError }, 'Batch activity insert failed');
     }
 
-    logger.info({ sent: results.sent, failed: results.failed }, 'Auto-email completed');
+    logger.info({ sent: results.sent, failed: results.failed, blocked: results.blocked, bounced: results.bounced }, 'Auto-email completed');
     return success({
-      message: `Auto-email completed: ${results.sent} sent, ${results.failed} failed, ${results.skipped} skipped`,
+      message: `Auto-email completed: ${results.sent} sent, ${results.failed} failed, ${results.blocked} blocked, ${results.bounced} bounced, ${results.skipped} skipped`,
       ...results,
       checked: eligibleProspects.length,
     });

@@ -330,35 +330,37 @@ export default function ProspectDetailPage() {
         subtitle={`${prospect.city}${prospect.country ? `, ${prospect.country}` : ''}`}
       />
 
-      <div className="flex-1 p-6 overflow-auto">
-        <div className="mb-4">
-          <Link href="/prospects" className="text-zinc-400 hover:text-white flex items-center gap-1 text-sm">
-            <ArrowLeft className="h-4 w-4" />
+      <div className="flex-1 p-4 md:p-6 overflow-auto">
+        <div className="mb-3 md:mb-4">
+          <Link href="/prospects" className="text-zinc-400 hover:text-white flex items-center gap-1 text-xs md:text-sm">
+            <ArrowLeft className="h-3 w-3 md:h-4 md:w-4" />
             Back to Prospects
           </Link>
         </div>
 
         {/* Archived Banner */}
         {prospect.archived && (
-          <div className="mb-6 p-4 rounded-lg bg-red-500/10 border border-red-500/30 flex items-center gap-3">
-            <div className="p-2 rounded-full bg-red-500/20">
-              <Archive className="h-5 w-5 text-red-400" />
-            </div>
-            <div className="flex-1">
-              <p className="text-red-400 font-medium">This prospect has been archived</p>
-              <p className="text-sm text-zinc-400">
-                Reason: {getArchiveReasonLabel(prospect.archive_reason)}
-                {prospect.archived_at && (
-                  <span className="ml-2">
-                    ({new Date(prospect.archived_at).toLocaleDateString()})
-                  </span>
-                )}
-              </p>
+          <div className="mb-4 md:mb-6 p-3 md:p-4 rounded-lg bg-red-500/10 border border-red-500/30 flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex items-center gap-3 flex-1">
+              <div className="p-2 rounded-full bg-red-500/20">
+                <Archive className="h-4 w-4 md:h-5 md:w-5 text-red-400" />
+              </div>
+              <div>
+                <p className="text-red-400 font-medium text-sm md:text-base">This prospect has been archived</p>
+                <p className="text-xs md:text-sm text-zinc-400">
+                  Reason: {getArchiveReasonLabel(prospect.archive_reason)}
+                  {prospect.archived_at && (
+                    <span className="ml-2">
+                      ({new Date(prospect.archived_at).toLocaleDateString()})
+                    </span>
+                  )}
+                </p>
+              </div>
             </div>
             <Button
               variant="outline"
               size="sm"
-              className="border-red-500/30 text-red-400 hover:bg-red-500/10"
+              className="border-red-500/30 text-red-400 hover:bg-red-500/10 text-xs w-full sm:w-auto"
               onClick={async () => {
                 try {
                   const response = await fetch(`/api/prospects/${id}`, {
@@ -370,55 +372,55 @@ export default function ProspectDetailPage() {
                 } catch {}
               }}
             >
-              <XCircle className="h-4 w-4 mr-1" />
+              <XCircle className="h-3 w-3 md:h-4 md:w-4 mr-1" />
               Unarchive
             </Button>
           </div>
         )}
 
-        <div className="grid gap-6 lg:grid-cols-3">
+        <div className="grid gap-4 md:gap-6 lg:grid-cols-3">
           {/* Main Content */}
-          <div className="lg:col-span-2 space-y-6">
+          <div className="lg:col-span-2 space-y-4 md:space-y-6">
             {/* Overview Card */}
             <Card className="bg-zinc-900 border-zinc-800">
-              <CardContent className="p-6">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="h-16 w-16 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-2xl font-bold text-white">
+              <CardContent className="p-4 md:p-6">
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                  <div className="flex items-center gap-3 md:gap-4">
+                    <div className="h-12 w-12 md:h-16 md:w-16 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-xl md:text-2xl font-bold text-white flex-shrink-0">
                       {prospect.name.charAt(0)}
                     </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h2 className="text-xl font-bold text-white">{prospect.name}</h2>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="text-base md:text-xl font-bold text-white truncate">{prospect.name}</h2>
                         {getTierBadge(prospect.tier)}
                       </div>
-                      <div className="flex items-center gap-4 mt-2 text-sm text-zinc-400">
+                      <div className="flex flex-wrap items-center gap-2 md:gap-4 mt-1 md:mt-2 text-xs md:text-sm text-zinc-400">
                         <span className="flex items-center gap-1">
-                          <MapPin className="h-4 w-4" />
+                          <MapPin className="h-3 w-3 md:h-4 md:w-4" />
                           {prospect.city}{prospect.country ? `, ${prospect.country}` : ''}
                         </span>
                         {prospect.google_rating && (
                           <span className="flex items-center gap-1">
-                            <Star className="h-4 w-4 text-amber-400 fill-amber-400" />
-                            {prospect.google_rating} ({prospect.google_review_count?.toLocaleString() || 0} reviews)
+                            <Star className="h-3 w-3 md:h-4 md:w-4 text-amber-400 fill-amber-400" />
+                            {prospect.google_rating} <span className="hidden sm:inline">({prospect.google_review_count?.toLocaleString() || 0} reviews)</span>
                           </span>
                         )}
                       </div>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div className="text-3xl font-bold text-white">{prospect.score || 0}</div>
-                    <div className="text-sm text-zinc-400">Lead Score</div>
+                  <div className="text-left sm:text-right flex-shrink-0">
+                    <div className="text-2xl md:text-3xl font-bold text-white">{prospect.score || 0}</div>
+                    <div className="text-xs md:text-sm text-zinc-400">Lead Score</div>
                   </div>
                 </div>
 
-                <Separator className="my-6 bg-zinc-800" />
+                <Separator className="my-4 md:my-6 bg-zinc-800" />
 
-                <div className="flex items-center gap-4 mb-4">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3 md:gap-4 mb-4">
                   <div className="flex-1">
-                    <p className="text-sm text-zinc-500 mb-1">Pipeline Stage</p>
+                    <p className="text-xs md:text-sm text-zinc-500 mb-1">Pipeline Stage</p>
                     <Select value={prospect.stage} onValueChange={handleStageChange}>
-                      <SelectTrigger className="bg-zinc-800 border-zinc-700">
+                      <SelectTrigger className="bg-zinc-800 border-zinc-700 text-sm">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent className="bg-zinc-900 border-zinc-800">
@@ -433,107 +435,126 @@ export default function ProspectDetailPage() {
                   {!prospect.google_place_id && (
                     <Button
                       variant="outline"
-                      className="border-zinc-700"
+                      className="border-zinc-700 text-xs md:text-sm w-full sm:w-auto"
                       onClick={handleEnrich}
                       disabled={isEnriching}
                     >
                       {isEnriching ? (
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        <Loader2 className="h-3 w-3 md:h-4 md:w-4 mr-2 animate-spin" />
                       ) : (
-                        <RefreshCw className="h-4 w-4 mr-2" />
+                        <RefreshCw className="h-3 w-3 md:h-4 md:w-4 mr-2" />
                       )}
                       Enrich Data
                     </Button>
                   )}
+                  {!prospect.archived && (
+                    <Button
+                      variant="outline"
+                      className="border-red-500/30 text-red-400 hover:bg-red-500/10 text-xs md:text-sm w-full sm:w-auto"
+                      onClick={async () => {
+                        try {
+                          const response = await fetch(`/api/prospects/${id}`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ archived: true, archive_reason: 'manual' }),
+                          });
+                          if (response.ok) fetchProspect();
+                        } catch {}
+                      }}
+                    >
+                      <Archive className="h-3 w-3 md:h-4 md:w-4 mr-2" />
+                      Archive
+                    </Button>
+                  )}
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
                   <div>
-                    <p className="text-sm text-zinc-500">Property Type</p>
-                    <p className="text-white capitalize">{prospect.property_type || '-'}</p>
+                    <p className="text-xs md:text-sm text-zinc-500">Property Type</p>
+                    <p className="text-white text-sm md:text-base capitalize">{prospect.property_type || '-'}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-zinc-500">Star Rating</p>
-                    <p className="text-white">{prospect.star_rating ? `${prospect.star_rating} Stars` : '-'}</p>
+                    <p className="text-xs md:text-sm text-zinc-500">Star Rating</p>
+                    <p className="text-white text-sm md:text-base">{prospect.star_rating ? `${prospect.star_rating} Stars` : '-'}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-zinc-500">Rooms</p>
-                    <p className="text-white">{prospect.estimated_rooms || '-'}</p>
+                    <p className="text-xs md:text-sm text-zinc-500">Rooms</p>
+                    <p className="text-white text-sm md:text-base">{prospect.estimated_rooms || '-'}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-zinc-500">Chain</p>
-                    <p className="text-white">{prospect.chain_affiliation || 'Independent'}</p>
+                    <p className="text-xs md:text-sm text-zinc-500">Chain</p>
+                    <p className="text-white text-sm md:text-base">{prospect.chain_affiliation || 'Independent'}</p>
                   </div>
                 </div>
               </CardContent>
             </Card>
 
             {/* Tabs */}
-            <Tabs defaultValue="emails" className="space-y-4">
-              <TabsList className="bg-zinc-900 border border-zinc-800">
-                <TabsTrigger value="emails">Emails ({emails.length})</TabsTrigger>
-                <TabsTrigger value="activity">Activity ({activities.length})</TabsTrigger>
-                <TabsTrigger value="notes">Notes</TabsTrigger>
+            <Tabs defaultValue="emails" className="space-y-3 md:space-y-4">
+              <TabsList className="bg-zinc-900 border border-zinc-800 w-full sm:w-auto">
+                <TabsTrigger value="emails" className="text-xs md:text-sm flex-1 sm:flex-none">Emails ({emails.length})</TabsTrigger>
+                <TabsTrigger value="activity" className="text-xs md:text-sm flex-1 sm:flex-none">Activity ({activities.length})</TabsTrigger>
+                <TabsTrigger value="notes" className="text-xs md:text-sm flex-1 sm:flex-none">Notes</TabsTrigger>
               </TabsList>
 
-              <TabsContent value="emails" className="space-y-4">
+              <TabsContent value="emails" className="space-y-3 md:space-y-4">
                 <Card className="bg-zinc-900 border-zinc-800">
-                  <CardHeader className="flex flex-row items-center justify-between">
-                    <CardTitle className="text-white flex items-center gap-2">
-                      <MessageSquare className="h-5 w-5" />
+                  <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 md:p-6">
+                    <CardTitle className="text-white flex items-center gap-2 text-sm md:text-base">
+                      <MessageSquare className="h-4 w-4 md:h-5 md:w-5" />
                       Email Conversations
                     </CardTitle>
                     <Button
                       onClick={handleGenerateEmail}
                       disabled={isGenerating}
-                      className="bg-amber-600 hover:bg-amber-700"
+                      className="bg-amber-600 hover:bg-amber-700 text-xs md:text-sm w-full sm:w-auto"
                     >
                       {isGenerating ? (
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        <Loader2 className="h-3 w-3 md:h-4 md:w-4 mr-2 animate-spin" />
                       ) : (
-                        <Sparkles className="h-4 w-4 mr-2" />
+                        <Sparkles className="h-3 w-3 md:h-4 md:w-4 mr-2" />
                       )}
                       {isGenerating ? 'Generating...' : 'Generate Email'}
                     </Button>
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="p-4 md:p-6 pt-0 md:pt-0">
                     {generatedEmail && (
-                      <div className="mb-4 p-4 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                      <div className="mb-3 md:mb-4 p-3 md:p-4 rounded-lg bg-amber-500/10 border border-amber-500/30">
                         <div className="flex items-center justify-between mb-2">
-                          <h4 className="font-medium text-amber-400">Generated Email</h4>
+                          <h4 className="font-medium text-amber-400 text-sm md:text-base">Generated Email</h4>
                           <Button size="sm" variant="ghost" onClick={handleCopyEmail} className="text-amber-400">
-                            {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                            {copied ? <Check className="h-3 w-3 md:h-4 md:w-4" /> : <Copy className="h-3 w-3 md:h-4 md:w-4" />}
                           </Button>
                         </div>
-                        <p className="text-sm font-medium text-white mb-2">Subject: {generatedEmail.subject}</p>
-                        <pre className="text-sm text-zinc-300 whitespace-pre-wrap font-sans">{generatedEmail.body}</pre>
+                        <p className="text-xs md:text-sm font-medium text-white mb-2">Subject: {generatedEmail.subject}</p>
+                        <pre className="text-xs md:text-sm text-zinc-300 whitespace-pre-wrap font-sans">{generatedEmail.body}</pre>
                       </div>
                     )}
 
                     {emails.length > 0 ? (
-                      <div className="space-y-6">
+                      <div className="space-y-4 md:space-y-6">
                         {groupEmailsIntoThreads(emails).map((thread) => (
                           <div key={thread.thread_id} className="rounded-lg border border-zinc-700 overflow-hidden">
                             {/* Thread Header */}
-                            <div className="bg-zinc-800/50 px-4 py-3 flex items-center justify-between border-b border-zinc-700">
-                              <div className="flex items-center gap-2">
-                                <span className="text-sm font-medium text-white">
+                            <div className="bg-zinc-800/50 px-3 md:px-4 py-2 md:py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-700">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-xs md:text-sm font-medium text-white truncate">
                                   {thread.emails[0].subject}
                                 </span>
                                 {thread.hasReply && (
-                                  <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
-                                    <Inbox className="h-3 w-3 mr-1" />
+                                  <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 text-[10px] md:text-xs">
+                                    <Inbox className="h-2.5 w-2.5 md:h-3 md:w-3 mr-1" />
                                     Reply
                                   </Badge>
                                 )}
                                 {thread.hasMeetingRequest && (
-                                  <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30">
-                                    <Calendar className="h-3 w-3 mr-1" />
+                                  <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30 text-[10px] md:text-xs">
+                                    <Calendar className="h-2.5 w-2.5 md:h-3 md:w-3 mr-1" />
                                     Meeting
                                   </Badge>
                                 )}
                               </div>
-                              <span className="text-xs text-zinc-500">
+                              <span className="text-[10px] md:text-xs text-zinc-500">
                                 {thread.emails.length} message{thread.emails.length !== 1 ? 's' : ''}
                               </span>
                             </div>
@@ -547,34 +568,34 @@ export default function ProspectDetailPage() {
                                 return (
                                   <div
                                     key={email.id}
-                                    className={`p-4 ${isInbound ? 'bg-zinc-800/30' : 'bg-zinc-900'}`}
+                                    className={`p-3 md:p-4 ${isInbound ? 'bg-zinc-800/30' : 'bg-zinc-900'}`}
                                   >
-                                    <div className="flex items-start gap-3">
+                                    <div className="flex items-start gap-2 md:gap-3">
                                       {/* Direction Icon */}
-                                      <div className={`mt-1 p-1.5 rounded-full ${isInbound ? 'bg-emerald-500/20' : 'bg-amber-500/20'}`}>
+                                      <div className={`mt-1 p-1 md:p-1.5 rounded-full ${isInbound ? 'bg-emerald-500/20' : 'bg-amber-500/20'}`}>
                                         {isInbound ? (
-                                          <Inbox className="h-3 w-3 text-emerald-400" />
+                                          <Inbox className="h-2.5 w-2.5 md:h-3 md:w-3 text-emerald-400" />
                                         ) : (
-                                          <Send className="h-3 w-3 text-amber-400" />
+                                          <Send className="h-2.5 w-2.5 md:h-3 md:w-3 text-amber-400" />
                                         )}
                                       </div>
 
                                       <div className="flex-1 min-w-0">
                                         {/* Email Header */}
-                                        <div className="flex items-center justify-between gap-2 mb-2">
-                                          <div className="flex items-center gap-2 text-sm">
-                                            <span className={isInbound ? 'text-emerald-400 font-medium' : 'text-amber-400 font-medium'}>
+                                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 md:gap-2 mb-2">
+                                          <div className="flex items-center gap-1 md:gap-2 text-xs md:text-sm min-w-0">
+                                            <span className={`flex-shrink-0 ${isInbound ? 'text-emerald-400 font-medium' : 'text-amber-400 font-medium'}`}>
                                               {isInbound ? 'From:' : 'To:'}
                                             </span>
-                                            <span className="text-zinc-300">
+                                            <span className="text-zinc-300 truncate">
                                               {isInbound ? email.from_email : email.to_email}
                                             </span>
                                           </div>
-                                          <div className="flex items-center gap-2">
-                                            <Badge className={typeLabel.className}>
+                                          <div className="flex items-center gap-2 flex-shrink-0">
+                                            <Badge className={`${typeLabel.className} text-[10px] md:text-xs`}>
                                               {typeLabel.label}
                                             </Badge>
-                                            <span className="text-xs text-zinc-500">
+                                            <span className="text-[10px] md:text-xs text-zinc-500 hidden sm:inline">
                                               {new Date(email.sent_at || email.created_at).toLocaleString()}
                                             </span>
                                           </div>
@@ -582,13 +603,13 @@ export default function ProspectDetailPage() {
 
                                         {/* Show subject only if different from thread subject */}
                                         {idx > 0 && email.subject !== thread.emails[0].subject && (
-                                          <p className="text-sm text-zinc-400 mb-2">
+                                          <p className="text-xs md:text-sm text-zinc-400 mb-2">
                                             Re: {email.subject}
                                           </p>
                                         )}
 
                                         {/* Email Body */}
-                                        <div className="text-sm text-zinc-300 whitespace-pre-wrap">
+                                        <div className="text-xs md:text-sm text-zinc-300 whitespace-pre-wrap">
                                           {email.body}
                                         </div>
                                       </div>
@@ -601,9 +622,9 @@ export default function ProspectDetailPage() {
                         ))}
                       </div>
                     ) : (
-                      <div className="text-center py-8 text-zinc-500">
-                        <Mail className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                        <p>No emails yet. Generate one to get started!</p>
+                      <div className="text-center py-6 md:py-8 text-zinc-500">
+                        <Mail className="h-10 w-10 md:h-12 md:w-12 mx-auto mb-4 opacity-50" />
+                        <p className="text-sm md:text-base">No emails yet. Generate one to get started!</p>
                       </div>
                     )}
                   </CardContent>
@@ -612,28 +633,28 @@ export default function ProspectDetailPage() {
 
               <TabsContent value="activity">
                 <Card className="bg-zinc-900 border-zinc-800">
-                  <CardHeader>
-                    <CardTitle className="text-white">Activity Timeline</CardTitle>
+                  <CardHeader className="p-4 md:p-6">
+                    <CardTitle className="text-white text-sm md:text-base">Activity Timeline</CardTitle>
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="p-4 md:p-6 pt-0 md:pt-0">
                     {activities.length > 0 ? (
-                      <div className="space-y-4">
+                      <div className="space-y-3 md:space-y-4">
                         {activities.map((activity) => (
-                          <div key={activity.id} className="flex items-start gap-3">
-                            <div className="h-2 w-2 mt-2 rounded-full bg-amber-500" />
-                            <div className="flex-1">
-                              <p className="text-sm text-white">{activity.title}</p>
+                          <div key={activity.id} className="flex items-start gap-2 md:gap-3">
+                            <div className="h-2 w-2 mt-2 rounded-full bg-amber-500 flex-shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs md:text-sm text-white">{activity.title}</p>
                               {activity.description && (
-                                <p className="text-xs text-zinc-400">{activity.description}</p>
+                                <p className="text-[10px] md:text-xs text-zinc-400">{activity.description}</p>
                               )}
-                              <p className="text-xs text-zinc-500">{formatTimeAgo(activity.created_at)}</p>
+                              <p className="text-[10px] md:text-xs text-zinc-500">{formatTimeAgo(activity.created_at)}</p>
                             </div>
                           </div>
                         ))}
                       </div>
                     ) : (
-                      <div className="text-center py-8 text-zinc-500">
-                        <p>No activity yet</p>
+                      <div className="text-center py-6 md:py-8 text-zinc-500">
+                        <p className="text-sm">No activity yet</p>
                       </div>
                     )}
                   </CardContent>
@@ -642,20 +663,20 @@ export default function ProspectDetailPage() {
 
               <TabsContent value="notes">
                 <Card className="bg-zinc-900 border-zinc-800">
-                  <CardHeader>
-                    <CardTitle className="text-white">Notes</CardTitle>
+                  <CardHeader className="p-4 md:p-6">
+                    <CardTitle className="text-white text-sm md:text-base">Notes</CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-4">
+                  <CardContent className="p-4 md:p-6 pt-0 md:pt-0 space-y-3 md:space-y-4">
                     <Textarea
                       placeholder="Add notes about this prospect..."
-                      className="bg-zinc-800 border-zinc-700 min-h-[150px]"
+                      className="bg-zinc-800 border-zinc-700 min-h-[120px] md:min-h-[150px] text-sm"
                       value={noteContent}
                       onChange={(e) => setNoteContent(e.target.value)}
                     />
                     <Button
                       onClick={handleSaveNote}
                       disabled={isSavingNote}
-                      className="bg-amber-600 hover:bg-amber-700"
+                      className="bg-amber-600 hover:bg-amber-700 text-sm w-full sm:w-auto"
                     >
                       {isSavingNote ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                       Save Note
@@ -667,7 +688,7 @@ export default function ProspectDetailPage() {
           </div>
 
           {/* Sidebar */}
-          <div className="space-y-6">
+          <div className="space-y-4 md:space-y-6">
             <NextActionCard
               stage={prospect.stage}
               hasEmail={!!prospect.email}

@@ -91,10 +91,6 @@ export default function ScraperPage() {
     errors: number;
   } | null>(null);
 
-  useEffect(() => {
-    fetchRecentRuns();
-  }, []);
-
   const fetchRecentRuns = async () => {
     try {
       const res = await fetch('/api/scrape');
@@ -106,6 +102,10 @@ export default function ScraperPage() {
       console.error('Failed to fetch runs:', error);
     }
   };
+
+  useEffect(() => {
+    fetchRecentRuns();
+  }, []);
 
   const toggleScraper = (scraperId: string) => {
     setSelectedScrapers(prev =>
@@ -137,23 +137,70 @@ export default function ScraperPage() {
 
       const data = await res.json();
 
-      if (data.success) {
-        setLastResult({
-          total_found: data.total_found,
-          new_saved: data.new_saved,
-          duplicates_skipped: data.duplicates_skipped,
-          errors: data.errors,
-        });
-        fetchRecentRuns();
+      if (data.success && data.run_id) {
+        // Scrape started in background - poll for status
+        pollForCompletion(data.run_id);
       } else {
         alert(`Scrape failed: ${data.error}`);
+        setIsRunning(false);
       }
     } catch (error) {
       alert(`Scrape failed: ${error}`);
-    } finally {
       setIsRunning(false);
     }
   };
+
+  // Poll for scrape completion - works even if you navigate away and come back
+  const pollForCompletion = async (runId: string) => {
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/scrape');
+        const data = await res.json();
+
+        if (data.runs) {
+          setRecentRuns(data.runs);
+          const currentRun = data.runs.find((r: ScrapeRun) => r.id === runId);
+
+          if (currentRun) {
+            if (currentRun.status === 'completed') {
+              setLastResult({
+                total_found: currentRun.total_found,
+                new_saved: currentRun.new_prospects,
+                duplicates_skipped: currentRun.duplicates_skipped || 0,
+                errors: currentRun.errors,
+              });
+              setIsRunning(false);
+              return; // Stop polling
+            } else if (currentRun.status === 'failed') {
+              alert('Scrape failed. Check the logs for details.');
+              setIsRunning(false);
+              return; // Stop polling
+            }
+          }
+        }
+
+        // Continue polling every 3 seconds while running
+        setTimeout(poll, 3000);
+      } catch (error) {
+        console.error('Polling error:', error);
+        setTimeout(poll, 5000); // Retry with longer delay on error
+      }
+    };
+
+    poll();
+  };
+
+  // Check for any running scrapes on page load
+  useEffect(() => {
+    const checkRunningJobs = () => {
+      const runningRun = recentRuns.find(r => r.status === 'running' || r.status === 'enriching');
+      if (runningRun && !isRunning) {
+        setIsRunning(true);
+        pollForCompletion(runningRun.id);
+      }
+    };
+    checkRunningJobs();
+  }, [recentRuns]);
 
   return (
     <div className="flex flex-col h-full">

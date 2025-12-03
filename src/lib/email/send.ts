@@ -24,6 +24,12 @@ import {
 import { getAvailableInbox, incrementInboxSendCount } from './inbox-tracker';
 import { formatEmailHtml, formatSimpleHtml } from './templates';
 import { logger } from '../logger';
+import {
+  canSendTo,
+  parseBounceFromError,
+  recordBounce,
+  recordSuccessfulSend,
+} from './verification';
 
 /**
  * Create Microsoft Graph client
@@ -47,11 +53,11 @@ function createGraphClient(): Client {
 }
 
 /**
- * Send email via SMTP
+ * Send email via SMTP with bounce detection
  */
 async function sendViaSmtp(
   inbox: SmtpInbox,
-  options: SendEmailOptions
+  options: SendEmailOptions & { emailId?: string }
 ): Promise<SendEmailResult> {
   const startTime = Date.now();
 
@@ -76,6 +82,9 @@ async function sendViaSmtp(
     const deliveryTime = Date.now() - startTime;
     incrementInboxSendCount(inbox.email);
 
+    // Record successful send for reputation tracking
+    await recordSuccessfulSend(options.to, inbox.email, options.emailId || null, result.messageId);
+
     logger.info({ to: options.to, inbox: inbox.email, deliveryTime }, 'Email sent via SMTP');
 
     return {
@@ -86,20 +95,31 @@ async function sendViaSmtp(
     };
   } catch (error) {
     const deliveryTime = Date.now() - startTime;
-    logger.error({ inbox: inbox.email, error }, 'SMTP send failed');
+    const errorStr = String(error);
+
+    // Check if this is a bounce
+    const bounceInfo = parseBounceFromError(errorStr);
+    if (bounceInfo) {
+      await recordBounce(options.to, inbox.email, options.emailId || null, bounceInfo);
+      logger.warn({ to: options.to, bounceType: bounceInfo.type, error: errorStr }, 'Email bounced');
+    } else {
+      logger.error({ inbox: inbox.email, error }, 'SMTP send failed');
+    }
+
     return {
       success: false,
-      error: String(error),
+      error: errorStr,
       deliveryTime,
       sentFrom: inbox.email,
+      bounceType: bounceInfo?.type,
     };
   }
 }
 
 /**
- * Send email via Microsoft Graph API
+ * Send email via Microsoft Graph API with bounce detection
  */
-async function sendViaGraph(options: SendEmailOptions): Promise<SendEmailResult> {
+async function sendViaGraph(options: SendEmailOptions & { emailId?: string }): Promise<SendEmailResult> {
   const startTime = Date.now();
 
   try {
@@ -131,35 +151,65 @@ async function sendViaGraph(options: SendEmailOptions): Promise<SendEmailResult>
       .post({ message, saveToSentItems: true });
 
     const deliveryTime = Date.now() - startTime;
+    const messageId = `graph-${Date.now()}`;
+
+    // Record successful send
+    await recordSuccessfulSend(options.to, AZURE_MAIL_FROM!, options.emailId || null, messageId);
 
     logger.info({ to: options.to, deliveryTime }, 'Email sent via Graph');
 
     return {
       success: true,
-      messageId: `graph-${Date.now()}`,
+      messageId,
       deliveryTime,
       sentFrom: AZURE_MAIL_FROM,
     };
   } catch (error) {
     const deliveryTime = Date.now() - startTime;
-    logger.error({ error }, 'Graph send failed');
+    const errorStr = String(error);
+
+    // Check if this is a bounce
+    const bounceInfo = parseBounceFromError(errorStr);
+    if (bounceInfo && AZURE_MAIL_FROM) {
+      await recordBounce(options.to, AZURE_MAIL_FROM, options.emailId || null, bounceInfo);
+      logger.warn({ to: options.to, bounceType: bounceInfo.type, error: errorStr }, 'Email bounced (Graph)');
+    } else {
+      logger.error({ error }, 'Graph send failed');
+    }
+
     return {
       success: false,
-      error: String(error),
+      error: errorStr,
       deliveryTime,
+      bounceType: bounceInfo?.type,
     };
   }
 }
 
 /**
- * Send an email - uses SMTP rotation if available, falls back to Azure
+ * Send an email - validates recipient, uses SMTP rotation if available, falls back to Azure
  */
-export async function sendEmail(options: SendEmailOptions): Promise<SendEmailResult> {
+export async function sendEmail(options: SendEmailOptions & { emailId?: string; skipValidation?: boolean }): Promise<SendEmailResult> {
   const hasAzure = isAzureConfigured();
+
+  // Validate recipient email first (unless skipped for replies/follow-ups)
+  if (!options.skipValidation) {
+    const validation = await canSendTo(options.to);
+    if (!validation.canSend) {
+      logger.warn({ to: options.to, reason: validation.reason }, 'Email blocked by validation');
+      return {
+        success: false,
+        error: `Cannot send to ${options.to}: ${validation.reason}`,
+        deliveryTime: 0,
+        blocked: true,
+        blockReason: validation.reason,
+      };
+    }
+  }
 
   // If a specific inbox is forced (for thread continuity)
   if (options.forceInbox) {
-    if (options.forceInbox.toLowerCase() === AZURE_MAIL_FROM.toLowerCase()) {
+    if (options.forceInbox.toLowerCase() === AZURE_MAIL_FROM?.toLowerCase()) {
       if (hasAzure) {
         return sendViaGraph(options);
       }

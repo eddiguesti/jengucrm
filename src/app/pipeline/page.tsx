@@ -112,40 +112,40 @@ export default function PipelinePage() {
         }}
       />
 
-      <div className="flex-1 p-6 overflow-x-auto">
+      <div className="flex-1 p-3 md:p-6 overflow-x-auto">
         {loading ? (
           <div className="flex items-center justify-center h-full">
             <Loader2 className="h-8 w-8 animate-spin text-amber-500" />
           </div>
         ) : (
-          <div className="flex gap-4 h-full min-w-max">
+          <div className="flex gap-3 md:gap-4 h-full min-w-max">
             {stages.map((stage) => {
               const prospects = prospectsByStage[stage.id] || [];
 
               return (
                 <div
                   key={stage.id}
-                  className="w-72 flex-shrink-0"
+                  className="w-64 md:w-72 flex-shrink-0"
                   onDragOver={handleDragOver}
                   onDrop={(e) => handleDrop(e, stage.id)}
                 >
                   <Card className="bg-zinc-900 border-zinc-800 h-full flex flex-col">
-                    <CardHeader className="pb-3">
+                    <CardHeader className="pb-2 md:pb-3 p-3 md:p-4">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <div className={`h-2 w-2 rounded-full ${stage.color}`} />
-                          <CardTitle className="text-white text-sm font-medium">
+                          <CardTitle className="text-white text-xs md:text-sm font-medium">
                             {stage.name}
                           </CardTitle>
                         </div>
-                        <Badge variant="secondary" className="bg-zinc-800 text-zinc-400">
+                        <Badge variant="secondary" className="bg-zinc-800 text-zinc-400 text-[10px] md:text-xs">
                           {prospects.length}
                         </Badge>
                       </div>
                     </CardHeader>
-                    <CardContent className="flex-1 pt-0">
-                      <ScrollArea className="h-[calc(100vh-220px)]">
-                        <div className="space-y-3 pr-4">
+                    <CardContent className="flex-1 pt-0 p-3 md:p-4">
+                      <ScrollArea className="h-[calc(100vh-200px)] md:h-[calc(100vh-220px)]">
+                        <div className="space-y-2 md:space-y-3 pr-3 md:pr-4">
                           {prospects.map((prospect) => (
                             <div
                               key={prospect.id}
@@ -156,32 +156,32 @@ export default function PipelinePage() {
                               }`}
                             >
                               <Link href={`/prospects/${prospect.id}`}>
-                                <div className="p-3 rounded-lg bg-zinc-800 border border-zinc-700 hover:border-zinc-600 transition-colors">
-                                  <div className="flex items-start justify-between mb-2">
-                                    <div className="flex items-center gap-2">
+                                <div className="p-2 md:p-3 rounded-lg bg-zinc-800 border border-zinc-700 hover:border-zinc-600 transition-colors">
+                                  <div className="flex items-start justify-between mb-1.5 md:mb-2">
+                                    <div className="flex items-center gap-1.5 md:gap-2 min-w-0">
                                       <div
-                                        className={`h-2 w-2 rounded-full ${getTierDot(
+                                        className={`h-2 w-2 rounded-full flex-shrink-0 ${getTierDot(
                                           prospect.tier
                                         )}`}
                                       />
-                                      <h4 className="font-medium text-white text-sm line-clamp-1">
+                                      <h4 className="font-medium text-white text-xs md:text-sm line-clamp-1">
                                         {prospect.name}
                                       </h4>
                                     </div>
-                                    <span className="text-xs font-medium text-zinc-400">
+                                    <span className="text-[10px] md:text-xs font-medium text-zinc-400 flex-shrink-0">
                                       {prospect.score || 0}
                                     </span>
                                   </div>
                                   {prospect.source_job_title && (
-                                    <p className="text-xs text-emerald-400 mb-1 line-clamp-1">
+                                    <p className="text-[10px] md:text-xs text-emerald-400 mb-1 line-clamp-1">
                                       {prospect.source_job_title}
                                     </p>
                                   )}
-                                  <div className="flex items-center justify-between text-xs text-zinc-400">
-                                    <span>{prospect.city}{prospect.country ? `, ${prospect.country}` : ''}</span>
+                                  <div className="flex items-center justify-between text-[10px] md:text-xs text-zinc-400">
+                                    <span className="truncate">{prospect.city}{prospect.country ? `, ${prospect.country}` : ''}</span>
                                     {prospect.google_rating && (
-                                      <span className="flex items-center gap-1">
-                                        <Star className="h-3 w-3 text-amber-400 fill-amber-400" />
+                                      <span className="flex items-center gap-1 flex-shrink-0">
+                                        <Star className="h-2.5 w-2.5 md:h-3 md:w-3 text-amber-400 fill-amber-400" />
                                         {prospect.google_rating}
                                       </span>
                                     )}
@@ -192,7 +192,7 @@ export default function PipelinePage() {
                           ))}
 
                           {prospects.length === 0 && (
-                            <div className="py-8 text-center text-zinc-500 text-sm">
+                            <div className="py-6 md:py-8 text-center text-zinc-500 text-xs md:text-sm">
                               No prospects in this stage
                             </div>
                           )}

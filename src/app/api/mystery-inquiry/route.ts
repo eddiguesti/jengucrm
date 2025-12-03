@@ -1,105 +1,208 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 import nodemailer from 'nodemailer';
+import { researchHotel, HotelIntel } from '@/lib/hotel-research';
+import { config } from '@/lib/config';
+import { logger } from '@/lib/logger';
 
 /**
- * Mystery Shopper Inquiry
+ * Mystery Shopper Inquiry - AI-Powered
  *
- * Sends a professional inquiry to generic hotel emails asking for the GM's contact.
- * The premise: organizing a corporate event/group and needs to discuss partnership directly.
+ * Researches the hotel first, then generates a strategic personalized inquiry.
+ * Adapts the approach based on hotel facilities, structure, and language.
  */
 
-// Parse SMTP inbox configuration
-function getSmtpConfig(inboxString: string) {
-  const [email, password, host, port, senderName] = inboxString.split('|');
-  return { email, password, host, port: parseInt(port), senderName };
+// Countries where we write in French
+const FRENCH_COUNTRIES = ['france', 'belgium', 'switzerland', 'luxembourg', 'monaco'];
+
+// Parse Gmail inbox configuration (email|password|displayName)
+function getGmailConfig(inboxString: string) {
+  const [email, password, senderName] = inboxString.split('|');
+  return { email, password, senderName: senderName || email.split('@')[0] };
 }
 
-// Mystery shopper templates - credible reasons to need GM email (no proof required)
-const INQUIRY_TEMPLATES = [
-  {
-    subject: 'Wedding Venue Inquiry - Need to Speak with Management',
-    template: (hotelName: string, senderName: string) => `Dear ${hotelName} Team,
+// Get all Gmail inboxes for mystery shopper rotation
+function getGmailInboxes(): { email: string; password: string; senderName: string }[] {
+  const inboxes: { email: string; password: string; senderName: string }[] = [];
+  for (let i = 1; i <= 10; i++) {
+    const config = process.env[`GMAIL_INBOX_${i}`];
+    if (config) {
+      inboxes.push(getGmailConfig(config));
+    }
+  }
+  return inboxes;
+}
 
-I'm planning my wedding for summer 2025 and ${hotelName} is at the top of our list. We're looking at hosting approximately 80 guests over a weekend, including welcome drinks, the ceremony, reception, and accommodation block.
+// Track which Gmail inbox to use next
+let gmailInboxIndex = 0;
 
-Given the scale of what we're planning (full venue buyout for the Saturday, exclusive dining, accommodation for 35+ rooms), I understand this would need to be discussed with your General Manager or Events Director.
+/**
+ * Generate a strategic mystery shopper email using AI
+ */
+async function generateMysteryEmail(
+  hotelName: string,
+  senderName: string,
+  intel: HotelIntel | null,
+  language: 'french' | 'english'
+): Promise<{ subject: string; body: string; scenario: string }> {
+  if (!config.ai.apiKey) {
+    // Fallback to simple template if no AI
+    return getFallbackEmail(hotelName, senderName, language);
+  }
 
-Could you please share the direct email for whoever handles large private events? I'd like to discuss availability and get a sense of what's possible before we visit in person.
+  // Determine best scenario based on intel
+  let scenarioHint = 'wedding inquiry';
+  const thingsToAvoid: string[] = [];
 
-We have flexibility on exact dates and budget isn't the primary concern - we want to find the right venue.
+  if (intel) {
+    if (!intel.hasWeddingVenue && !intel.hasEventSpace) {
+      scenarioHint = 'weekend getaway or anniversary celebration';
+      thingsToAvoid.push('weddings', 'events', 'conferences');
+    } else if (intel.hasWeddingVenue) {
+      scenarioHint = 'wedding venue visit';
+    } else if (intel.hasEventSpace && intel.hasMeetingRooms) {
+      scenarioHint = 'small corporate retreat or team offsite';
+    } else if (intel.hasSpa) {
+      scenarioHint = 'wellness retreat or spa weekend';
+    } else if (intel.hasRestaurant) {
+      scenarioHint = 'culinary weekend or special dinner';
+    }
 
-Thank you so much for your help!
+    if (intel.isPartOfGroup && intel.numberOfProperties && intel.numberOfProperties > 3) {
+      thingsToAvoid.push('asking about other properties in the group');
+    }
+  }
 
-Best,
+  const langInstructions = language === 'french'
+    ? `Write in casual French. Use "tu" not "vous". Sign off with just the name, no "Best" or similar.`
+    : `Write in casual British English. Sign off with just the name.`;
+
+  try {
+    const response = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.ai.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'grok-4-latest',
+        messages: [
+          {
+            role: 'system',
+            content: `You write mystery shopper emails to hotels. You pretend to be a real person making an inquiry to test their response time. Your goal is to get a reply and ideally get the GM or manager's direct contact.
+
+CRITICAL RULES:
+1. Write like a real person texting a friend. Not corporate at all.
+2. NEVER use dashes, hyphens, bullet points, or special characters
+3. NEVER use emojis
+4. Keep it short. 60 to 80 words maximum.
+5. Sound natural and warm
+6. Include specific details to seem genuine (dates, guest numbers, reason)
+7. Ask for the GM or manager's email directly in a natural way
+8. ${langInstructions}
+
+Your email should feel like it was written quickly by someone genuinely interested, not crafted by a marketer.`,
+          },
+          {
+            role: 'user',
+            content: `Write a mystery shopper inquiry email to ${hotelName}.
+
+SENDER NAME: ${senderName}
+SCENARIO TO USE: ${scenarioHint}
+${thingsToAvoid.length > 0 ? `DO NOT MENTION: ${thingsToAvoid.join(', ')}` : ''}
+
+${intel ? `RESEARCH ABOUT THIS HOTEL:
+Property type: ${intel.propertyType || 'unknown'}
+Has restaurant: ${intel.hasRestaurant}
+Has spa: ${intel.hasSpa}
+Has event space: ${intel.hasEventSpace}
+Has wedding venue: ${intel.hasWeddingVenue}
+Part of group: ${intel.isPartOfGroup}${intel.groupName ? ` (${intel.groupName})` : ''}
+Target market: ${intel.targetMarket || 'general'}
+${intel.uniqueSellingPoints?.length ? `Unique points: ${intel.uniqueSellingPoints.join(', ')}` : ''}` : 'No research available, use generic approach.'}
+
+Generate JSON:
+{
+  "subject": "short casual subject 5 to 7 words no special characters",
+  "body": "the email body ending with just the sender name",
+  "scenario": "what scenario you used"
+}`,
+          },
+        ],
+        temperature: 0.8,
+      }),
+    });
+
+    if (!response.ok) {
+      logger.warn({ status: response.status }, 'AI email generation failed, using fallback');
+      return getFallbackEmail(hotelName, senderName, language);
+    }
+
+    const data = await response.json();
+    const responseText = data.choices?.[0]?.message?.content || '';
+
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return getFallbackEmail(hotelName, senderName, language);
+    }
+
+    const result = JSON.parse(jsonMatch[0]);
+    return {
+      subject: result.subject || `Quick question about ${hotelName}`,
+      body: result.body || getFallbackEmail(hotelName, senderName, language).body,
+      scenario: result.scenario || scenarioHint,
+    };
+  } catch (error) {
+    logger.error({ error }, 'AI mystery email generation failed');
+    return getFallbackEmail(hotelName, senderName, language);
+  }
+}
+
+/**
+ * Fallback simple template when AI is unavailable
+ */
+function getFallbackEmail(
+  hotelName: string,
+  senderName: string,
+  language: 'french' | 'english'
+): { subject: string; body: string; scenario: string } {
+  if (language === 'french') {
+    return {
+      subject: `Question sur ${hotelName}`,
+      body: `Bonjour,
+
+Je cherche un endroit sympa pour un weekend en famille le mois prochain. ${hotelName} a l'air parfait d'apres les photos.
+
+On serait environ 8 personnes, 2 nuits. Est ce que tu pourrais me donner le mail du directeur pour qu'on discute directement des options?
+
+Merci beaucoup!
+
 ${senderName}`,
-  },
-  {
-    subject: 'Corporate Relocation - Extended Stay Inquiry',
-    template: (hotelName: string, senderName: string) => `Hi ${hotelName} Team,
+      scenario: 'family weekend',
+    };
+  }
 
-Our company is relocating several executives to your area, and we need accommodation for 3-6 month periods while they find permanent housing. We're looking at ${hotelName} for 4-5 people starting Q1 2025.
+  return {
+    subject: `Quick question about ${hotelName}`,
+    body: `Hi there,
 
-For extended corporate stays like this, we typically negotiate rates directly with hotel management rather than booking through standard channels.
+Looking for somewhere nice for a family weekend next month and ${hotelName} looks perfect from what I've seen online.
 
-Could you provide the email address for your General Manager or whoever handles long-term corporate accounts? We'd need to discuss:
-- Extended stay rates
-- Billing arrangements
-- Room configurations
-- Any corporate amenities
+We'd be about 8 people for 2 nights. Could you share the manager or GMs email so I can discuss options directly?
 
-Happy to provide company details once we're in touch with the right person.
+Thanks so much!
 
-Thanks,
 ${senderName}`,
-  },
-  {
-    subject: 'Family Reunion - Large Group Block Request',
-    template: (hotelName: string, senderName: string) => `Hi ${hotelName} Team,
-
-I'm organizing a family reunion for approximately 50 people in summer 2025. We'd need around 20-25 rooms for 3 nights, plus a private dining space for our main dinner.
-
-${hotelName} was recommended by a family member who stayed recently. Before I send out save-the-dates to the family, I need to confirm we can secure a room block and get pricing.
-
-For a booking this size, could you connect me with your General Manager or Group Sales Director? I'd like to discuss:
-- Room block rates and hold deadlines
-- Private dining options
-- Any group activities/packages
-- Payment arrangements (some family, some individual)
-
-Really hoping we can make this work at your property!
-
-Thanks so much,
-${senderName}`,
-  },
-  {
-    subject: 'Sports Team Travel - Season Accommodation',
-    template: (hotelName: string, senderName: string) => `Hi ${hotelName} Team,
-
-I manage travel for a regional football/sports club, and we're looking for a regular accommodation partner for away matches in your area. This would be approximately 6-8 stays per season, each with 25-30 rooms.
-
-We need a hotel that can handle:
-- Late arrivals (sometimes after 10pm)
-- Early breakfast options
-- Secure parking for our coach
-- Consistent pricing throughout the season
-
-Could you put me in touch with your General Manager to discuss a partnership arrangement? For ongoing contracts like this, we prefer to work directly with hotel management.
-
-Looking forward to your response.
-
-Best regards,
-${senderName}
-Team Travel Coordinator`,
-  },
-];
+    scenario: 'family weekend',
+  };
+}
 
 export async function POST(request: NextRequest) {
   const supabase = createServerClient();
 
   try {
     const body = await request.json();
-    const { prospect_id, template_index = 0 } = body;
+    const { prospect_id, skip_research = false } = body;
 
     if (!prospect_id) {
       return NextResponse.json({ error: 'prospect_id required' }, { status: 400 });
@@ -116,15 +219,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Prospect not found' }, { status: 404 });
     }
 
-    // Check if prospect has only generic email
-    const hasOnlyGenericEmail = prospect.email && (
-      prospect.email.startsWith('info@') ||
-      prospect.email.startsWith('reservations@') ||
-      prospect.email.startsWith('reception@') ||
-      prospect.email.startsWith('frontdesk@') ||
-      prospect.email.startsWith('hello@')
-    );
-
     // Must have an email to send to
     if (!prospect.email) {
       return NextResponse.json({
@@ -133,7 +227,18 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // If already has non-generic email, skip
+    // Check if prospect has only generic email
+    const hasOnlyGenericEmail = prospect.email && (
+      prospect.email.startsWith('info@') ||
+      prospect.email.startsWith('reservations@') ||
+      prospect.email.startsWith('reception@') ||
+      prospect.email.startsWith('frontdesk@') ||
+      prospect.email.startsWith('hello@') ||
+      prospect.email.startsWith('contact@') ||
+      prospect.email.startsWith('enquiries@')
+    );
+
+    // If already has non-generic email with contact name, skip
     if (!hasOnlyGenericEmail && prospect.contact_name) {
       return NextResponse.json({
         skipped: true,
@@ -143,38 +248,57 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Get SMTP configuration (use the 4th inbox for mystery shopper)
-    const smtpConfig = process.env.SMTP_INBOX_4
-      ? getSmtpConfig(process.env.SMTP_INBOX_4)
-      : process.env.SMTP_INBOX_1
-        ? getSmtpConfig(process.env.SMTP_INBOX_1)
-        : null;
-
-    if (!smtpConfig) {
-      return NextResponse.json({ error: 'No SMTP configuration' }, { status: 500 });
+    // Get Gmail inboxes
+    const gmailInboxes = getGmailInboxes();
+    if (gmailInboxes.length === 0) {
+      return NextResponse.json({ error: 'No Gmail accounts configured for mystery shopper' }, { status: 500 });
     }
 
-    // Select template
-    const template = INQUIRY_TEMPLATES[template_index % INQUIRY_TEMPLATES.length];
-    const emailBody = template.template(prospect.name, smtpConfig.senderName);
+    // Round-robin through Gmail accounts
+    const gmailConfig = gmailInboxes[gmailInboxIndex % gmailInboxes.length];
+    gmailInboxIndex++;
 
-    // Create transporter
+    // Determine language
+    const country = (prospect.country || '').toLowerCase();
+    const language = FRENCH_COUNTRIES.some(c => country.includes(c)) ? 'french' : 'english';
+
+    // Research the hotel (unless skipped)
+    let intel: HotelIntel | null = null;
+    if (!skip_research) {
+      try {
+        const location = [prospect.city, prospect.country].filter(Boolean).join(', ');
+        intel = await researchHotel(prospect.name, location, prospect.website || undefined);
+        logger.info({ prospect: prospect.name, confidence: intel.confidence }, 'Hotel researched for mystery shopper');
+      } catch (err) {
+        logger.warn({ prospect: prospect.name, error: err }, 'Research failed, using fallback');
+      }
+    }
+
+    // Generate strategic email
+    const emailData = await generateMysteryEmail(
+      prospect.name,
+      gmailConfig.senderName,
+      intel,
+      language
+    );
+
+    // Create Gmail transporter
     const transporter = nodemailer.createTransport({
-      host: smtpConfig.host,
-      port: smtpConfig.port,
-      secure: smtpConfig.port === 465,
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
       auth: {
-        user: smtpConfig.email,
-        pass: smtpConfig.password,
+        user: gmailConfig.email,
+        pass: gmailConfig.password,
       },
     });
 
     // Send email
     await transporter.sendMail({
-      from: `"${smtpConfig.senderName}" <${smtpConfig.email}>`,
+      from: `"${gmailConfig.senderName}" <${gmailConfig.email}>`,
       to: prospect.email,
-      subject: template.subject,
-      text: emailBody,
+      subject: emailData.subject,
+      text: emailData.body,
     });
 
     // Log activity
@@ -182,24 +306,47 @@ export async function POST(request: NextRequest) {
       prospect_id,
       type: 'email',
       title: 'Mystery Shopper Inquiry Sent',
-      description: `Sent inquiry to ${prospect.email} requesting GM contact. Template: ${template.subject}`,
+      description: `Sent AI-generated inquiry from ${gmailConfig.senderName} (${gmailConfig.email}) to ${prospect.email}. Scenario: ${emailData.scenario}. Language: ${language}`,
     });
 
-    // Tag prospect for follow-up
+    // Update prospect with research data if we found GM/Director
+    const updates: Record<string, unknown> = {};
     const tags = prospect.tags || [];
+
+    if (intel?.gmName && !prospect.contact_name) {
+      updates.contact_name = intel.gmName;
+      updates.contact_title = 'General Manager';
+    } else if (intel?.directorName && !prospect.contact_name) {
+      updates.contact_name = intel.directorName;
+      updates.contact_title = intel.directorTitle || 'Director';
+    }
+
+    if (intel?.generalEmail && !prospect.email?.includes('@')) {
+      updates.email = intel.generalEmail;
+    }
+
     if (!tags.includes('mystery-inquiry-sent')) {
       tags.push('mystery-inquiry-sent');
-      await supabase
-        .from('prospects')
-        .update({ tags })
-        .eq('id', prospect_id);
+      updates.tags = tags;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await supabase.from('prospects').update(updates).eq('id', prospect_id);
     }
 
     return NextResponse.json({
       success: true,
       sent_to: prospect.email,
-      template: template.subject,
-      message: 'Mystery inquiry sent - check for replies in 24-48 hours',
+      subject: emailData.subject,
+      scenario: emailData.scenario,
+      language,
+      research: intel ? {
+        gmName: intel.gmName,
+        hasEventSpace: intel.hasEventSpace,
+        hasWeddingVenue: intel.hasWeddingVenue,
+        confidence: intel.confidence,
+      } : null,
+      message: 'AI-generated mystery inquiry sent',
     });
   } catch (error) {
     console.error('Mystery inquiry error:', error);
@@ -211,7 +358,7 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * Batch send mystery inquiries to prospects with only generic emails
+ * Batch send mystery inquiries with AI research
  */
 export async function PUT(request: NextRequest) {
   const supabase = createServerClient();
@@ -219,64 +366,137 @@ export async function PUT(request: NextRequest) {
   try {
     const body = await request.json();
     const limit = body.limit || 5;
+    const baseDelayMs = body.delay_ms || 10000; // Default 10 second delay (longer for AI calls)
+    const randomize = body.randomize !== false; // Default true for natural sending
+    const skipResearch = body.skip_research || false;
 
     // Find prospects with generic emails that haven't received inquiry
     const { data: prospects, error } = await supabase
       .from('prospects')
-      .select('id, name, email, tags')
-      .eq('stage', 'researching')
+      .select('id, name, email, tags, city, country, website')
       .not('email', 'is', null)
-      .limit(50);
+      .limit(500);
 
     if (error) throw error;
 
     // Filter to only those with generic emails and no mystery inquiry sent
+    const genericPrefixes = ['info@', 'reservations@', 'reception@', 'frontdesk@', 'hello@', 'contact@', 'enquiries@'];
     const eligibleProspects = (prospects || []).filter(p => {
-      const isGenericEmail = p.email && (
-        p.email.startsWith('info@') ||
-        p.email.startsWith('reservations@') ||
-        p.email.startsWith('reception@') ||
-        p.email.startsWith('frontdesk@') ||
-        p.email.startsWith('hello@')
-      );
+      if (!p.email) return false;
+      const emailLower = p.email.toLowerCase();
+      const isGenericEmail = genericPrefixes.some(prefix => emailLower.startsWith(prefix));
       const alreadySent = (p.tags || []).includes('mystery-inquiry-sent');
       return isGenericEmail && !alreadySent;
     }).slice(0, limit);
 
-    const results = [];
-    const cookieHeader = request.headers.get('cookie') || '';
+    const results: {
+      id: string;
+      name: string;
+      success: boolean;
+      error?: string;
+      from?: string;
+      scenario?: string;
+      language?: string;
+    }[] = [];
+
+    const gmailInboxes = getGmailInboxes();
+    if (gmailInboxes.length === 0) {
+      return NextResponse.json({ error: 'No Gmail accounts configured' }, { status: 500 });
+    }
+
+    console.log(`[Mystery AI Batch] Starting batch send of ${eligibleProspects.length} emails...`);
 
     for (let i = 0; i < eligibleProspects.length; i++) {
       const prospect = eligibleProspects[i];
 
       try {
-        const response = await fetch(`${request.nextUrl.origin}/api/mystery-inquiry`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Cookie': cookieHeader,
+        const gmailConfig = gmailInboxes[i % gmailInboxes.length];
+
+        // Determine language
+        const country = (prospect.country || '').toLowerCase();
+        const language = FRENCH_COUNTRIES.some(c => country.includes(c)) ? 'french' : 'english';
+
+        // Research the hotel
+        let intel: HotelIntel | null = null;
+        if (!skipResearch) {
+          try {
+            const location = [prospect.city, prospect.country].filter(Boolean).join(', ');
+            intel = await researchHotel(prospect.name, location, prospect.website || undefined);
+          } catch {
+            // Continue without research
+          }
+        }
+
+        // Generate email
+        const emailData = await generateMysteryEmail(
+          prospect.name,
+          gmailConfig.senderName,
+          intel,
+          language
+        );
+
+        // Send
+        const transporter = nodemailer.createTransport({
+          host: 'smtp.gmail.com',
+          port: 465,
+          secure: true,
+          auth: {
+            user: gmailConfig.email,
+            pass: gmailConfig.password,
           },
-          body: JSON.stringify({
-            prospect_id: prospect.id,
-            template_index: i % INQUIRY_TEMPLATES.length, // Rotate templates
-          }),
         });
 
-        const result = await response.json();
-        results.push({ id: prospect.id, name: prospect.name, success: result.success, error: result.error });
+        await transporter.sendMail({
+          from: `"${gmailConfig.senderName}" <${gmailConfig.email}>`,
+          to: prospect.email,
+          subject: emailData.subject,
+          text: emailData.body,
+        });
 
-        // Delay between sends (30-60 seconds)
+        // Log activity
+        await supabase.from('activities').insert({
+          prospect_id: prospect.id,
+          type: 'email',
+          title: 'Mystery Shopper Inquiry Sent',
+          description: `AI-generated inquiry from ${gmailConfig.senderName}. Scenario: ${emailData.scenario}. Language: ${language}`,
+        });
+
+        // Tag prospect
+        const tags = prospect.tags || [];
+        if (!tags.includes('mystery-inquiry-sent')) {
+          tags.push('mystery-inquiry-sent');
+          await supabase.from('prospects').update({ tags }).eq('id', prospect.id);
+        }
+
+        results.push({
+          id: prospect.id,
+          name: prospect.name,
+          success: true,
+          from: gmailConfig.email,
+          scenario: emailData.scenario,
+          language,
+        });
+
+        console.log(`[Mystery AI Batch] ${i + 1}/${eligibleProspects.length} - Sent to ${prospect.email} (${emailData.scenario})`);
+
+        // Delay between sends
         if (i < eligibleProspects.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 30000 + Math.random() * 30000));
+          const delayMs = randomize ? baseDelayMs * (0.7 + Math.random() * 0.6) : baseDelayMs;
+          console.log(`[Mystery AI Batch] Waiting ${Math.round(delayMs / 1000)}s...`);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
         }
       } catch (e) {
+        console.error(`[Mystery AI Batch] Failed for ${prospect.email}:`, e);
         results.push({ id: prospect.id, name: prospect.name, success: false, error: String(e) });
       }
     }
 
+    console.log(`[Mystery AI Batch] Complete. Sent: ${results.filter(r => r.success).length}, Failed: ${results.filter(r => !r.success).length}`);
+
     return NextResponse.json({
       sent: results.filter(r => r.success).length,
       failed: results.filter(r => !r.success).length,
+      eligible_total: eligibleProspects.length,
       results,
     });
   } catch (error) {
