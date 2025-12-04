@@ -648,24 +648,44 @@ export default function ProspectDetailPage() {
                         {activities.map((activity) => {
                           const isMysteryShopperActivity = activity.type === 'mystery_shopper' ||
                             activity.title?.toLowerCase().includes('mystery shopper');
+                          const isEmailActivity = activity.type === 'email_sent' ||
+                            activity.title?.toLowerCase().includes('email') ||
+                            activity.title?.toLowerCase().includes('outreach');
                           const hasLinkedEmail = activity.linked_email;
+
+                          // Find email in emails array by matching activity title/time if no linked_email
+                          const matchingEmail = !hasLinkedEmail && isEmailActivity
+                            ? emails.find(e =>
+                                Math.abs(new Date(e.sent_at || e.created_at).getTime() - new Date(activity.created_at).getTime()) < 60000
+                              )
+                            : null;
+
+                          const emailToShow = hasLinkedEmail ? activity.linked_email : matchingEmail;
+
+                          // Determine activity color
+                          const dotColor = isMysteryShopperActivity ? 'bg-purple-500' :
+                            isEmailActivity ? 'bg-amber-500' :
+                            activity.type === 'stage_change' ? 'bg-blue-500' :
+                            'bg-zinc-500';
+
+                          // Determine badge
+                          const badgeConfig = isMysteryShopperActivity
+                            ? { label: 'Mystery Shopper', className: 'bg-purple-500/20 text-purple-400 border-purple-500/30' }
+                            : isEmailActivity
+                            ? { label: 'Email', className: 'bg-amber-500/20 text-amber-400 border-amber-500/30' }
+                            : null;
 
                           return (
                             <div key={activity.id} className="border-l-2 border-zinc-700 pl-4">
                               {/* Activity Header */}
                               <div className="flex items-start gap-2 mb-2">
-                                <div className={`h-3 w-3 mt-0.5 rounded-full flex-shrink-0 -ml-[22px] ${
-                                  isMysteryShopperActivity ? 'bg-purple-500' :
-                                  activity.type === 'email_sent' ? 'bg-amber-500' :
-                                  activity.type === 'stage_change' ? 'bg-blue-500' :
-                                  'bg-zinc-500'
-                                }`} />
+                                <div className={`h-3 w-3 mt-0.5 rounded-full flex-shrink-0 -ml-[22px] ${dotColor}`} />
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-2 flex-wrap">
                                     <p className="text-sm text-white font-medium">{activity.title}</p>
-                                    {isMysteryShopperActivity && (
-                                      <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30 text-[10px]">
-                                        Mystery Shopper
+                                    {badgeConfig && (
+                                      <Badge className={`${badgeConfig.className} text-[10px]`}>
+                                        {badgeConfig.label}
                                       </Badge>
                                     )}
                                   </div>
@@ -675,46 +695,77 @@ export default function ProspectDetailPage() {
                                 </div>
                               </div>
 
-                              {/* Brief Description (if no linked email) */}
-                              {activity.description && !hasLinkedEmail && (
+                              {/* Brief Description (if no email to show) */}
+                              {activity.description && !emailToShow && (
                                 <p className="text-xs text-zinc-400 whitespace-pre-wrap mb-2 ml-2">
                                   {activity.description}
                                 </p>
                               )}
 
-                              {/* Full Email Content (if linked) */}
-                              {hasLinkedEmail && (
+                              {/* Full Email Content */}
+                              {emailToShow && (
                                 <div className="mt-3 rounded-lg border border-zinc-700 overflow-hidden">
                                   {/* Email Header */}
-                                  <div className="bg-zinc-800/50 px-3 py-2 border-b border-zinc-700">
+                                  <div className={`px-3 py-2 border-b border-zinc-700 ${
+                                    isMysteryShopperActivity ? 'bg-purple-500/10' :
+                                    emailToShow.direction === 'inbound' ? 'bg-emerald-500/10' :
+                                    'bg-amber-500/10'
+                                  }`}>
+                                    <div className="flex items-center gap-2 mb-2">
+                                      {emailToShow.direction === 'inbound' ? (
+                                        <Badge className="bg-emerald-500/20 text-emerald-400 text-[10px]">
+                                          <Inbox className="h-3 w-3 mr-1" /> Received
+                                        </Badge>
+                                      ) : (
+                                        <Badge className={`text-[10px] ${
+                                          isMysteryShopperActivity
+                                            ? 'bg-purple-500/20 text-purple-400'
+                                            : 'bg-amber-500/20 text-amber-400'
+                                        }`}>
+                                          <Send className="h-3 w-3 mr-1" /> Sent
+                                        </Badge>
+                                      )}
+                                      {emailToShow.email_type && (
+                                        <Badge className="bg-zinc-500/20 text-zinc-400 text-[10px]">
+                                          {emailToShow.email_type.replace(/_/g, ' ')}
+                                        </Badge>
+                                      )}
+                                    </div>
                                     <div className="flex items-center gap-2 text-xs mb-1">
                                       <span className="text-zinc-500">From:</span>
-                                      <span className="text-zinc-300">{activity.linked_email.from_email}</span>
+                                      <span className="text-zinc-300">{emailToShow.from_email || 'N/A'}</span>
                                     </div>
                                     <div className="flex items-center gap-2 text-xs mb-1">
                                       <span className="text-zinc-500">To:</span>
-                                      <span className="text-zinc-300">{activity.linked_email.to_email}</span>
+                                      <span className="text-zinc-300">{emailToShow.to_email || 'N/A'}</span>
                                     </div>
                                     <div className="flex items-center gap-2 text-xs">
                                       <span className="text-zinc-500">Subject:</span>
-                                      <span className="text-white font-medium">{activity.linked_email.subject}</span>
+                                      <span className="text-white font-medium">{emailToShow.subject}</span>
                                     </div>
-                                    {activity.linked_email.sent_at && (
+                                    {emailToShow.sent_at && (
                                       <div className="flex items-center gap-2 text-xs mt-1">
-                                        <span className="text-zinc-500">Sent:</span>
+                                        <span className="text-zinc-500">Date:</span>
                                         <span className="text-zinc-400">
-                                          {new Date(activity.linked_email.sent_at).toLocaleString()}
+                                          {new Date(emailToShow.sent_at).toLocaleString()}
                                         </span>
                                       </div>
                                     )}
                                   </div>
                                   {/* Email Body */}
-                                  <div className="p-3 bg-zinc-900">
+                                  <div className="p-3 bg-zinc-900 max-h-64 overflow-auto">
                                     <pre className="text-xs text-zinc-300 whitespace-pre-wrap font-sans">
-                                      {activity.linked_email.body}
+                                      {emailToShow.body}
                                     </pre>
                                   </div>
                                 </div>
+                              )}
+
+                              {/* Link to view in Emails tab if email found but description also exists */}
+                              {emailToShow && activity.description && (
+                                <p className="text-[10px] text-zinc-500 mt-2 ml-2">
+                                  {activity.description}
+                                </p>
                               )}
                             </div>
                           );
