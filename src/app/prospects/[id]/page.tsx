@@ -35,7 +35,12 @@ import {
   XCircle,
 } from 'lucide-react';
 import Link from 'next/link';
-import type { Prospect, Email, Activity, ProspectStage, PainSignal, EmailThread } from '@/types';
+import type { Prospect, Email, Activity as BaseActivity, ProspectStage, PainSignal, EmailThread } from '@/types';
+
+// Extended Activity type with linked email
+interface Activity extends BaseActivity {
+  linked_email?: Email;
+}
 import {
   NextActionCard,
   HiringSignalCard,
@@ -639,19 +644,81 @@ export default function ProspectDetailPage() {
                   </CardHeader>
                   <CardContent className="p-4 md:p-6 pt-0 md:pt-0">
                     {activities.length > 0 ? (
-                      <div className="space-y-3 md:space-y-4">
-                        {activities.map((activity) => (
-                          <div key={activity.id} className="flex items-start gap-2 md:gap-3">
-                            <div className="h-2 w-2 mt-2 rounded-full bg-amber-500 flex-shrink-0" />
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs md:text-sm text-white">{activity.title}</p>
-                              {activity.description && (
-                                <p className="text-[10px] md:text-xs text-zinc-400 whitespace-pre-wrap">{activity.description}</p>
+                      <div className="space-y-4 md:space-y-6">
+                        {activities.map((activity) => {
+                          const isMysteryShopperActivity = activity.type === 'mystery_shopper' ||
+                            activity.title?.toLowerCase().includes('mystery shopper');
+                          const hasLinkedEmail = activity.linked_email;
+
+                          return (
+                            <div key={activity.id} className="border-l-2 border-zinc-700 pl-4">
+                              {/* Activity Header */}
+                              <div className="flex items-start gap-2 mb-2">
+                                <div className={`h-3 w-3 mt-0.5 rounded-full flex-shrink-0 -ml-[22px] ${
+                                  isMysteryShopperActivity ? 'bg-purple-500' :
+                                  activity.type === 'email_sent' ? 'bg-amber-500' :
+                                  activity.type === 'stage_change' ? 'bg-blue-500' :
+                                  'bg-zinc-500'
+                                }`} />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <p className="text-sm text-white font-medium">{activity.title}</p>
+                                    {isMysteryShopperActivity && (
+                                      <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30 text-[10px]">
+                                        Mystery Shopper
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <p className="text-[10px] text-zinc-500">
+                                    {new Date(activity.created_at).toLocaleString()}
+                                  </p>
+                                </div>
+                              </div>
+
+                              {/* Brief Description (if no linked email) */}
+                              {activity.description && !hasLinkedEmail && (
+                                <p className="text-xs text-zinc-400 whitespace-pre-wrap mb-2 ml-2">
+                                  {activity.description}
+                                </p>
                               )}
-                              <p className="text-[10px] md:text-xs text-zinc-500">{formatTimeAgo(activity.created_at)}</p>
+
+                              {/* Full Email Content (if linked) */}
+                              {hasLinkedEmail && (
+                                <div className="mt-3 rounded-lg border border-zinc-700 overflow-hidden">
+                                  {/* Email Header */}
+                                  <div className="bg-zinc-800/50 px-3 py-2 border-b border-zinc-700">
+                                    <div className="flex items-center gap-2 text-xs mb-1">
+                                      <span className="text-zinc-500">From:</span>
+                                      <span className="text-zinc-300">{activity.linked_email.from_email}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2 text-xs mb-1">
+                                      <span className="text-zinc-500">To:</span>
+                                      <span className="text-zinc-300">{activity.linked_email.to_email}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2 text-xs">
+                                      <span className="text-zinc-500">Subject:</span>
+                                      <span className="text-white font-medium">{activity.linked_email.subject}</span>
+                                    </div>
+                                    {activity.linked_email.sent_at && (
+                                      <div className="flex items-center gap-2 text-xs mt-1">
+                                        <span className="text-zinc-500">Sent:</span>
+                                        <span className="text-zinc-400">
+                                          {new Date(activity.linked_email.sent_at).toLocaleString()}
+                                        </span>
+                                      </div>
+                                    )}
+                                  </div>
+                                  {/* Email Body */}
+                                  <div className="p-3 bg-zinc-900">
+                                    <pre className="text-xs text-zinc-300 whitespace-pre-wrap font-sans">
+                                      {activity.linked_email.body}
+                                    </pre>
+                                  </div>
+                                </div>
+                              )}
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     ) : (
                       <div className="text-center py-6 md:py-8 text-zinc-500">

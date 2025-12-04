@@ -12,6 +12,7 @@ export async function GET(
   let data;
   let error;
 
+  // Fetch prospect with emails, activities, and pain_signals
   const result = await supabase
     .from('prospects')
     .select('*, emails(*), activities(*), pain_signals(*)')
@@ -38,6 +39,17 @@ export async function GET(
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 404 });
+  }
+
+  // Enrich activities with their linked email content
+  if (data?.activities && data?.emails) {
+    const emailMap = new Map(data.emails.map((e: { id: string }) => [e.id, e]));
+    data.activities = data.activities.map((activity: { email_id?: string }) => {
+      if (activity.email_id && emailMap.has(activity.email_id)) {
+        return { ...activity, linked_email: emailMap.get(activity.email_id) };
+      }
+      return activity;
+    });
   }
 
   return NextResponse.json({ prospect: data });
