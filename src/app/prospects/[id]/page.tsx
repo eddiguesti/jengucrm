@@ -33,6 +33,9 @@ import {
   Inbox,
   Calendar,
   XCircle,
+  Eye,
+  UserSearch,
+  X,
 } from 'lucide-react';
 import Link from 'next/link';
 import type { Prospect, Email, Activity as BaseActivity, ProspectStage, PainSignal, EmailThread } from '@/types';
@@ -70,20 +73,6 @@ function getTierBadge(tier: string) {
     default:
       return <Badge className="bg-zinc-500/20 text-zinc-400 border-zinc-500/30">Cold Lead</Badge>;
   }
-}
-
-function formatTimeAgo(dateString: string) {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
-
-  if (diffMins < 60) return `${diffMins} minutes ago`;
-  if (diffHours < 24) return `${diffHours} hours ago`;
-  if (diffDays < 7) return `${diffDays} days ago`;
-  return date.toLocaleDateString();
 }
 
 function groupEmailsIntoThreads(emails: Email[]): EmailThread[] {
@@ -171,6 +160,19 @@ export default function ProspectDetailPage() {
   const [generatedEmail, setGeneratedEmail] = useState<{ subject: string; body: string } | null>(null);
   const [copied, setCopied] = useState(false);
 
+  // Mystery shopper state
+  const [mysteryPreview, setMysteryPreview] = useState<{
+    to: string;
+    subject: string;
+    body: string;
+    scenario: string;
+    sender_name: string;
+    language: string;
+  } | null>(null);
+  const [isLoadingMysteryPreview, setIsLoadingMysteryPreview] = useState(false);
+  const [isSendingMystery, setIsSendingMystery] = useState(false);
+  const [mysteryError, setMysteryError] = useState<string | null>(null);
+
   const fetchProspect = async () => {
     setLoading(true);
     setError(null);
@@ -193,6 +195,7 @@ export default function ProspectDetailPage() {
 
   useEffect(() => {
     if (id) fetchProspect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const handleGenerateEmail = async () => {
@@ -287,6 +290,81 @@ export default function ProspectDetailPage() {
       alert('Failed to save note');
     } finally {
       setIsSavingNote(false);
+    }
+  };
+
+  // Mystery shopper handlers
+  const handleMysteryPreview = async () => {
+    if (!prospect) return;
+    setIsLoadingMysteryPreview(true);
+    setMysteryError(null);
+    setMysteryPreview(null);
+
+    try {
+      const response = await fetch('/api/mystery-inquiry/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prospect_id: prospect.id }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to generate preview');
+      }
+
+      setMysteryPreview(data.preview);
+    } catch (err) {
+      setMysteryError(err instanceof Error ? err.message : 'Failed to generate preview');
+    } finally {
+      setIsLoadingMysteryPreview(false);
+    }
+  };
+
+  const handleSendMystery = async () => {
+    if (!prospect) return;
+    setIsSendingMystery(true);
+    setMysteryError(null);
+
+    try {
+      const response = await fetch('/api/mystery-inquiry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prospect_id: prospect.id }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to send mystery shopper');
+      }
+
+      setMysteryPreview(null);
+      fetchProspect(); // Refresh to show updated tags
+      alert('Mystery shopper email sent successfully!');
+    } catch (err) {
+      setMysteryError(err instanceof Error ? err.message : 'Failed to send');
+    } finally {
+      setIsSendingMystery(false);
+    }
+  };
+
+  const handleAddToQueue = async () => {
+    if (!prospect) return;
+
+    try {
+      const response = await fetch('/api/mystery-shopper-queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prospect_id: prospect.id }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to add to queue');
+      }
+
+      alert('Added to mystery shopper queue!');
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to add to queue');
     }
   };
 
@@ -451,6 +529,27 @@ export default function ProspectDetailPage() {
                       )}
                       Enrich Data
                     </Button>
+                  )}
+                  {/* Mystery Shopper Button */}
+                  {prospect.email && !(prospect.tags || []).includes('mystery-inquiry-sent') && (
+                    <Button
+                      variant="outline"
+                      className="border-purple-500/30 text-purple-400 hover:bg-purple-500/10 text-xs md:text-sm w-full sm:w-auto"
+                      onClick={handleMysteryPreview}
+                      disabled={isLoadingMysteryPreview}
+                    >
+                      {isLoadingMysteryPreview ? (
+                        <Loader2 className="h-3 w-3 md:h-4 md:w-4 mr-2 animate-spin" />
+                      ) : (
+                        <UserSearch className="h-3 w-3 md:h-4 md:w-4 mr-2" />
+                      )}
+                      Mystery Shopper
+                    </Button>
+                  )}
+                  {(prospect.tags || []).includes('mystery-inquiry-sent') && (
+                    <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30 text-xs">
+                      Mystery Shopper Sent
+                    </Badge>
                   )}
                   {!prospect.archived && (
                     <Button
@@ -967,6 +1066,95 @@ export default function ProspectDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Mystery Shopper Preview Modal */}
+      {mysteryPreview && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Eye className="h-5 w-5 text-purple-400" />
+                <h2 className="text-white font-semibold">Mystery Shopper Preview</h2>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setMysteryPreview(null)}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <div className="p-4 space-y-4">
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <p className="text-zinc-500">To</p>
+                  <p className="text-white">{mysteryPreview.to}</p>
+                </div>
+                <div>
+                  <p className="text-zinc-500">Language</p>
+                  <p className="text-white">{mysteryPreview.language}</p>
+                </div>
+                <div>
+                  <p className="text-zinc-500">Scenario</p>
+                  <p className="text-white">{mysteryPreview.scenario}</p>
+                </div>
+                <div>
+                  <p className="text-zinc-500">Sender Name</p>
+                  <p className="text-white">{mysteryPreview.sender_name}</p>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-zinc-500 text-sm mb-1">Subject</p>
+                <p className="text-white bg-zinc-800 p-2 rounded">{mysteryPreview.subject}</p>
+              </div>
+
+              <div>
+                <p className="text-zinc-500 text-sm mb-1">Body</p>
+                <div className="text-white bg-zinc-800 p-3 rounded whitespace-pre-wrap text-sm">
+                  {mysteryPreview.body}
+                </div>
+              </div>
+
+              {mysteryError && (
+                <div className="text-red-400 text-sm bg-red-500/10 p-2 rounded">
+                  {mysteryError}
+                </div>
+              )}
+
+              <div className="flex gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  className="flex-1 border-zinc-700"
+                  onClick={() => setMysteryPreview(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="outline"
+                  className="flex-1 border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
+                  onClick={handleAddToQueue}
+                >
+                  Add to Queue
+                </Button>
+                <Button
+                  className="flex-1 bg-purple-600 hover:bg-purple-700"
+                  onClick={handleSendMystery}
+                  disabled={isSendingMystery}
+                >
+                  {isSendingMystery ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4 mr-2" />
+                  )}
+                  Send Now
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

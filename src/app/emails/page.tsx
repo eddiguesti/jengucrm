@@ -72,6 +72,7 @@ export default function EmailsPage() {
 
   useEffect(() => {
     fetchEmails();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const draftEmails = emails.filter((e) => e.status === 'draft');

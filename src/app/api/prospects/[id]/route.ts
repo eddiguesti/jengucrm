@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
+import { updateProspectSchema, parseBody, ValidationError } from '@/lib/validation';
 
 export async function GET(
   request: NextRequest,
@@ -63,7 +64,7 @@ export async function PATCH(
   const { id } = await params;
 
   try {
-    const body = await request.json();
+    const body = await parseBody(request, updateProspectSchema);
 
     // Track stage changes
     if (body.stage) {
@@ -96,6 +97,9 @@ export async function PATCH(
 
     return NextResponse.json({ prospect: data });
   } catch (error) {
+    if (error instanceof ValidationError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     return NextResponse.json(
       { error: 'Update failed', details: String(error) },
       { status: 500 }

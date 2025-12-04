@@ -6,21 +6,17 @@ import { Header } from '@/components/layout/header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Upload,
   FileSpreadsheet,
   CheckCircle,
-  AlertCircle,
   Clock,
   Users,
   RefreshCw,
   Mail,
   Search,
   Linkedin,
-  Building2,
-  User,
   Loader2,
   XCircle,
   Play,
@@ -135,7 +131,6 @@ export default function SalesNavigatorPage() {
 }
 
 function ImportTab() {
-  const [uploading, setUploading] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [parsedData, setParsedData] = useState<SalesNavProspect[]>([]);
   const [importing, setImporting] = useState(false);

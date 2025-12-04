@@ -171,37 +171,49 @@ export class ProspectRepository extends BaseRepository<Prospect> {
   }
 
   async getStatsByTier(): Promise<Record<string, number>> {
-    const { data, error } = await this.supabase
-      .from(this.tableName)
-      .select('tier');
+    // Use parallel count queries instead of fetching all rows
+    const tiers = ['hot', 'warm', 'cold'] as const;
+    const counts = await Promise.all(
+      tiers.map(tier =>
+        this.supabase
+          .from(this.tableName)
+          .select('id', { count: 'exact', head: true })
+          .eq('tier', tier)
+          .eq('archived', false)
+      )
+    );
 
-    if (error) {
-      logger.error({ error }, 'getStatsByTier failed');
-      throw error;
-    }
-
-    const stats: Record<string, number> = { hot: 0, warm: 0, cold: 0 };
-    for (const p of data || []) {
-      stats[p.tier] = (stats[p.tier] || 0) + 1;
-    }
+    const stats: Record<string, number> = {};
+    tiers.forEach((tier, i) => {
+      if (counts[i].error) {
+        logger.error({ error: counts[i].error, tier }, 'getStatsByTier count failed');
+      }
+      stats[tier] = counts[i].count || 0;
+    });
 
     return stats;
   }
 
   async getStatsByStage(): Promise<Record<string, number>> {
-    const { data, error } = await this.supabase
-      .from(this.tableName)
-      .select('stage');
-
-    if (error) {
-      logger.error({ error }, 'getStatsByStage failed');
-      throw error;
-    }
+    // Use parallel count queries instead of fetching all rows
+    const stages = ['new', 'researching', 'outreach', 'contacted', 'engaged', 'meeting', 'proposal', 'won', 'lost'] as const;
+    const counts = await Promise.all(
+      stages.map(stage =>
+        this.supabase
+          .from(this.tableName)
+          .select('id', { count: 'exact', head: true })
+          .eq('stage', stage)
+          .eq('archived', false)
+      )
+    );
 
     const stats: Record<string, number> = {};
-    for (const p of data || []) {
-      stats[p.stage] = (stats[p.stage] || 0) + 1;
-    }
+    stages.forEach((stage, i) => {
+      if (counts[i].error) {
+        logger.error({ error: counts[i].error, stage }, 'getStatsByStage count failed');
+      }
+      stats[stage] = counts[i].count || 0;
+    });
 
     return stats;
   }

@@ -89,10 +89,11 @@ export function withErrorTracking<T extends (...args: unknown[]) => Promise<unkn
   }) as T;
 }
 
-export default {
+const errorTracking = {
   captureError,
   captureMessage,
   setUser,
   addBreadcrumb,
   withErrorTracking,
 };
+export default errorTracking;

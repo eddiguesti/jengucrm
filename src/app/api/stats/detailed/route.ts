@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
-import { getInboxStats, getTotalRemainingCapacity, getSmtpInboxes } from '@/lib/email';
+import { getSmtpInboxes } from '@/lib/email';
 
 // OPTIMIZED: Uses parallel queries (1.5s → 500ms)
 export async function GET() {
@@ -11,20 +11,32 @@ export async function GET() {
     today.setHours(0, 0, 0, 0);
     const thisMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
 
-    // PARALLEL: Fetch all data in 4 queries simultaneously instead of sequentially
-    const [prospectsResult, emailsResult, scrapeRunsResult, activitiesResult] = await Promise.all([
-      // Query 1: Prospects
+    // PARALLEL: Fetch all data in 6 queries simultaneously
+    // Separate COUNT queries ensure accurate totals while limiting detail data for performance
+    const [
+      prospectsResult,
+      emailsResult,
+      scrapeRunsResult,
+      activitiesResult,
+      prospectsCountResult,
+      emailsCountResult,
+    ] = await Promise.all([
+      // Query 1: Prospects with details (limited for performance)
       supabase
         .from('prospects')
         .select('id, tier, stage, lead_quality, country, city, property_type, source, created_at, score')
-        .eq('archived', false),
+        .eq('archived', false)
+        .order('created_at', { ascending: false })
+        .limit(10000),
 
-      // Query 2: Emails
+      // Query 2: Emails with details (limited for performance)
       supabase
         .from('emails')
-        .select('id, direction, status, email_type, sent_at, from_email, created_at'),
+        .select('id, direction, status, email_type, sent_at, from_email, created_at')
+        .order('created_at', { ascending: false })
+        .limit(20000),
 
-      // Query 3: Scrape runs (with limit for performance)
+      // Query 3: Scrape runs (limited)
       supabase
         .from('scrape_runs')
         .select('source, total_found, new_prospects, status, completed_at')
@@ -35,13 +47,27 @@ export async function GET() {
       supabase
         .from('activities')
         .select('type, created_at')
-        .gte('created_at', thisMonthStart.toISOString()),
+        .gte('created_at', thisMonthStart.toISOString())
+        .limit(5000),
+
+      // Query 5: Accurate prospect count
+      supabase
+        .from('prospects')
+        .select('*', { count: 'exact', head: true })
+        .eq('archived', false),
+
+      // Query 6: Accurate email count
+      supabase
+        .from('emails')
+        .select('*', { count: 'exact', head: true }),
     ]);
 
     const { data: prospects } = prospectsResult;
     const { data: emails } = emailsResult;
     const { data: scrapeRuns } = scrapeRunsResult;
     const { data: activities } = activitiesResult;
+    const totalProspects = prospectsCountResult.count || prospects?.length || 0;
+    const _totalEmails = emailsCountResult.count || emails?.length || 0; // Available for future use
 
     // Count by various dimensions
     const byTier: Record<string, number> = { hot: 0, warm: 0, cold: 0 };
@@ -150,6 +176,8 @@ export async function GET() {
     const replyRateMonth = sentThisMonth > 0 ? ((repliesThisMonth / sentThisMonth) * 100).toFixed(1) : '0';
 
     // === CONVERSION FUNNEL ===
+    // Note: Stage counts are from sampled data, rates calculated consistently
+    const sampledTotal = prospects?.length || 0;
     const contacted = (byStage['contacted'] || 0);
     const engaged = (byStage['engaged'] || 0);
     const meeting = (byStage['meeting'] || 0);
@@ -157,13 +185,15 @@ export async function GET() {
     const closed = (byStage['closed'] || 0);
 
     const funnel = {
-      prospects: prospects?.length || 0,
+      prospects: totalProspects, // Accurate total
+      sampled: sampledTotal, // How many included in stage breakdown
       contacted,
       engaged,
       meeting,
       proposal,
       closed,
-      contactRate: prospects?.length ? ((contacted / prospects.length) * 100).toFixed(1) : '0',
+      // Rates use sampled counts for consistency
+      contactRate: sampledTotal ? ((contacted / sampledTotal) * 100).toFixed(1) : '0',
       engageRate: contacted > 0 ? ((engaged / contacted) * 100).toFixed(1) : '0',
       meetingRate: engaged > 0 ? ((meeting / engaged) * 100).toFixed(1) : '0',
       closeRate: meeting > 0 ? ((closed / meeting) * 100).toFixed(1) : '0',
@@ -171,7 +201,6 @@ export async function GET() {
 
     // === INBOX STATS (warmup tracking) ===
     // Get today's sends per inbox from database (more reliable than in-memory)
-    const todayStr = today.toISOString().split('T')[0];
     const sentTodayByInbox: Record<string, number> = {};
     for (const e of emails || []) {
       if (e.direction === 'outbound' && e.email_type === 'outreach' && e.from_email) {
@@ -201,9 +230,8 @@ export async function GET() {
       };
     });
 
-    // Also get in-memory stats for comparison (tracks sends since last deploy)
-    const inMemoryStats = getInboxStats();
-    const inMemoryCapacity = getTotalRemainingCapacity();
+    // In-memory stats available via getInboxStats() and getTotalRemainingCapacity()
+    // if needed for debugging comparison with database counts
 
     // === SCRAPE RUN STATS ===
     // Note: scrapeRuns already fetched in parallel query above
@@ -226,7 +254,8 @@ export async function GET() {
 
     return NextResponse.json({
       prospects: {
-        total: prospects?.length || 0,
+        total: totalProspects, // Uses accurate COUNT query
+        sampled: prospects?.length || 0, // How many were analyzed for breakdown
         byTier,
         byStage,
         byLeadQuality,

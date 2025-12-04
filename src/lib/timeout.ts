@@ -111,4 +111,5 @@ export const TIMEOUTS = {
   EXTERNAL_API: 15000,
 } as const;
 
-export default { withTimeout, fetchWithTimeout, createTimeoutSignal, TIMEOUTS, TimeoutError };
+const timeoutUtils = { withTimeout, fetchWithTimeout, createTimeoutSignal, TIMEOUTS, TimeoutError };
+export default timeoutUtils;

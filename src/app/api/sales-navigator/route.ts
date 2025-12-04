@@ -73,12 +73,6 @@ export async function POST(request: NextRequest) {
           continue;
         }
 
-        // Extract domain from company name for website guess
-        const websiteGuess = company
-          .toLowerCase()
-          .replace(/[^a-z0-9]/g, '')
-          .substring(0, 30);
-
         // Create prospect
         const { data: newProspect, error: insertError } = await supabase
           .from('prospects')

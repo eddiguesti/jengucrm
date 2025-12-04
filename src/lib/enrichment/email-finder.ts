@@ -17,6 +17,7 @@
  */
 
 import { extractDomain } from './website-scraper';
+import { logger } from '@/lib/logger';
 
 // Apollo.io API (FREE unlimited email credits)
 const APOLLO_API_KEY = process.env.APOLLO_API_KEY;
@@ -171,7 +172,7 @@ export async function searchApollo(
 /**
  * STEP 4 & 5: Get email pattern from Apollo.io or generate common patterns
  */
-export async function getEmailPattern(domain: string): Promise<{
+export async function getEmailPattern(_domain: string): Promise<{
   pattern: string | null;
   source: string;
   emails: string[];

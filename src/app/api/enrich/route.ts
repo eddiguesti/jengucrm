@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
-import { checkRateLimit, incrementUsage } from '@/lib/rate-limiter';
+import { checkAndIncrement } from '@/lib/rate-limiter-db';
+import { logger } from '@/lib/logger';
 import {
   WebsiteData,
   enrichWithGooglePlaces,
@@ -22,13 +23,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'prospect_id required' }, { status: 400 });
     }
 
-    // Check rate limit for Google Places API
-    const rateLimit = checkRateLimit('google_places');
+    // Check rate limit for Google Places API (database-backed for serverless persistence)
+    const rateLimit = await checkAndIncrement('google_places');
     if (!rateLimit.allowed) {
       return NextResponse.json({
         error: 'Daily Google Places API limit reached',
         remaining: rateLimit.remaining,
         limit: rateLimit.limit,
+        resetAt: rateLimit.resetAt.toISOString(),
         message: 'Free tier limit reached. Try again tomorrow to stay within budget.',
       }, { status: 429 });
     }
@@ -44,30 +46,52 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Prospect not found' }, { status: 404 });
     }
 
-    // Enrich with Google Places
-    const enrichmentData = await enrichWithGooglePlaces(
-      prospect.name,
-      prospect.city || '',
-      prospect.country || ''
-    );
+    // Enrich with Google Places (with 15s timeout)
+    const enrichmentData = await Promise.race([
+      enrichWithGooglePlaces(prospect.name, prospect.city || '', prospect.country || ''),
+      new Promise<Awaited<ReturnType<typeof enrichWithGooglePlaces>>>((_, reject) =>
+        setTimeout(() => reject(new Error('Google Places timeout')), 15000)
+      ),
+    ]).catch(err => {
+      logger.warn({ error: err.message }, 'Google Places enrichment failed');
+      return null;
+    });
 
-    // Track API usage
-    incrementUsage('google_places');
+    // Note: API usage already tracked by checkAndIncrement above
 
-    // Scrape website for contacts and social links
+    // Determine website URL
+    const websiteUrl = enrichmentData?.website || prospect.website;
+
+    // OPTIMIZED: Parallelize website scrape and contact finder (both use same websiteUrl)
     let websiteData: WebsiteData = { emails: [], phones: [], socialLinks: {}, propertyInfo: {}, teamMembers: [] };
-    const websiteUrl = enrichmentData.website || prospect.website;
+    let contactResult = { decisionMaker: null, whoisInfo: null } as Awaited<ReturnType<typeof findDecisionMakerContact>>;
 
     if (websiteUrl) {
-      websiteData = await scrapeWebsite(websiteUrl);
-    }
+      // Run both operations in parallel with timeouts
+      const [scrapeResult, contactFinderResult] = await Promise.all([
+        Promise.race([
+          scrapeWebsite(websiteUrl),
+          new Promise<WebsiteData>((_, reject) =>
+            setTimeout(() => reject(new Error('Website scrape timeout')), 20000)
+          ),
+        ]).catch(err => {
+          logger.warn({ error: err.message }, 'Website scrape failed');
+          return { emails: [], phones: [], socialLinks: {}, propertyInfo: {}, teamMembers: [] } as WebsiteData;
+        }),
+        Promise.race([
+          findDecisionMakerContact(prospect.name, websiteUrl, prospect.city),
+          new Promise<Awaited<ReturnType<typeof findDecisionMakerContact>>>((_, reject) =>
+            setTimeout(() => reject(new Error('Contact finder timeout')), 15000)
+          ),
+        ]).catch(err => {
+          logger.warn({ error: err.message }, 'Contact finder failed');
+          return { decisionMaker: null, whoisInfo: null } as Awaited<ReturnType<typeof findDecisionMakerContact>>;
+        }),
+      ]);
 
-    // Use enhanced contact finder (Google search + WHOIS + website scrape)
-    const contactResult = await findDecisionMakerContact(
-      prospect.name,
-      websiteUrl,
-      prospect.city
-    );
+      websiteData = scrapeResult;
+      contactResult = contactFinderResult;
+    }
 
     // Determine best email - prioritize decision-maker email
     let email = prospect.email;
@@ -204,7 +228,7 @@ export async function POST(request: NextRequest) {
 
     // Log activity with detailed scraped data summary
     const scrapedItems = [
-      enrichmentData.website && 'Website',
+      enrichmentData?.website && 'Website',
       email && `Email (${email.startsWith('info@') ? 'generated' : 'found'})`,
       phone && 'Phone',
       primaryContact && `Contact: ${primaryContact.name}`,
@@ -215,25 +239,27 @@ export async function POST(request: NextRequest) {
       websiteData.socialLinks.tripadvisor && 'TripAdvisor',
     ].filter(Boolean);
 
-    await supabase.from('activities').insert({
-      prospect_id,
-      type: 'note',
-      title: 'Enriched with Google Places + Deep Website Scrape',
-      description: `Found: ${scrapedItems.join(', ') || 'Basic info only'}. Scraped ${websiteData.teamMembers.length} team members, ${websiteData.emails.length} emails.`,
-    });
-
-    // Calculate and update score
+    // Calculate score
     const score = calculateScore(updated);
     const tier = getTier(score.total);
 
-    await supabase
-      .from('prospects')
-      .update({
-        score: score.total,
-        score_breakdown: score.breakdown,
-        tier,
-      })
-      .eq('id', prospect_id);
+    // OPTIMIZED: Parallelize activity insert and score update
+    await Promise.all([
+      supabase.from('activities').insert({
+        prospect_id,
+        type: 'note',
+        title: 'Enriched with Google Places + Deep Website Scrape',
+        description: `Found: ${scrapedItems.join(', ') || 'Basic info only'}. Scraped ${websiteData.teamMembers.length} team members, ${websiteData.emails.length} emails.`,
+      }),
+      supabase
+        .from('prospects')
+        .update({
+          score: score.total,
+          score_breakdown: score.breakdown,
+          tier,
+        })
+        .eq('id', prospect_id),
+    ]);
 
     return NextResponse.json({
       success: true,
@@ -242,7 +268,7 @@ export async function POST(request: NextRequest) {
       tier,
     });
   } catch (error) {
-    console.error('Enrichment error:', error);
+    logger.error({ error }, 'Enrichment error');
     return NextResponse.json(
       { error: 'Enrichment failed', details: String(error) },
       { status: 500 }

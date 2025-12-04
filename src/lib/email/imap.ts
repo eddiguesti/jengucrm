@@ -20,15 +20,21 @@ async function checkImapInbox(inbox: SmtpInbox, sinceDate: Date): Promise<Incomi
     let resolved = false;
     let pendingParsing = 0;
 
+    let imap: Imap | null = null;
+
     const timeout = setTimeout(() => {
       if (!resolved) {
         logger.info({ inbox: inbox.email, count: emails.length }, 'IMAP timeout');
         resolved = true;
+        // Clean up connection on timeout
+        if (imap) {
+          try { imap.end(); } catch { /* ignore */ }
+        }
         resolve(emails);
       }
     }, TIMEOUTS.IMAP_OPERATION);
 
-    const imap = new Imap({
+    imap = new Imap({
       user: inbox.email,
       password: inbox.password,
       host: inbox.host,
@@ -180,10 +186,16 @@ async function checkSingleGmailInbox(inbox: GmailInbox, sinceDate: Date): Promis
     let resolved = false;
     let pendingParsing = 0;
 
+    let imap: Imap | null = null;
+
     const timeout = setTimeout(() => {
       if (!resolved) {
         logger.info({ inbox: inbox.email, count: emails.length }, 'Gmail IMAP timeout');
         resolved = true;
+        // Clean up connection on timeout
+        if (imap) {
+          try { imap.end(); } catch { /* ignore */ }
+        }
         resolve(emails);
       }
     }, TIMEOUTS.IMAP_OPERATION);
@@ -196,7 +208,7 @@ async function checkSingleGmailInbox(inbox: GmailInbox, sinceDate: Date): Promis
       }
     };
 
-    const imap = new Imap({
+    imap = new Imap({
       user: inbox.email,
       password: inbox.password,
       host: 'imap.gmail.com',

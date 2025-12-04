@@ -1,12 +1,16 @@
+import { createServerClient } from './supabase';
+import { logger } from './logger';
+
 /**
- * Simple In-Memory Cache with TTL
+ * Hybrid Cache with In-Memory + Database Persistence
  *
- * For Vercel Edge/Serverless:
- * - Works within single invocation
- * - For persistent caching, upgrade to Vercel KV or use unstable_cache
+ * - In-memory cache for hot data within same invocation
+ * - Database cache for persistence across deployments
+ * - Automatic fallback and sync between layers
  *
  * Usage:
  *   const stats = await cache.getOrSet('dashboard-stats', () => fetchStats(), 60);
+ *   const persisted = await dbCache.getOrSet('enrichment:domain.com', () => enrichDomain(), 86400);
  */
 
 interface CacheEntry<T> {
@@ -148,3 +152,133 @@ export const CACHE_TTL = {
 export function cacheKey(namespace: string, ...parts: (string | number)[]): string {
   return [namespace, ...parts].join(':');
 }
+
+/**
+ * Database-backed cache for persistence across deployments
+ * Use this for expensive operations like website enrichment
+ */
+class DatabaseCache {
+  /**
+   * Get value from database cache
+   */
+  async get<T>(key: string): Promise<T | null> {
+    const supabase = createServerClient();
+
+    try {
+      const { data } = await supabase
+        .from('cache')
+        .select('value, expires_at')
+        .eq('key', key)
+        .single();
+
+      if (!data) return null;
+
+      // Check expiration
+      if (new Date(data.expires_at) < new Date()) {
+        // Async cleanup
+        supabase.from('cache').delete().eq('key', key).then(() => {});
+        return null;
+      }
+
+      return data.value as T;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Set value in database cache
+   */
+  async set<T>(key: string, value: T, ttlSeconds: number): Promise<void> {
+    const supabase = createServerClient();
+
+    try {
+      const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
+
+      await supabase.from('cache').upsert({
+        key,
+        value,
+        expires_at: expiresAt,
+        created_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      logger.warn({ key, error: err }, 'Failed to set database cache');
+    }
+  }
+
+  /**
+   * Get or set pattern with database persistence
+   */
+  async getOrSet<T>(
+    key: string,
+    fetcher: () => Promise<T>,
+    ttlSeconds: number
+  ): Promise<T> {
+    // Try memory cache first
+    const memCached = cache.get<T>(key);
+    if (memCached !== null) {
+      return memCached;
+    }
+
+    // Try database cache
+    const dbCached = await this.get<T>(key);
+    if (dbCached !== null) {
+      // Populate memory cache
+      cache.set(key, dbCached, Math.min(ttlSeconds, CACHE_TTL.MEDIUM));
+      return dbCached;
+    }
+
+    // Fetch and cache in both layers
+    const value = await fetcher();
+    cache.set(key, value, Math.min(ttlSeconds, CACHE_TTL.MEDIUM));
+    await this.set(key, value, ttlSeconds);
+    return value;
+  }
+
+  /**
+   * Delete from database cache
+   */
+  async delete(key: string): Promise<void> {
+    const supabase = createServerClient();
+    cache.invalidate(key);
+    await supabase.from('cache').delete().eq('key', key);
+  }
+
+  /**
+   * Clean expired entries (call from cron)
+   */
+  async cleanExpired(): Promise<number> {
+    const supabase = createServerClient();
+
+    try {
+      const { data } = await supabase
+        .from('cache')
+        .delete()
+        .lt('expires_at', new Date().toISOString())
+        .select('key');
+
+      return data?.length || 0;
+    } catch (err) {
+      logger.error({ error: err }, 'Failed to clean expired cache');
+      return 0;
+    }
+  }
+}
+
+// Database cache singleton
+export const dbCache = new DatabaseCache();
+
+// Extended cache keys
+export const DB_CACHE_KEYS = {
+  WEBSITE_ENRICHMENT: (domain: string) => `enrichment:website:${domain}`,
+  PROSPECT_SCORE: (id: string) => `prospect:score:${id}`,
+  HOTEL_RESEARCH: (name: string) => `research:hotel:${name.toLowerCase().replace(/\s+/g, '-')}`,
+  GM_LOOKUP: (domain: string) => `gm:${domain}`,
+} as const;
+
+// Extended TTLs for database cache
+export const DB_CACHE_TTL = {
+  ENRICHMENT: 24 * 60 * 60, // 24 hours
+  RESEARCH: 7 * 24 * 60 * 60, // 7 days
+  GM_LOOKUP: 30 * 24 * 60 * 60, // 30 days
+} as const;

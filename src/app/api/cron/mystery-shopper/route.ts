@@ -3,15 +3,25 @@ import { createServerClient } from '@/lib/supabase';
 
 /**
  * Mystery Shopper Cron Job
- * Runs at 11am UTC Mon-Fri
+ * Runs every 30 minutes from 8am-8pm UTC (25 runs = continuous drip)
  *
- * 1. Auto-adds prospects with 'needs-contact-discovery' tag to queue
- * 2. Triggers mystery shopper emails for pending queue items
- * 3. Removes completed/failed items from queue
+ * Sends 2 mystery shopper emails per run to prospects with generic emails
+ * (info@, reservations@, etc.) who haven't received one yet.
+ *
+ * Target: 50 emails/day spread naturally (25 runs × 2 emails = 50)
+ * This creates a human-like sending pattern throughout the day.
  */
 
-const MAX_QUEUE_ADDITIONS = 10; // Add up to 10 new prospects to queue per run
-const MAX_EMAILS_PER_RUN = 5;   // Send up to 5 mystery shopper emails per run
+const MAX_QUEUE_ADDITIONS = 10;  // Add up to 10 new prospects to queue per run
+const MAX_EMAILS_PER_RUN = 2;    // Send 2 emails per run (50/day across 25 runs)
+
+// Generic email prefixes that indicate we should send mystery shopper
+const GENERIC_EMAIL_PREFIXES = [
+  'info@', 'reservations@', 'reservation@', 'reception@', 'frontdesk@',
+  'hello@', 'contact@', 'enquiries@', 'enquiry@', 'booking@', 'bookings@',
+  'stay@', 'guest@', 'guests@', 'sales@', 'events@', 'weddings@',
+  'groups@', 'meetings@', 'concierge@', 'hotel@', 'resort@'
+];
 
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
@@ -26,6 +36,7 @@ export async function GET(request: NextRequest) {
   const supabase = createServerClient();
   const stats = {
     added_to_queue: 0,
+    new_prospects_found: 0,
     emails_sent: 0,
     removed_from_queue: 0,
     errors: [] as string[],
@@ -34,23 +45,66 @@ export async function GET(request: NextRequest) {
   try {
     console.log('[Mystery Shopper Cron] Starting...');
 
-    // Step 1: Auto-add prospects needing contact discovery to queue
-    // Find prospects with 'needs-contact-discovery' tag not already in queue
-    const { data: prospectsNeedingDiscovery, error: fetchError } = await supabase
+    // Step 1A: Find NEW prospects with generic emails that haven't received mystery shopper
+    // These are automatically eligible - no tag required
+    const { data: newProspects, error: newProspectsError } = await supabase
       .from('prospects')
-      .select('id, name, score, tier')
-      .contains('tags', ['needs-contact-discovery'])
-      .order('score', { ascending: false })
-      .limit(MAX_QUEUE_ADDITIONS * 2); // Fetch extra in case some are already in queue
+      .select('id, name, email, score, tier, tags')
+      .eq('archived', false)
+      .not('email', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(100);
 
-    if (fetchError) {
-      console.error('[Mystery Shopper Cron] Fetch error:', fetchError);
-      stats.errors.push(`Fetch error: ${fetchError.message}`);
+    if (newProspectsError) {
+      console.error('[Mystery Shopper Cron] New prospects fetch error:', newProspectsError);
+      stats.errors.push(`New prospects fetch error: ${newProspectsError.message}`);
     }
 
-    if (prospectsNeedingDiscovery && prospectsNeedingDiscovery.length > 0) {
-      // Check which are already in queue
-      const prospectIds = prospectsNeedingDiscovery.map(p => p.id);
+    // Filter to generic emails without mystery-inquiry-sent tag
+    const eligibleNewProspects = (newProspects || []).filter(p => {
+      if (!p.email) return false;
+      const emailLower = p.email.toLowerCase();
+      const isGenericEmail = GENERIC_EMAIL_PREFIXES.some(prefix => emailLower.startsWith(prefix));
+      const alreadySent = (p.tags || []).includes('mystery-inquiry-sent');
+      return isGenericEmail && !alreadySent;
+    });
+
+    stats.new_prospects_found = eligibleNewProspects.length;
+    console.log(`[Mystery Shopper Cron] Found ${eligibleNewProspects.length} new prospects with generic emails`);
+
+    // Step 1B: Also get prospects with 'needs-contact-discovery' tag (legacy behavior)
+    const { data: taggedProspects, error: taggedError } = await supabase
+      .from('prospects')
+      .select('id, name, email, score, tier, tags')
+      .contains('tags', ['needs-contact-discovery'])
+      .order('score', { ascending: false })
+      .limit(50);
+
+    if (taggedError) {
+      console.error('[Mystery Shopper Cron] Tagged prospects fetch error:', taggedError);
+      stats.errors.push(`Tagged fetch error: ${taggedError.message}`);
+    }
+
+    // Filter tagged prospects (same criteria)
+    const eligibleTaggedProspects = (taggedProspects || []).filter(p => {
+      if (!p.email) return false;
+      const alreadySent = (p.tags || []).includes('mystery-inquiry-sent');
+      return !alreadySent;
+    });
+
+    // Combine and dedupe (new prospects first, then tagged)
+    const seenIds = new Set<string>();
+    const allEligible = [...eligibleNewProspects, ...eligibleTaggedProspects].filter(p => {
+      if (seenIds.has(p.id)) return false;
+      seenIds.add(p.id);
+      return true;
+    });
+
+    console.log(`[Mystery Shopper Cron] Total eligible: ${allEligible.length} (new: ${eligibleNewProspects.length}, tagged: ${eligibleTaggedProspects.length})`);
+
+    // Check which are already in queue
+    if (allEligible.length > 0) {
+      const prospectIds = allEligible.map(p => p.id);
       const { data: existingQueue } = await supabase
         .from('mystery_shopper_queue')
         .select('prospect_id')
@@ -60,7 +114,7 @@ export async function GET(request: NextRequest) {
       const existingIds = new Set((existingQueue || []).map(q => q.prospect_id));
 
       // Add new ones to queue
-      const toAdd = prospectsNeedingDiscovery
+      const toAdd = allEligible
         .filter(p => !existingIds.has(p.id))
         .slice(0, MAX_QUEUE_ADDITIONS);
 
@@ -130,9 +184,9 @@ export async function GET(request: NextRequest) {
 
     // Log activity
     await supabase.from('activities').insert({
-      type: 'system',
-      title: 'Mystery shopper queue processed',
-      description: `Added ${stats.added_to_queue} to queue, sent ${stats.emails_sent} emails, cleaned ${stats.removed_from_queue} old entries.`,
+      type: 'mystery_shopper',
+      title: 'Mystery shopper auto-run completed',
+      description: `Found ${stats.new_prospects_found} new prospects with generic emails. Added ${stats.added_to_queue} to queue, sent ${stats.emails_sent} emails, cleaned ${stats.removed_from_queue} old entries.${stats.errors.length > 0 ? ` Errors: ${stats.errors.join(', ')}` : ''}`,
     });
 
     return NextResponse.json({

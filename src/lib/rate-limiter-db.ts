@@ -15,13 +15,14 @@ export interface RateLimitResult {
   resetAt: Date;
 }
 
-type RateLimitService = 'google_places' | 'xai_emails' | 'scrape_runs' | 'login';
+type RateLimitService = 'google_places' | 'xai_emails' | 'scrape_runs' | 'login' | 'email_inbox';
 
 const SERVICE_LIMITS: Record<RateLimitService, number> = {
   google_places: RATE_LIMITS.GOOGLE_PLACES_DAILY,
   xai_emails: RATE_LIMITS.AI_EMAILS_DAILY,
   scrape_runs: RATE_LIMITS.SCRAPE_RUNS_DAILY,
   login: RATE_LIMITS.LOGIN_ATTEMPTS_HOURLY,
+  email_inbox: 20, // 20 emails per inbox per day
 };
 
 /**
@@ -230,9 +231,100 @@ export async function checkLoginRateLimit(ip: string): Promise<RateLimitResult> 
   return checkAndIncrement('login', ip);
 }
 
-export default {
+/**
+ * Check and increment email inbox rate limit
+ * Tracks by inbox email address
+ */
+export async function checkInboxRateLimit(inboxEmail: string): Promise<RateLimitResult> {
+  return checkAndIncrement('email_inbox', inboxEmail);
+}
+
+/**
+ * Get remaining capacity for an inbox
+ */
+export async function getInboxCapacity(inboxEmail: string): Promise<RateLimitResult> {
+  return getCurrentUsage('email_inbox', inboxEmail);
+}
+
+/**
+ * Get capacity for all inboxes (batched query)
+ */
+export async function getAllInboxCapacity(inboxEmails: string[]): Promise<Record<string, RateLimitResult>> {
+  if (inboxEmails.length === 0) return {};
+
+  const supabase = createServerClient();
+  const limit = SERVICE_LIMITS.email_inbox;
+  const periodKey = getDailyKey();
+  const resetAt = getResetTime(false);
+
+  // Batch query for all inboxes at once
+  const keys = inboxEmails.map(email => `email_inbox:${email}:${periodKey}`);
+
+  try {
+    const { data } = await supabase
+      .from('rate_limits')
+      .select('key, count')
+      .in('key', keys);
+
+    const countMap = new Map<string, number>();
+    for (const row of data || []) {
+      // Extract email from key: "email_inbox:{email}:{date}"
+      const parts = row.key.split(':');
+      if (parts.length >= 2) {
+        countMap.set(parts[1], row.count);
+      }
+    }
+
+    const results: Record<string, RateLimitResult> = {};
+    for (const email of inboxEmails) {
+      const count = countMap.get(email) || 0;
+      results[email] = {
+        allowed: count < limit,
+        remaining: Math.max(0, limit - count),
+        limit,
+        resetAt,
+      };
+    }
+
+    return results;
+  } catch (err) {
+    logger.warn({ error: err }, 'Batch inbox capacity check failed, falling back');
+    // Fallback to individual queries on error
+    const results: Record<string, RateLimitResult> = {};
+    for (const email of inboxEmails) {
+      results[email] = await getInboxCapacity(email);
+    }
+    return results;
+  }
+}
+
+/**
+ * Find inbox with most remaining capacity
+ */
+export async function findBestInbox(
+  inboxEmails: string[]
+): Promise<{ email: string; remaining: number } | null> {
+  const capacities = await getAllInboxCapacity(inboxEmails);
+
+  let best: { email: string; remaining: number } | null = null;
+
+  for (const [email, result] of Object.entries(capacities)) {
+    if (result.allowed && (!best || result.remaining > best.remaining)) {
+      best = { email, remaining: result.remaining };
+    }
+  }
+
+  return best;
+}
+
+const rateLimiterDb = {
   checkAndIncrement,
   getCurrentUsage,
   getAllUsageStats,
   checkLoginRateLimit,
+  checkInboxRateLimit,
+  getInboxCapacity,
+  getAllInboxCapacity,
+  findBestInbox,
 };
+export default rateLimiterDb;

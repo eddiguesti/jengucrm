@@ -46,7 +46,6 @@ const authorityScarcityStrategy: CampaignStrategy = {
     // Build subtle personalization from job pain points
     const painPoints = prospect.jobPainPoints;
     const commTasks = painPoints?.communicationTasks?.slice(0, 2).join(', ') || '';
-    const adminTasks = painPoints?.adminTasks?.slice(0, 2).join(', ') || '';
     const speedReqs = painPoints?.speedRequirements?.slice(0, 1).join('') || '';
 
     // Subtle context - reference the pain, not the job posting
@@ -159,7 +158,6 @@ const curiosityValueStrategy: CampaignStrategy = {
     // Build subtle personalization from job pain points
     const painPoints = prospect.jobPainPoints;
     const commTasks = painPoints?.communicationTasks?.slice(0, 2).join(', ') || '';
-    const adminTasks = painPoints?.adminTasks?.slice(0, 2).join(', ') || '';
     const speedReqs = painPoints?.speedRequirements?.slice(0, 1).join('') || '';
 
     // Subtle context - reference the pain, not the job posting

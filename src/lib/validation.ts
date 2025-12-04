@@ -157,6 +157,58 @@ export const loginSchema = z.object({
 });
 
 // ============================================
+// MYSTERY SHOPPER SCHEMAS
+// ============================================
+
+export const mysteryInquirySchema = z.object({
+  prospect_id: uuidSchema,
+  skip_research: z.boolean().optional().default(false),
+});
+
+export const mysteryBatchSchema = z.object({
+  limit: z.number().min(1).max(50).default(5),
+  delay_ms: z.number().min(1000).max(120000).default(10000),
+  randomize: z.boolean().default(true),
+  skip_research: z.boolean().optional().default(false),
+});
+
+export const mysteryQueueSchema = z.object({
+  prospect_id: uuidSchema,
+});
+
+export const mysteryPreviewSchema = z.object({
+  prospect_id: uuidSchema,
+});
+
+// ============================================
+// ENRICHMENT SCHEMAS
+// ============================================
+
+export const enrichProspectSchema = z.object({
+  prospect_id: uuidSchema.optional(),
+  limit: z.number().min(1).max(50).default(10),
+  force: z.boolean().optional().default(false),
+});
+
+// ============================================
+// CHECK REPLIES SCHEMAS
+// ============================================
+
+export const checkRepliesSchema = z.object({
+  hours_back: z.number().min(1).max(168).default(24),
+  inbox: z.string().optional(),
+});
+
+// ============================================
+// FOLLOW UP SCHEMAS
+// ============================================
+
+export const followUpSchema = z.object({
+  max_follow_ups: z.number().min(1).max(100).default(20),
+  days_since_last: z.number().min(1).max(30).default(3),
+});
+
+// ============================================
 // HELPER FUNCTIONS
 // ============================================
 
@@ -213,7 +265,7 @@ export class ValidationError extends Error {
   }
 }
 
-export default {
+const validation = {
   // Schemas
   uuidSchema,
   emailSchema,
@@ -233,8 +285,16 @@ export default {
   autoEmailSchema,
   scrapeRequestSchema,
   loginSchema,
+  mysteryInquirySchema,
+  mysteryBatchSchema,
+  mysteryQueueSchema,
+  mysteryPreviewSchema,
+  enrichProspectSchema,
+  checkRepliesSchema,
+  followUpSchema,
   // Helpers
   parseBody,
   parseSearchParams,
   ValidationError,
 };
+export default validation;

@@ -188,4 +188,5 @@ function fallbackChainCheck(name: string): ChainCheckResult {
   };
 }
 
-export default { isChainHotel, batchCheckChainHotels };
+const chainDetector = { isChainHotel, batchCheckChainHotels };
+export default chainDetector;

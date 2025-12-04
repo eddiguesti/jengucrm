@@ -24,12 +24,6 @@ function getEnvNumber(key: string, defaultValue: number): number {
   return isNaN(parsed) ? defaultValue : parsed;
 }
 
-function getEnvBoolean(key: string, defaultValue: boolean): boolean {
-  const value = process.env[key];
-  if (!value) return defaultValue;
-  return value.toLowerCase() === 'true' || value === '1';
-}
-
 export const config = {
   // Environment
   isDev: process.env.NODE_ENV === 'development',

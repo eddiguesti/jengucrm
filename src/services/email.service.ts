@@ -4,8 +4,8 @@
  */
 
 import { createServerClient } from '@/lib/supabase';
-import { emailRepository, prospectRepository, activityRepository, campaignRepository } from '@/repositories';
-import type { Email, Campaign, Prospect } from '@/repositories';
+import { emailRepository, activityRepository, campaignRepository } from '@/repositories';
+import type { Campaign, Prospect } from '@/repositories';
 import { sendEmail, syncInboxCountsFromDb, getInboxStats, getTotalRemainingCapacity, getSmtpInboxes, isSmtpConfigured } from '@/lib/email';
 import { getStrategy } from '@/lib/campaign-strategies';
 import { config } from '@/lib/config';

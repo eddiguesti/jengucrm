@@ -61,7 +61,6 @@ export async function GET(request: NextRequest) {
         try {
           const { total: newScore, breakdown } = calculateScore(prospect);
           const newTier = getTier(newScore);
-          const oldScore = prospect.score || 0;
           const oldTier = prospect.tier || 'cold';
 
           // Update prospect

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
-import { sendEmail, getSmtpInboxes } from '@/lib/email';
 import Anthropic from '@anthropic-ai/sdk';
 
 interface JobPainPoints {

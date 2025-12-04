@@ -37,6 +37,7 @@ export async function GET(request: NextRequest) {
 }
 
 // DELETE: Remove emails by address (for cleaning up test emails)
+// OPTIMIZED: Uses batch operations instead of N+1 loop queries
 export async function DELETE(request: NextRequest) {
   const supabase = createServerClient();
 
@@ -48,26 +49,22 @@ export async function DELETE(request: NextRequest) {
       return errors.badRequest('addresses array is required');
     }
 
-    let totalDeleted = 0;
+    // Build OR conditions for batch deletion
+    const orConditions = addresses.map(addr => `to_email.eq.${addr},from_email.eq.${addr}`).join(',');
 
-    for (const address of addresses) {
-      // Delete emails where to_email matches
-      const { data: toDeleted } = await supabase
-        .from('emails')
-        .delete()
-        .eq('to_email', address)
-        .select('id');
+    // Single batch delete for all addresses
+    const { data: deleted, error } = await supabase
+      .from('emails')
+      .delete()
+      .or(orConditions)
+      .select('id');
 
-      // Delete emails where from_email matches
-      const { data: fromDeleted } = await supabase
-        .from('emails')
-        .delete()
-        .eq('from_email', address)
-        .select('id');
-
-      totalDeleted += (toDeleted?.length || 0) + (fromDeleted?.length || 0);
+    if (error) {
+      logger.error({ error }, 'Failed to batch delete emails');
+      return errors.internal('Failed to delete emails', error);
     }
 
+    const totalDeleted = deleted?.length || 0;
     logger.info({ addresses, totalDeleted }, 'Cleaned up test emails');
 
     return success({

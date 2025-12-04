@@ -7,7 +7,8 @@ import {
   generateDedupeKey,
   ScrapedProperty,
 } from '@/lib/scrapers';
-import { checkRateLimit, incrementUsage } from '@/lib/rate-limiter';
+import { checkAndIncrement } from '@/lib/rate-limiter-db';
+import { logger } from '@/lib/logger';
 import { autoEnrichBatch } from '@/lib/enrichment';
 import { batchCheckChainHotels } from '@/lib/chain-detector';
 
@@ -203,14 +204,15 @@ async function runScrapeJob(
 export async function POST(request: NextRequest) {
   const supabase = createServerClient();
 
-  // Check rate limit for scrape runs
-  const rateLimit = checkRateLimit('scrape_runs');
+  // Check rate limit for scrape runs (database-backed for serverless persistence)
+  const rateLimit = await checkAndIncrement('scrape_runs');
   if (!rateLimit.allowed) {
     return NextResponse.json({
       error: 'Daily scrape limit reached',
       remaining: rateLimit.remaining,
       limit: rateLimit.limit,
-      message: 'Max 5 scrape runs per day to manage resources. Try again tomorrow.',
+      resetAt: rateLimit.resetAt.toISOString(),
+      message: 'Max 10 scrape runs per day to manage resources. Try again tomorrow.',
     }, { status: 429 });
   }
 
@@ -220,8 +222,7 @@ export async function POST(request: NextRequest) {
     const jobTitles = body.job_titles || DEFAULT_JOB_TITLES;
     const scraperIds = body.scrapers || DEFAULT_SCRAPERS;
 
-    // Increment scrape usage
-    incrementUsage('scrape_runs');
+    // Note: API usage already tracked by checkAndIncrement above
 
     // Create scrape run record immediately
     const { data: run, error: runError } = await supabase
@@ -254,7 +255,7 @@ export async function POST(request: NextRequest) {
       status: 'running',
     });
   } catch (error) {
-    console.error('Scrape error:', error);
+    logger.error({ error }, 'Scrape error');
     return NextResponse.json(
       { error: 'Scrape failed', details: String(error) },
       { status: 500 }

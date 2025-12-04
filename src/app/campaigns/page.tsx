@@ -18,7 +18,6 @@ import {
   Play,
   Pause,
   ArrowUp,
-  ArrowDown,
   Sparkles,
 } from 'lucide-react';
 
@@ -418,7 +417,7 @@ export default function CampaignsPage() {
                 <div>
                   <p className="font-medium text-amber-400">Building Statistical Significance</p>
                   <p className="text-sm text-muted-foreground mt-1">
-                    You've sent {summary.total_emails_sent} emails so far. We recommend at least 100+ emails per campaign
+                    You&apos;ve sent {summary.total_emails_sent} emails so far. We recommend at least 100+ emails per campaign
                     before drawing conclusions about which strategy works best. Keep sending!
                   </p>
                 </div>

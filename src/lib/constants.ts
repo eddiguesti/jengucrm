@@ -138,7 +138,7 @@ export const SESSION = {
   TOKEN_PREFIX: 'session_',
 } as const;
 
-export default {
+const constants = {
   TIMEOUTS,
   RATE_LIMITS,
   EMAIL,
@@ -150,3 +150,4 @@ export default {
   FETCH_HEADERS,
   SESSION,
 };
+export default constants;

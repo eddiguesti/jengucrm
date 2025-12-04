@@ -14,7 +14,7 @@
 import { logger } from '../../logger';
 import { generateEmailsFromName, extractDomainFromUrl, parseFullName, type EmailCandidate } from './patterns';
 import { getDomainPattern, applyPattern, saveDomainPattern, type DomainPattern } from './domain-analyzer';
-import { hunterFindEmail, hunterVerifyEmail, getConfiguredServices, type HunterEmailResult, type HunterVerifyResult } from './services';
+import { hunterFindEmail, hunterVerifyEmail, getConfiguredServices, type HunterVerifyResult } from './services';
 import { verifyEmailSmtp, type SmtpVerifyResult } from './smtp-verify';
 import { canSendTo } from '../verification';
 

@@ -103,16 +103,39 @@ export async function POST(request: NextRequest) {
       return success({ error: 'Email sending not configured', sent: 0 });
     }
 
-    // Sync inbox counts from database
+    // OPTIMIZED: Parallel fetch of all initial data
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const { data: todaysEmails } = await supabase
-      .from('emails')
-      .select('from_email')
-      .eq('direction', 'outbound')
-      .eq('email_type', 'outreach')
-      .gte('sent_at', today.toISOString());
+    const todayIso = today.toISOString();
 
+    // Run all three initial queries in parallel
+    const [
+      { data: todaysEmails },
+      { data: campaigns },
+      { data: campaignEmailsToday },
+    ] = await Promise.all([
+      // Query 1: Get today's emails by inbox (for inbox capacity tracking)
+      supabase
+        .from('emails')
+        .select('from_email, campaign_id')
+        .eq('direction', 'outbound')
+        .eq('email_type', 'outreach')
+        .gte('sent_at', todayIso),
+      // Query 2: Get active campaigns
+      supabase
+        .from('campaigns')
+        .select('id, name, strategy_key, active, daily_limit, emails_sent')
+        .eq('active', true),
+      // Query 3: Get today's emails by campaign (could be combined with Query 1 but keeping separate for clarity)
+      supabase
+        .from('emails')
+        .select('campaign_id')
+        .eq('direction', 'outbound')
+        .eq('email_type', 'outreach')
+        .gte('sent_at', todayIso),
+    ]);
+
+    // Process inbox counts
     const sentTodayByInbox: Record<string, number> = {};
     for (const e of todaysEmails || []) {
       if (e.from_email) {
@@ -121,23 +144,9 @@ export async function POST(request: NextRequest) {
     }
     syncInboxCountsFromDb(sentTodayByInbox);
 
-    // Fetch active campaigns
-    const { data: campaigns } = await supabase
-      .from('campaigns')
-      .select('id, name, strategy_key, active, daily_limit, emails_sent')
-      .eq('active', true);
-
     if (!campaigns || campaigns.length === 0) {
       return success({ error: 'No active campaigns found', sent: 0 });
     }
-
-    // Count emails sent today per campaign
-    const { data: campaignEmailsToday } = await supabase
-      .from('emails')
-      .select('campaign_id')
-      .eq('direction', 'outbound')
-      .eq('email_type', 'outreach')
-      .gte('sent_at', today.toISOString());
 
     const sentTodayByCampaign: Record<string, number> = {};
     for (const e of campaignEmailsToday || []) {
@@ -290,7 +299,8 @@ export async function POST(request: NextRequest) {
         logger.error({ error: emailSaveError, prospect: prospect.email }, 'Failed to save email');
       }
 
-      // Update campaign metrics atomically
+      // Update campaign metrics atomically using raw SQL for accurate increment
+      // This avoids race conditions by using SQL's emails_sent = emails_sent + 1
       try {
         const { error: rpcError } = await supabase.rpc('increment_counter', {
           table_name: 'campaigns',
@@ -299,10 +309,28 @@ export async function POST(request: NextRequest) {
         });
 
         if (rpcError) {
-          await supabase.from('campaigns').update({ emails_sent: campaign.emails_sent + 1 }).eq('id', campaign.id);
+          // Fallback: fetch current value and update (less ideal but works)
+          const { data: currentCampaign } = await supabase
+            .from('campaigns')
+            .select('emails_sent')
+            .eq('id', campaign.id)
+            .single();
+          await supabase
+            .from('campaigns')
+            .update({ emails_sent: (currentCampaign?.emails_sent || 0) + 1 })
+            .eq('id', campaign.id);
         }
       } catch {
-        await supabase.from('campaigns').update({ emails_sent: campaign.emails_sent + 1 }).eq('id', campaign.id);
+        // Same fallback for catch block
+        const { data: currentCampaign } = await supabase
+          .from('campaigns')
+          .select('emails_sent')
+          .eq('id', campaign.id)
+          .single();
+        await supabase
+          .from('campaigns')
+          .update({ emails_sent: (currentCampaign?.emails_sent || 0) + 1 })
+          .eq('id', campaign.id);
       }
 
       results.byCampaign[campaign.id].sent++;

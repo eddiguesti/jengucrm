@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 import {
-  scrapeGoogleMaps,
   scrapeMultipleLocations,
   getUKCities,
   getEuropeanCities,
@@ -21,7 +20,6 @@ export async function POST(request: NextRequest) {
       locations,          // Custom locations to scrape
       region,             // 'uk', 'europe', 'both'
       maxPerLocation = 30, // Limit per city
-      minRating = 3.5,    // Minimum Google rating
     } = body;
 
     // Determine which locations to scrape

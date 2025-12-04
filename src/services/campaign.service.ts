@@ -6,7 +6,6 @@
 import { createServerClient } from '@/lib/supabase';
 import { campaignRepository, emailRepository } from '@/repositories';
 import type { Campaign, CampaignWithStats } from '@/repositories';
-import { logger } from '@/lib/logger';
 
 export interface CampaignSummary {
   total_campaigns: number;

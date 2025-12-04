@@ -67,9 +67,8 @@ async function smtpHandshake(
 ): Promise<{ isValid: boolean; isCatchAll: boolean; response: string }> {
   return new Promise((resolve) => {
     const socket = new net.Socket();
-    let response = '';
+    let _response = '';
     let step = 0;
-    const domain = email.split('@')[1];
 
     const cleanup = () => {
       socket.removeAllListeners();
@@ -83,7 +82,7 @@ async function smtpHandshake(
 
     socket.on('data', (data) => {
       const line = data.toString();
-      response += line;
+      _response += line;
 
       // Parse SMTP response code
       const code = parseInt(line.substring(0, 3), 10);

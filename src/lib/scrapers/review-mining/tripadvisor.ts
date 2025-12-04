@@ -234,7 +234,7 @@ export class TripAdvisorScraper {
       .slice(0, 20);
   }
 
-  private async getHotelReviews(hotelUrl: string, hotelName: string): Promise<{ reviews: TripAdvisorReview[]; total: number }> {
+  private async getHotelReviews(hotelUrl: string, _hotelName: string): Promise<{ reviews: TripAdvisorReview[]; total: number }> {
     // TripAdvisor reviews can be filtered by rating
     // We want 1-3 star reviews only (where pain signals are)
     const lowRatingUrl = `${this.baseUrl}${hotelUrl}`.replace('.html', '-or10-low_rating.html');

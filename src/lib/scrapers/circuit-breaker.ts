@@ -219,7 +219,7 @@ function isBlockedError(error: string): boolean {
 /**
  * Handle rate limiting with exponential backoff
  */
-function handleRateLimit(service: string, error: string): void {
+function handleRateLimit(service: string, _error: string): void {
   const current = rateLimitBackoff.get(service);
   const multiplier = current ? Math.min(current.multiplier * 2, 32) : 1;
   const baseDelay = 30000; // 30 seconds base

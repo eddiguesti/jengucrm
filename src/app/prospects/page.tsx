@@ -58,11 +58,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import type { Prospect, ProspectTier } from '@/types';
 import { AddProspectDialog } from '@/components/add-prospect-dialog';
 import { ProspectCard } from '@/components/prospect-card';
-import { BatteryIndicator, BatteryCompact } from '@/components/ui/battery-indicator';
+import { BatteryCompact } from '@/components/ui/battery-indicator';
 import {
   calculateReadiness,
   getReadinessSummary,
-  groupByReadiness,
   type ReadinessTier,
 } from '@/lib/readiness';
 
@@ -276,6 +275,7 @@ export default function ProspectsPage() {
 
   useEffect(() => {
     fetchProspects();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tierFilter, smartView, sourceFilter, emailStatusFilter, contactStatusFilter]);
 
   // Debounced search
@@ -284,6 +284,7 @@ export default function ProspectsPage() {
       fetchProspects();
     }, 300);
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery]);
 
   // Calculate readiness summary
@@ -363,11 +364,6 @@ export default function ProspectsPage() {
       setSortDirection('desc');
     }
   };
-
-  // Group prospects by readiness for grouped view
-  const groupedProspects = useMemo(() => {
-    return groupByReadiness(filteredProspects);
-  }, [filteredProspects]);
 
   // Handle action from prospect card
   const handleProspectAction = async (action: string, prospectId: string) => {
@@ -942,6 +938,19 @@ export default function ProspectsPage() {
                       )}
                     </div>
                   </TableHead>
+                  <TableHead
+                    className={cn("hidden lg:table-cell text-xs cursor-pointer select-none hover:text-white transition-colors", isLight ? "text-slate-500 hover:text-slate-900" : "text-zinc-400")}
+                    onClick={() => handleSort('created_at')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Added
+                      {sortColumn === 'created_at' ? (
+                        <ChevronUp className={cn("h-3 w-3", sortDirection === 'desc' && "rotate-180")} />
+                      ) : (
+                        <ArrowUpDown className="h-3 w-3 opacity-50" />
+                      )}
+                    </div>
+                  </TableHead>
                   <TableHead className={cn("text-right text-xs", isLight ? "text-slate-500" : "text-zinc-400")}>Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -1025,6 +1034,11 @@ export default function ProspectsPage() {
                         <TableCell className="hidden md:table-cell py-2">
                           <span className={cn("font-medium text-sm", isLight ? "text-slate-900" : "text-white")}>
                             {prospect.score || 0}
+                          </span>
+                        </TableCell>
+                        <TableCell className="hidden lg:table-cell py-2">
+                          <span className={cn("text-xs", isLight ? "text-slate-500" : "text-zinc-400")}>
+                            {prospect.created_at ? new Date(prospect.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' }) : '-'}
                           </span>
                         </TableCell>
                         <TableCell className="text-right py-2">

@@ -102,22 +102,28 @@ export async function POST(request: NextRequest) {
     const { password, captchaToken } = parsed.data;
 
     // Verify CAPTCHA token (required in production)
-    if (config.isProd && process.env.TURNSTILE_SECRET_KEY) {
-      if (!captchaToken) {
-        logger.warn({ ip }, 'Login attempt without CAPTCHA token');
-        return NextResponse.json(
-          { success: false, error: 'Security verification required' },
-          { status: 400 }
-        );
-      }
+    if (config.isProd) {
+      if (!process.env.TURNSTILE_SECRET_KEY) {
+        logger.error('TURNSTILE_SECRET_KEY not configured in production - CAPTCHA verification disabled');
+        // In production without CAPTCHA, we still allow login but log the security concern
+        // This prevents breaking existing deployments, but the log will alert operators
+      } else {
+        if (!captchaToken) {
+          logger.warn({ ip }, 'Login attempt without CAPTCHA token');
+          return NextResponse.json(
+            { success: false, error: 'Security verification required' },
+            { status: 400 }
+          );
+        }
 
-      const captchaValid = await verifyTurnstileToken(captchaToken);
-      if (!captchaValid) {
-        logger.warn({ ip }, 'Login failed - invalid CAPTCHA');
-        return NextResponse.json(
-          { success: false, error: 'Security verification failed. Please try again.' },
-          { status: 400 }
-        );
+        const captchaValid = await verifyTurnstileToken(captchaToken);
+        if (!captchaValid) {
+          logger.warn({ ip }, 'Login failed - invalid CAPTCHA');
+          return NextResponse.json(
+            { success: false, error: 'Security verification failed. Please try again.' },
+            { status: 400 }
+          );
+        }
       }
     }
 

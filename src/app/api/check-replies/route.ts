@@ -7,7 +7,7 @@ import { sendEmail, checkAllInboxesForReplies, getSmtpInboxes, checkGmailForRepl
 import { getGmailInboxes } from '@/lib/email/config';
 import { processHotelReply, findGmailInboxByEmail, analyzeHotelReply } from '@/lib/email/mystery-shopper-responder';
 import { JENGU_KNOWLEDGE } from '@/lib/jengu-knowledge';
-import { analyzeReplyWithAI, getActionPriority, type ReplyAnalysis as AIReplyAnalysis } from '@/lib/reply-analysis';
+import { analyzeReplyWithAI, getActionPriority } from '@/lib/reply-analysis';
 import { logger } from '@/lib/logger';
 import Anthropic from '@anthropic-ai/sdk';
 
@@ -40,74 +40,6 @@ interface ReplyAnalysis {
   isPositive: boolean;
   notInterestedReason?: string;
   confidence: number;
-}
-
-// Keywords for detecting intent
-const MEETING_KEYWORDS = [
-  'meet', 'meeting', 'call', 'schedule', 'calendly', 'demo', 'chat',
-  'discuss', 'talk', 'connect', 'catch up', 'available', 'free time',
-  'book', 'appointment', 'zoom', 'teams', 'google meet', 'let\'s talk',
-  'interested in learning more', 'would love to hear', 'tell me more'
-];
-
-const NOT_INTERESTED_KEYWORDS = [
-  'not interested', 'no thank', 'no thanks', 'unsubscribe', 'remove me',
-  'stop emailing', 'don\'t contact', 'not looking', 'not in the market',
-  'already have', 'not for us', 'not a good fit', 'pass on this',
-  'decline', 'not at this time', 'maybe later', 'not right now'
-];
-
-const POSITIVE_KEYWORDS = [
-  'sounds interesting', 'tell me more', 'pricing', 'cost', 'how much',
-  'features', 'capabilities', 'would like to know', 'curious about',
-  'send more info', 'brochure', 'proposal', 'quote'
-];
-
-/**
- * Analyze reply content to detect intent
- */
-function analyzeReply(subject: string, body: string): ReplyAnalysis {
-  const text = `${subject} ${body}`.toLowerCase();
-
-  // Check for meeting request
-  const meetingMatches = MEETING_KEYWORDS.filter(kw => text.includes(kw));
-  const isMeetingRequest = meetingMatches.length >= 1;
-
-  // Check for not interested
-  const notInterestedMatches = NOT_INTERESTED_KEYWORDS.filter(kw => text.includes(kw));
-  const isNotInterested = notInterestedMatches.length >= 1;
-
-  // Check for positive response
-  const positiveMatches = POSITIVE_KEYWORDS.filter(kw => text.includes(kw));
-  const isPositive = positiveMatches.length >= 1 && !isNotInterested;
-
-  // Determine not interested reason
-  let notInterestedReason: string | undefined;
-  if (isNotInterested) {
-    if (text.includes('already have') || text.includes('existing solution')) {
-      notInterestedReason = 'competitor';
-    } else if (text.includes('budget') || text.includes('cost') || text.includes('expensive')) {
-      notInterestedReason = 'budget';
-    } else if (text.includes('later') || text.includes('not right now') || text.includes('timing')) {
-      notInterestedReason = 'timing';
-    } else if (text.includes('wrong person') || text.includes('not my department')) {
-      notInterestedReason = 'wrong_contact';
-    } else {
-      notInterestedReason = 'not_interested';
-    }
-  }
-
-  // Calculate confidence
-  const totalMatches = meetingMatches.length + notInterestedMatches.length + positiveMatches.length;
-  const confidence = Math.min(totalMatches * 0.3, 1);
-
-  return {
-    isMeetingRequest,
-    isNotInterested,
-    isPositive,
-    notInterestedReason,
-    confidence,
-  };
 }
 
 /**
@@ -455,13 +387,19 @@ async function checkMicrosoftInbox(sinceDate: Date): Promise<EmailMessage[]> {
 }
 
 /**
- * Match incoming email to a prospect
+ * Match incoming email to a prospect using multiple strategies:
+ * 1. Direct to_email match (we sent to them)
+ * 2. Message-ID threading (In-Reply-To header)
+ * 3. Subject line threading (Re: prefix)
+ * 4. Prospect email match
  */
 async function matchEmailToProspect(
   supabase: ReturnType<typeof createServerClient>,
-  fromEmail: string
-): Promise<{ id: string; name: string; email: string } | null> {
-  // Check if we've sent an email to this address
+  fromEmail: string,
+  inReplyTo?: string,
+  subject?: string
+): Promise<{ id: string; name: string; email: string; matchMethod: string } | null> {
+  // Strategy 1: Check if we've sent an email to this address
   const { data: sentEmail } = await supabase
     .from('emails')
     .select('prospect_id, prospects(id, name, email)')
@@ -472,15 +410,60 @@ async function matchEmailToProspect(
     .single();
 
   if (sentEmail?.prospect_id && sentEmail.prospects) {
-    // Supabase can return array or object for relations
     const prospectData = sentEmail.prospects;
     const p = Array.isArray(prospectData) ? prospectData[0] : prospectData;
     if (p) {
-      return { id: sentEmail.prospect_id, name: p.name, email: p.email || fromEmail };
+      return { id: sentEmail.prospect_id, name: p.name, email: p.email || fromEmail, matchMethod: 'to_email' };
     }
   }
 
-  // Check if this email matches a prospect's email
+  // Strategy 2: Message-ID threading (most reliable for replies)
+  if (inReplyTo) {
+    const { data: threadedEmail } = await supabase
+      .from('emails')
+      .select('prospect_id, prospects(id, name, email)')
+      .eq('message_id', inReplyTo)
+      .limit(1)
+      .single();
+
+    if (threadedEmail?.prospect_id && threadedEmail.prospects) {
+      const prospectData = threadedEmail.prospects;
+      const p = Array.isArray(prospectData) ? prospectData[0] : prospectData;
+      if (p) {
+        return { id: threadedEmail.prospect_id, name: p.name, email: p.email || fromEmail, matchMethod: 'message_id' };
+      }
+    }
+  }
+
+  // Strategy 3: Subject line threading (Re: prefix matching)
+  if (subject) {
+    // Strip Re:, Fwd:, etc. to get original subject
+    const cleanSubject = subject
+      .replace(/^(Re|Fwd|Fw|RE|FW):\s*/gi, '')
+      .replace(/^(Re|Fwd|Fw|RE|FW)\[\d+\]:\s*/gi, '')
+      .trim();
+
+    if (cleanSubject.length > 5) { // Avoid matching very short subjects
+      const { data: subjectMatch } = await supabase
+        .from('emails')
+        .select('prospect_id, prospects(id, name, email)')
+        .eq('direction', 'outbound')
+        .ilike('subject', cleanSubject)
+        .order('sent_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (subjectMatch?.prospect_id && subjectMatch.prospects) {
+        const prospectData = subjectMatch.prospects;
+        const p = Array.isArray(prospectData) ? prospectData[0] : prospectData;
+        if (p) {
+          return { id: subjectMatch.prospect_id, name: p.name, email: p.email || fromEmail, matchMethod: 'subject_line' };
+        }
+      }
+    }
+  }
+
+  // Strategy 4: Check if this email matches a prospect's email directly
   const { data: prospect } = await supabase
     .from('prospects')
     .select('id, name, email')
@@ -488,7 +471,11 @@ async function matchEmailToProspect(
     .limit(1)
     .single();
 
-  return prospect || null;
+  if (prospect) {
+    return { ...prospect, matchMethod: 'prospect_email' };
+  }
+
+  return null;
 }
 
 /**
@@ -535,81 +522,98 @@ export async function POST(request: NextRequest) {
     // Collect all emails from all sources
     const allEmails: EmailMessage[] = [];
 
-    // 1. Check Azure inbox (edd@jengu.ai)
-    if (AZURE_TENANT_ID && AZURE_CLIENT_ID && AZURE_CLIENT_SECRET) {
-      results.checked = true;
-      results.inboxesChecked.push(AZURE_MAIL_FROM);
-      const azureEmails = await checkMicrosoftInbox(sinceDate);
-      // Tag each email with which inbox received it
-      for (const e of azureEmails) {
-        e.receivedByInbox = AZURE_MAIL_FROM;
-      }
-      allEmails.push(...azureEmails);
-    }
-
-    // 2. Check all Spacemail inboxes via IMAP
+    // OPTIMIZED: Check all inbox types in parallel
     const smtpInboxes = getSmtpInboxes();
-    if (smtpInboxes.length > 0) {
-      results.checked = true;
-      for (const inbox of smtpInboxes) {
-        results.inboxesChecked.push(inbox.email);
-      }
-
-      try {
-        const imapEmails = await checkAllInboxesForReplies(sinceDate);
-        // Convert IncomingEmail to EmailMessage format
-        for (const e of imapEmails) {
-          allEmails.push({
-            messageId: e.messageId,
-            from: e.from,
-            to: e.to,
-            subject: e.subject,
-            bodyPreview: e.bodyPreview,
-            body: e.body,
-            receivedAt: e.receivedAt,
-            inReplyTo: e.inReplyTo,
-            conversationId: e.conversationId,
-            receivedByInbox: e.inboxEmail, // Which Spacemail inbox received this
-          });
-        }
-      } catch (imapError) {
-        results.errors.push(`IMAP check failed: ${String(imapError)}`);
-      }
-    }
-
-    // 3. Check Gmail inboxes for mystery shopper replies (to track response times)
     const gmailInboxes = getGmailInboxes();
     const gmailEmails: string[] = gmailInboxes.map(i => i.email.toLowerCase());
 
+    // Build inbox check promises
+    const inboxChecks: Promise<{ source: string; emails: EmailMessage[]; error?: string }>[] = [];
+
+    // 1. Azure inbox check (with 30s timeout)
+    if (AZURE_TENANT_ID && AZURE_CLIENT_ID && AZURE_CLIENT_SECRET) {
+      results.inboxesChecked.push(AZURE_MAIL_FROM);
+      inboxChecks.push(
+        Promise.race([
+          checkMicrosoftInbox(sinceDate).then(emails => {
+            for (const e of emails) e.receivedByInbox = AZURE_MAIL_FROM;
+            return { source: 'azure', emails };
+          }),
+          new Promise<{ source: string; emails: EmailMessage[]; error: string }>((resolve) =>
+            setTimeout(() => resolve({ source: 'azure', emails: [], error: 'Azure inbox check timed out' }), 30000)
+          ),
+        ])
+      );
+    }
+
+    // 2. IMAP inbox check (with 30s timeout)
+    if (smtpInboxes.length > 0) {
+      for (const inbox of smtpInboxes) {
+        results.inboxesChecked.push(inbox.email);
+      }
+      inboxChecks.push(
+        Promise.race([
+          checkAllInboxesForReplies(sinceDate).then(imapEmails => ({
+            source: 'imap',
+            emails: imapEmails.map(e => ({
+              messageId: e.messageId,
+              from: e.from,
+              to: e.to,
+              subject: e.subject,
+              bodyPreview: e.bodyPreview,
+              body: e.body,
+              receivedAt: e.receivedAt,
+              inReplyTo: e.inReplyTo,
+              conversationId: e.conversationId,
+              receivedByInbox: e.inboxEmail,
+            })),
+          })),
+          new Promise<{ source: string; emails: EmailMessage[]; error: string }>((resolve) =>
+            setTimeout(() => resolve({ source: 'imap', emails: [], error: 'IMAP check timed out' }), 30000)
+          ),
+        ]).catch(err => ({ source: 'imap', emails: [] as EmailMessage[], error: `IMAP check failed: ${String(err)}` }))
+      );
+    }
+
+    // 3. Gmail inbox check (with 30s timeout)
     if (isGmailConfigured()) {
       for (const inbox of gmailInboxes) {
         results.inboxesChecked.push(inbox.email);
       }
-      try {
-        const gmailReplies = await checkGmailForReplies(sinceDate);
-        for (const e of gmailReplies) {
-          // Skip our own outbound emails
-          if (gmailEmails.includes(e.from.toLowerCase())) {
-            continue;
-          }
-          allEmails.push({
-            messageId: e.messageId,
-            from: e.from,
-            to: e.to,
-            subject: e.subject,
-            bodyPreview: e.bodyPreview,
-            body: e.body,
-            receivedAt: e.receivedAt,
-            inReplyTo: e.inReplyTo,
-            conversationId: e.conversationId,
-            receivedByInbox: e.inboxEmail, // Which Gmail inbox received it
-            gmailSenderName: e.gmailSenderName, // Persona name for replies
-          });
-        }
-      } catch (gmailError) {
-        results.errors.push(`Gmail IMAP check failed: ${String(gmailError)}`);
-      }
+      inboxChecks.push(
+        Promise.race([
+          checkGmailForReplies(sinceDate).then(gmailReplies => ({
+            source: 'gmail',
+            emails: gmailReplies
+              .filter(e => !gmailEmails.includes(e.from.toLowerCase()))
+              .map(e => ({
+                messageId: e.messageId,
+                from: e.from,
+                to: e.to,
+                subject: e.subject,
+                bodyPreview: e.bodyPreview,
+                body: e.body,
+                receivedAt: e.receivedAt,
+                inReplyTo: e.inReplyTo,
+                conversationId: e.conversationId,
+                receivedByInbox: e.inboxEmail,
+                gmailSenderName: e.gmailSenderName,
+              })),
+          })),
+          new Promise<{ source: string; emails: EmailMessage[]; error: string }>((resolve) =>
+            setTimeout(() => resolve({ source: 'gmail', emails: [], error: 'Gmail IMAP check timed out' }), 30000)
+          ),
+        ]).catch(err => ({ source: 'gmail', emails: [] as EmailMessage[], error: `Gmail IMAP check failed: ${String(err)}` }))
+      );
     }
+
+    // Execute all inbox checks in parallel
+    const inboxResults = await Promise.all(inboxChecks);
+    for (const result of inboxResults) {
+      if (result.error) results.errors.push(result.error);
+      allEmails.push(...result.emails);
+    }
+    results.checked = inboxChecks.length > 0;
 
     // Legacy single Gmail support
     const legacyGmailUser = process.env.GMAIL_SMTP_USER;
@@ -774,8 +778,8 @@ export async function POST(request: NextRequest) {
             continue; // Don't process mystery shopper replies as regular sales replies
           }
 
-          // Match to prospect
-          const prospect = await matchEmailToProspect(supabase, email.from);
+          // Match to prospect using multiple strategies
+          const prospect = await matchEmailToProspect(supabase, email.from, email.inReplyTo, email.subject);
 
           if (prospect) {
             results.matched++;

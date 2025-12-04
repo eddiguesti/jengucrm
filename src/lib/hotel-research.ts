@@ -321,4 +321,5 @@ function getDefaultIntel(hotelName: string): HotelIntel {
   };
 }
 
-export default { researchHotel, findHotelEmails };
+const hotelResearch = { researchHotel, findHotelEmails };
+export default hotelResearch;

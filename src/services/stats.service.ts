@@ -4,7 +4,6 @@
  */
 
 import { createServerClient } from '@/lib/supabase';
-import { prospectRepository } from '@/repositories';
 import { emailRepository } from '@/repositories';
 import { logger } from '@/lib/logger';
 

@@ -12,7 +12,20 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // CommonJS scripts
+    "scripts/**",
   ]),
+  // Custom rules
+  {
+    rules: {
+      // Allow underscore-prefixed variables to be unused (TypeScript convention)
+      "@typescript-eslint/no-unused-vars": ["warn", {
+        "argsIgnorePattern": "^_",
+        "varsIgnorePattern": "^_",
+        "caughtErrorsIgnorePattern": "^_"
+      }]
+    }
+  }
 ]);
 
 export default eslintConfig;

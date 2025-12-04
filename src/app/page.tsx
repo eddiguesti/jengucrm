@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, memo } from 'react';
 import { Header } from '@/components/layout/header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -10,6 +10,7 @@ import {
   Flame,
   Mail,
   TrendingUp,
+  TrendingDown,
   ArrowRight,
   Loader2,
   Star,
@@ -18,20 +19,26 @@ import {
   CheckCircle2,
   Zap,
   Clock,
-  AlertCircle,
   Play,
   Inbox,
   Calendar,
   Activity,
-  RefreshCw,
   Sparkles,
   MessageSquare,
   Target,
+  Bot,
+  Send,
+  Reply,
+  Trophy,
+  Timer,
+  AlertCircle,
+  UserCheck,
+  BarChart3,
 } from 'lucide-react';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { Prospect } from '@/types';
-import { BatteryRing, BatteryCompact } from '@/components/ui/battery-indicator';
+import { BatteryRing } from '@/components/ui/battery-indicator';
 import { calculateReadiness, getReadinessSummary, getTierInfo } from '@/lib/readiness';
 import { useTheme } from '@/contexts/ThemeContext';
 import { cn } from '@/lib/utils';
@@ -46,6 +53,45 @@ interface Stats {
     sent: number;
     opened: number;
     replied: number;
+  };
+  automation?: {
+    mysteryShopperQueue: number;
+    mysteryShopperSent: number;
+    outreachSent: number;
+    repliesReceived: number;
+    bouncedEmails: number;
+  };
+  queueByTier?: { hot: number; warm: number; cold: number };
+  enrichment?: {
+    withEmail: number;
+    withGenericEmail: number;
+    withPersonalEmail: number;
+    withContactName: number;
+    successRate: number;
+  };
+  trends?: {
+    thisWeek: { sent: number; replies: number; meetings: number };
+    lastWeek: { sent: number; replies: number; meetings: number };
+    change: { sent: number; replies: number; meetings: number };
+  };
+  responseTime?: {
+    avgMinutes: number;
+    fastest: number;
+    slowest: number;
+    totalReplies: number;
+  };
+  lastCronRun?: {
+    at: string;
+    title: string;
+    success: boolean;
+  } | null;
+  funnel?: {
+    total: number;
+    contacted: number;
+    engaged: number;
+    meeting: number;
+    won: number;
+    lost: number;
   };
 }
 
@@ -89,8 +135,8 @@ function getActivityIcon(type: string) {
   }
 }
 
-// Queue item component
-function QueueItem({
+// Queue item component - memoized for performance
+const QueueItem = memo(function QueueItem({
   icon: Icon,
   label,
   count,
@@ -152,10 +198,10 @@ function QueueItem({
       </Link>
     </motion.div>
   );
-}
+});
 
-// Pipeline bar component
-function PipelineBar({
+// Pipeline bar component - memoized for performance
+const PipelineBar = memo(function PipelineBar({
   stage,
   count,
   total,
@@ -193,10 +239,10 @@ function PipelineBar({
       </span>
     </div>
   );
-}
+});
 
-// Priority prospect row
-function PriorityProspect({
+// Priority prospect row - memoized for performance
+const PriorityProspect = memo(function PriorityProspect({
   prospect,
   index,
   isLight,
@@ -300,47 +346,55 @@ function PriorityProspect({
       </Link>
     </motion.div>
   );
-}
+});
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [prospects, setProspects] = useState<Prospect[]>([]);
   const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const { theme } = useTheme();
   const isLight = theme === 'light';
 
-  useEffect(() => {
-    async function fetchData() {
-      setLoading(true);
-      try {
-        const [statsRes, prospectsRes, activityRes] = await Promise.all([
-          fetch('/api/stats'),
-          fetch('/api/prospects?limit=50'),
-          fetch('/api/activities'),
-        ]);
+  const fetchData = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [statsRes, prospectsRes, activityRes] = await Promise.all([
+        fetch('/api/stats'),
+        fetch('/api/prospects?limit=50'),
+        fetch('/api/activities'),
+      ]);
 
-        if (statsRes.ok) {
-          const statsData = await statsRes.json();
-          setStats(statsData);
-        }
-
-        if (prospectsRes.ok) {
-          const prospectsData = await prospectsRes.json();
-          setProspects(prospectsData.prospects || []);
-        }
-
-        if (activityRes.ok) {
-          const activityData = await activityRes.json();
-          setRecentActivity(activityData.activities || []);
-        }
-      } catch (error) {
-        console.error('Failed to fetch dashboard data:', error);
-      } finally {
-        setLoading(false);
+      if (statsRes.ok) {
+        const statsData = await statsRes.json();
+        setStats(statsData);
       }
-    }
 
+      if (prospectsRes.ok) {
+        const prospectsData = await prospectsRes.json();
+        setProspects(prospectsData.prospects || []);
+      }
+
+      if (activityRes.ok) {
+        const activityData = await activityRes.json();
+        setRecentActivity(activityData.activities || []);
+      }
+
+      // Check if all requests failed
+      if (!statsRes.ok && !prospectsRes.ok && !activityRes.ok) {
+        setError('Failed to load dashboard data');
+      }
+    } catch (err) {
+      console.error('Failed to fetch dashboard data:', err);
+      setError('Failed to connect to server');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
     fetchData();
   }, []);
 
@@ -364,17 +418,6 @@ export default function DashboardPage() {
       .slice(0, 5);
   }, [prospects]);
 
-  // Pipeline data
-  const pipelineData = useMemo(() => {
-    const stages = ['new', 'researching', 'outreach', 'engaged', 'meeting', 'proposal', 'won'];
-    const total = prospects.length;
-    return stages.map((stage) => ({
-      stage,
-      count: stats?.byStage?.[stage] || 0,
-      total,
-    }));
-  }, [stats, prospects]);
-
   return (
     <div
       className={cn(
@@ -390,6 +433,23 @@ export default function DashboardPage() {
       />
 
       <div className="flex-1 p-4 md:p-6 space-y-4 md:space-y-6 overflow-auto">
+        {/* Error State */}
+        {error && (
+          <Card className={cn(isLight ? "bg-red-50 border-red-200" : "bg-red-500/10 border-red-500/30")}>
+            <CardContent className="p-4 flex items-center justify-between">
+              <p className={cn("text-sm", isLight ? "text-red-600" : "text-red-400")}>{error}</p>
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn("ml-4", isLight ? "border-red-200 text-red-600 hover:bg-red-50" : "border-red-500/30 text-red-400")}
+                onClick={fetchData}
+              >
+                Retry
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Your Queue - Action Items */}
         <Card
           className={cn(
@@ -453,6 +513,278 @@ export default function DashboardPage() {
                     </div>
                   )}
               </AnimatePresence>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Automation Status */}
+        <Card
+          className={cn(
+            "relative overflow-hidden border",
+            isLight
+              ? "bg-gradient-to-br from-white via-[#f5f0e6] to-white border-[#efe7dc] shadow-[var(--shadow-strong)]"
+              : "bg-gradient-to-br from-zinc-900 to-zinc-900/50 border-white/10"
+          )}
+        >
+          <CardHeader className="pb-2 md:pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-2 text-sm md:text-base">
+                <Bot className="h-3 w-3 md:h-4 md:w-4 text-cyan-400" />
+                Automation Status
+              </CardTitle>
+              {stats?.lastCronRun && (
+                <div className={cn("flex items-center gap-1.5 text-[9px] md:text-[10px]", isLight ? "text-slate-500" : "text-zinc-500")}>
+                  <div className={cn("w-1.5 h-1.5 rounded-full", stats.lastCronRun.success ? "bg-emerald-400" : "bg-red-400")} />
+                  Last run: {formatTimeAgo(stats.lastCronRun.at)}
+                </div>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {loading ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
+              </div>
+            ) : (
+              <>
+                {/* Main Stats Row */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3">
+                  <div
+                    className={cn(
+                      "p-2 md:p-3 rounded-lg border",
+                      isLight ? "bg-white border-slate-200" : "bg-white/[0.03] border-white/[0.08]"
+                    )}
+                  >
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <Clock className="h-3 w-3 text-amber-400" />
+                      <span className={cn("text-[10px] md:text-xs", isLight ? "text-slate-500" : "text-zinc-400")}>
+                        Shopper Queue
+                      </span>
+                    </div>
+                    <p className={cn("text-lg md:text-xl font-bold", isLight ? "text-amber-600" : "text-amber-400")}>
+                      {stats?.automation?.mysteryShopperQueue || 0}
+                    </p>
+                    {stats?.queueByTier && (stats.queueByTier.hot > 0 || stats.queueByTier.warm > 0) && (
+                      <p className={cn("text-[9px] md:text-[10px]", isLight ? "text-slate-400" : "text-zinc-500")}>
+                        {stats.queueByTier.hot > 0 && <span className="text-red-400">{stats.queueByTier.hot} hot</span>}
+                        {stats.queueByTier.hot > 0 && stats.queueByTier.warm > 0 && " · "}
+                        {stats.queueByTier.warm > 0 && <span className="text-amber-400">{stats.queueByTier.warm} warm</span>}
+                      </p>
+                    )}
+                  </div>
+                  <div
+                    className={cn(
+                      "p-2 md:p-3 rounded-lg border",
+                      isLight ? "bg-white border-slate-200" : "bg-white/[0.03] border-white/[0.08]"
+                    )}
+                  >
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <Mail className="h-3 w-3 text-purple-400" />
+                      <span className={cn("text-[10px] md:text-xs", isLight ? "text-slate-500" : "text-zinc-400")}>
+                        Shopper Sent
+                      </span>
+                    </div>
+                    <p className={cn("text-lg md:text-xl font-bold", isLight ? "text-purple-600" : "text-purple-400")}>
+                      {stats?.automation?.mysteryShopperSent || 0}
+                    </p>
+                    <p className={cn("text-[9px] md:text-[10px]", isLight ? "text-slate-400" : "text-zinc-500")}>
+                      inquiries sent
+                    </p>
+                  </div>
+                  <div
+                    className={cn(
+                      "p-2 md:p-3 rounded-lg border",
+                      isLight ? "bg-white border-slate-200" : "bg-white/[0.03] border-white/[0.08]"
+                    )}
+                  >
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <Send className="h-3 w-3 text-blue-400" />
+                      <span className={cn("text-[10px] md:text-xs", isLight ? "text-slate-500" : "text-zinc-400")}>
+                        Outreach Sent
+                      </span>
+                    </div>
+                    <p className={cn("text-lg md:text-xl font-bold", isLight ? "text-blue-600" : "text-blue-400")}>
+                      {stats?.automation?.outreachSent || 0}
+                    </p>
+                    <p className={cn("text-[9px] md:text-[10px]", isLight ? "text-slate-400" : "text-zinc-500")}>
+                      sales emails
+                    </p>
+                  </div>
+                  <div
+                    className={cn(
+                      "p-2 md:p-3 rounded-lg border",
+                      isLight ? "bg-white border-slate-200" : "bg-white/[0.03] border-white/[0.08]"
+                    )}
+                  >
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <Reply className="h-3 w-3 text-emerald-400" />
+                      <span className={cn("text-[10px] md:text-xs", isLight ? "text-slate-500" : "text-zinc-400")}>
+                        Replies
+                      </span>
+                    </div>
+                    <p className={cn("text-lg md:text-xl font-bold", isLight ? "text-emerald-600" : "text-emerald-400")}>
+                      {stats?.automation?.repliesReceived || 0}
+                    </p>
+                    <p className={cn("text-[9px] md:text-[10px]", isLight ? "text-slate-400" : "text-zinc-500")}>
+                      received
+                    </p>
+                  </div>
+                </div>
+
+                {/* Weekly Trends & Funnel Row */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3">
+                  {/* Weekly Trends */}
+                  <div
+                    className={cn(
+                      "p-2 md:p-3 rounded-lg border",
+                      isLight ? "bg-white border-slate-200" : "bg-white/[0.03] border-white/[0.08]"
+                    )}
+                  >
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <BarChart3 className="h-3 w-3 text-cyan-400" />
+                      <span className={cn("text-[10px] md:text-xs font-medium", isLight ? "text-slate-700" : "text-zinc-300")}>
+                        This Week
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-center">
+                        <p className={cn("text-sm md:text-base font-bold", isLight ? "text-slate-800" : "text-white")}>
+                          {stats?.trends?.thisWeek.sent || 0}
+                        </p>
+                        <p className={cn("text-[9px]", isLight ? "text-slate-400" : "text-zinc-500")}>sent</p>
+                      </div>
+                      <div className="text-center">
+                        <p className={cn("text-sm md:text-base font-bold", isLight ? "text-slate-800" : "text-white")}>
+                          {stats?.trends?.thisWeek.replies || 0}
+                        </p>
+                        <p className={cn("text-[9px]", isLight ? "text-slate-400" : "text-zinc-500")}>replies</p>
+                      </div>
+                      <div className="text-center">
+                        <p className={cn("text-sm md:text-base font-bold", isLight ? "text-slate-800" : "text-white")}>
+                          {stats?.trends?.thisWeek.meetings || 0}
+                        </p>
+                        <p className={cn("text-[9px]", isLight ? "text-slate-400" : "text-zinc-500")}>meetings</p>
+                      </div>
+                      {(stats?.trends?.change.sent !== 0) && (
+                        <div className={cn(
+                          "flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded",
+                          (stats?.trends?.change.sent || 0) > 0
+                            ? (isLight ? "bg-emerald-50 text-emerald-600" : "bg-emerald-500/20 text-emerald-400")
+                            : (isLight ? "bg-red-50 text-red-600" : "bg-red-500/20 text-red-400")
+                        )}>
+                          {(stats?.trends?.change.sent || 0) > 0 ? <TrendingUp className="h-2.5 w-2.5" /> : <TrendingDown className="h-2.5 w-2.5" />}
+                          {Math.abs(stats?.trends?.change.sent || 0)}%
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Conversion Funnel */}
+                  <div
+                    className={cn(
+                      "p-2 md:p-3 rounded-lg border",
+                      isLight ? "bg-white border-slate-200" : "bg-white/[0.03] border-white/[0.08]"
+                    )}
+                  >
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <Trophy className="h-3 w-3 text-amber-400" />
+                      <span className={cn("text-[10px] md:text-xs font-medium", isLight ? "text-slate-700" : "text-zinc-300")}>
+                        Conversion Funnel
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="text-center flex-1">
+                        <p className={cn("text-xs md:text-sm font-bold", isLight ? "text-blue-600" : "text-blue-400")}>
+                          {stats?.funnel?.contacted || 0}
+                        </p>
+                        <p className={cn("text-[8px] md:text-[9px]", isLight ? "text-slate-400" : "text-zinc-500")}>contacted</p>
+                      </div>
+                      <ArrowRight className={cn("h-2.5 w-2.5", isLight ? "text-slate-300" : "text-zinc-600")} />
+                      <div className="text-center flex-1">
+                        <p className={cn("text-xs md:text-sm font-bold", isLight ? "text-purple-600" : "text-purple-400")}>
+                          {stats?.funnel?.engaged || 0}
+                        </p>
+                        <p className={cn("text-[8px] md:text-[9px]", isLight ? "text-slate-400" : "text-zinc-500")}>engaged</p>
+                      </div>
+                      <ArrowRight className={cn("h-2.5 w-2.5", isLight ? "text-slate-300" : "text-zinc-600")} />
+                      <div className="text-center flex-1">
+                        <p className={cn("text-xs md:text-sm font-bold", isLight ? "text-amber-600" : "text-amber-400")}>
+                          {stats?.funnel?.meeting || 0}
+                        </p>
+                        <p className={cn("text-[8px] md:text-[9px]", isLight ? "text-slate-400" : "text-zinc-500")}>meeting</p>
+                      </div>
+                      <ArrowRight className={cn("h-2.5 w-2.5", isLight ? "text-slate-300" : "text-zinc-600")} />
+                      <div className="text-center flex-1">
+                        <p className={cn("text-xs md:text-sm font-bold", isLight ? "text-emerald-600" : "text-emerald-400")}>
+                          {stats?.funnel?.won || 0}
+                        </p>
+                        <p className={cn("text-[8px] md:text-[9px]", isLight ? "text-slate-400" : "text-zinc-500")}>won</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Enrichment & Response Time Row */}
+                <div className="grid grid-cols-2 gap-2 md:gap-3">
+                  {/* Enrichment Success */}
+                  <div
+                    className={cn(
+                      "p-2 md:p-3 rounded-lg border",
+                      isLight ? "bg-white border-slate-200" : "bg-white/[0.03] border-white/[0.08]"
+                    )}
+                  >
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <UserCheck className="h-3 w-3 text-cyan-400" />
+                      <span className={cn("text-[10px] md:text-xs", isLight ? "text-slate-500" : "text-zinc-400")}>
+                        Email Quality
+                      </span>
+                    </div>
+                    <div className="flex items-baseline gap-1">
+                      <p className={cn("text-lg md:text-xl font-bold", isLight ? "text-cyan-600" : "text-cyan-400")}>
+                        {stats?.enrichment?.successRate || 0}%
+                      </p>
+                      <span className={cn("text-[9px]", isLight ? "text-slate-400" : "text-zinc-500")}>personal</span>
+                    </div>
+                    <p className={cn("text-[9px] md:text-[10px]", isLight ? "text-slate-400" : "text-zinc-500")}>
+                      {stats?.enrichment?.withPersonalEmail || 0} GM · {stats?.enrichment?.withGenericEmail || 0} generic
+                    </p>
+                  </div>
+
+                  {/* Response Time */}
+                  <div
+                    className={cn(
+                      "p-2 md:p-3 rounded-lg border",
+                      isLight ? "bg-white border-slate-200" : "bg-white/[0.03] border-white/[0.08]"
+                    )}
+                  >
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <Timer className="h-3 w-3 text-orange-400" />
+                      <span className={cn("text-[10px] md:text-xs", isLight ? "text-slate-500" : "text-zinc-400")}>
+                        Avg Response
+                      </span>
+                    </div>
+                    {(stats?.responseTime?.totalReplies || 0) > 0 ? (
+                      <>
+                        <p className={cn("text-lg md:text-xl font-bold", isLight ? "text-orange-600" : "text-orange-400")}>
+                          {stats?.responseTime?.avgMinutes || 0}m
+                        </p>
+                        <p className={cn("text-[9px] md:text-[10px]", isLight ? "text-slate-400" : "text-zinc-500")}>
+                          from {stats?.responseTime?.totalReplies} replies
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className={cn("text-lg md:text-xl font-bold", isLight ? "text-slate-400" : "text-zinc-600")}>
+                          --
+                        </p>
+                        <p className={cn("text-[9px] md:text-[10px]", isLight ? "text-slate-400" : "text-zinc-500")}>
+                          no replies yet
+                        </p>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </>
             )}
           </CardContent>
         </Card>

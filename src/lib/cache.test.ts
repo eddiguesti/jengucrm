@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { cache, CACHE_KEYS, CACHE_TTL, cacheKey } from './cache';
+import { cache, CACHE_KEYS, cacheKey } from './cache';
 
 describe('Cache', () => {
   beforeEach(() => {

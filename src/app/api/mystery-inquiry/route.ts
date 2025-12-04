@@ -294,17 +294,31 @@ export async function POST(request: NextRequest) {
     });
 
     // Send email
-    await transporter.sendMail({
+    const sentResult = await transporter.sendMail({
       from: `"${gmailConfig.senderName}" <${gmailConfig.email}>`,
       to: prospect.email,
       subject: emailData.subject,
       text: emailData.body,
     });
 
+    // Save to emails table (required for reply matching!)
+    await supabase.from('emails').insert({
+      prospect_id,
+      subject: emailData.subject,
+      body: emailData.body,
+      to_email: prospect.email,
+      from_email: gmailConfig.email,
+      message_id: sentResult.messageId,
+      email_type: 'mystery_shopper',
+      direction: 'outbound',
+      status: 'sent',
+      sent_at: new Date().toISOString(),
+    });
+
     // Log activity
     await supabase.from('activities').insert({
       prospect_id,
-      type: 'email',
+      type: 'mystery_shopper',
       title: 'Mystery Shopper Inquiry Sent',
       description: `Sent AI-generated inquiry from ${gmailConfig.senderName} (${gmailConfig.email}) to ${prospect.email}. Scenario: ${emailData.scenario}. Language: ${language}`,
     });
@@ -380,14 +394,35 @@ export async function PUT(request: NextRequest) {
     if (error) throw error;
 
     // Filter to only those with generic emails and no mystery inquiry sent
-    const genericPrefixes = ['info@', 'reservations@', 'reception@', 'frontdesk@', 'hello@', 'contact@', 'enquiries@'];
-    const eligibleProspects = (prospects || []).filter(p => {
+    const genericPrefixes = [
+      'info@', 'reservations@', 'reservation@', 'reception@', 'frontdesk@',
+      'hello@', 'contact@', 'enquiries@', 'enquiry@', 'booking@', 'bookings@',
+      'stay@', 'guest@', 'guests@', 'sales@', 'events@', 'weddings@',
+      'groups@', 'meetings@', 'concierge@', 'hotel@', 'resort@'
+    ];
+
+    // Priority 1: Manually queued prospects
+    const queuedProspects = (prospects || []).filter(p => {
+      if (!p.email) return false;
+      const tags = p.tags || [];
+      const isQueued = tags.includes('mystery-shopper-queued');
+      const alreadySent = tags.includes('mystery-inquiry-sent');
+      return isQueued && !alreadySent;
+    });
+
+    // Priority 2: Auto-select generic email prospects
+    const genericProspects = (prospects || []).filter(p => {
       if (!p.email) return false;
       const emailLower = p.email.toLowerCase();
       const isGenericEmail = genericPrefixes.some(prefix => emailLower.startsWith(prefix));
-      const alreadySent = (p.tags || []).includes('mystery-inquiry-sent');
-      return isGenericEmail && !alreadySent;
-    }).slice(0, limit);
+      const tags = p.tags || [];
+      const alreadySent = tags.includes('mystery-inquiry-sent');
+      const isQueued = tags.includes('mystery-shopper-queued');
+      return isGenericEmail && !alreadySent && !isQueued; // Don't double-count queued
+    });
+
+    // Combine: queued first, then generic to fill remaining slots
+    const eligibleProspects = [...queuedProspects, ...genericProspects].slice(0, limit);
 
     const results: {
       id: string;
@@ -446,27 +481,43 @@ export async function PUT(request: NextRequest) {
           },
         });
 
-        await transporter.sendMail({
+        const sentResult = await transporter.sendMail({
           from: `"${gmailConfig.senderName}" <${gmailConfig.email}>`,
           to: prospect.email,
           subject: emailData.subject,
           text: emailData.body,
         });
 
+        // Save to emails table (required for reply matching!)
+        await supabase.from('emails').insert({
+          prospect_id: prospect.id,
+          subject: emailData.subject,
+          body: emailData.body,
+          to_email: prospect.email,
+          from_email: gmailConfig.email,
+          message_id: sentResult.messageId,
+          email_type: 'mystery_shopper',
+          direction: 'outbound',
+          status: 'sent',
+          sent_at: new Date().toISOString(),
+        });
+
         // Log activity
         await supabase.from('activities').insert({
           prospect_id: prospect.id,
-          type: 'email',
+          type: 'mystery_shopper',
           title: 'Mystery Shopper Inquiry Sent',
           description: `AI-generated inquiry from ${gmailConfig.senderName}. Scenario: ${emailData.scenario}. Language: ${language}`,
         });
 
-        // Tag prospect
-        const tags = prospect.tags || [];
+        // Tag prospect - add sent tag and remove queue tag
+        let tags = prospect.tags || [];
         if (!tags.includes('mystery-inquiry-sent')) {
           tags.push('mystery-inquiry-sent');
-          await supabase.from('prospects').update({ tags }).eq('id', prospect.id);
         }
+        // Remove queued tag since it's been sent
+        tags = tags.filter((t: string) => t !== 'mystery-shopper-queued');
+        await supabase.from('prospects').update({ tags }).eq('id', prospect.id);
 
         results.push({
           id: prospect.id,

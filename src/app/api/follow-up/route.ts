@@ -90,7 +90,7 @@ IMPORTANT: Output ONLY valid JSON:
   }
 }
 
-// Try to find alternative email using Hunter.io
+// Try to find alternative email using Hunter.io (with timeout)
 async function findAlternativeEmail(
   domain: string,
   prospectName: string
@@ -98,10 +98,15 @@ async function findAlternativeEmail(
   const hunterKey = process.env.HUNTER_API_KEY;
   if (!hunterKey || !domain) return null;
 
+  // Create abort controller for timeout
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
   try {
     // First try domain search to find emails
     const searchResponse = await fetch(
-      `https://api.hunter.io/v2/domain-search?domain=${domain}&api_key=${hunterKey}&limit=5`
+      `https://api.hunter.io/v2/domain-search?domain=${domain}&api_key=${hunterKey}&limit=5`,
+      { signal: controller.signal }
     );
     const searchData = await searchResponse.json();
 
@@ -131,7 +136,8 @@ async function findAlternativeEmail(
       const names = prospectName.split(' ');
       if (names.length >= 2) {
         const finderResponse = await fetch(
-          `https://api.hunter.io/v2/email-finder?domain=${domain}&first_name=${names[0]}&last_name=${names[names.length - 1]}&api_key=${hunterKey}`
+          `https://api.hunter.io/v2/email-finder?domain=${domain}&first_name=${names[0]}&last_name=${names[names.length - 1]}&api_key=${hunterKey}`,
+          { signal: controller.signal }
         );
         const finderData = await finderResponse.json();
         if (finderData.data?.email) return finderData.data.email;
@@ -140,8 +146,14 @@ async function findAlternativeEmail(
 
     return null;
   } catch (err) {
-    console.error('Hunter.io error:', err);
+    if (err instanceof Error && err.name === 'AbortError') {
+      console.warn('Hunter.io request timed out');
+    } else {
+      console.error('Hunter.io error:', err);
+    }
     return null;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

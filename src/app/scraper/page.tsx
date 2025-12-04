@@ -104,7 +104,19 @@ export default function ScraperPage() {
   };
 
   useEffect(() => {
-    fetchRecentRuns();
+    // Fetch initial data on mount
+    const loadInitialData = async () => {
+      try {
+        const res = await fetch('/api/scrape');
+        const data = await res.json();
+        if (data.runs) {
+          setRecentRuns(data.runs);
+        }
+      } catch (error) {
+        console.error('Failed to fetch runs:', error);
+      }
+    };
+    loadInitialData();
   }, []);
 
   const toggleScraper = (scraperId: string) => {
@@ -200,6 +212,7 @@ export default function ScraperPage() {
       }
     };
     checkRunningJobs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recentRuns]);
 
   return (

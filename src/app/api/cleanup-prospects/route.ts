@@ -165,8 +165,8 @@ export async function POST(request: NextRequest) {
     }
 
     let grokAnalysis = new Map<string, GrokAnalysis>();
-    let grokToDelete: string[] = [];
-    let grokUpdates: { id: string; tier: string; priority_score: number }[] = [];
+    const grokToDelete: string[] = [];
+    const grokUpdates: { id: string; tier: string; priority_score: number }[] = [];
 
     // If there are prospects to analyze with Grok
     if (quickAnalysis.toAnalyze.length > 0 && XAI_API_KEY) {
@@ -216,13 +216,25 @@ export async function POST(request: NextRequest) {
           .in('id', allToDelete);
       }
 
-      // Update tiers
+      // Update tiers - OPTIMIZED: batch updates using Promise.all
       const allUpdates = [...tierUpdates, ...grokUpdates];
-      for (const update of allUpdates) {
-        await supabase
-          .from('prospects')
-          .update({ tier: update.tier })
-          .eq('id', update.id);
+      if (allUpdates.length > 0) {
+        // Group updates by tier for more efficient batch operations
+        const byTier: Record<string, string[]> = {};
+        for (const update of allUpdates) {
+          if (!byTier[update.tier]) byTier[update.tier] = [];
+          byTier[update.tier].push(update.id);
+        }
+
+        // Batch update by tier (reduces from N queries to ~3 queries max)
+        await Promise.all(
+          Object.entries(byTier).map(([tier, ids]) =>
+            supabase
+              .from('prospects')
+              .update({ tier })
+              .in('id', ids)
+          )
+        );
       }
 
       return NextResponse.json({

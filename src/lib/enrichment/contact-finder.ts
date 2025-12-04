@@ -8,7 +8,8 @@
  * 4. Email pattern generation from found names + domain
  */
 
-import { extractDomain, findEmailsInText, scrapeWebsite } from './website-scraper';
+import { extractDomain, scrapeWebsite } from './website-scraper';
+import { logger } from '@/lib/logger';
 
 const FETCH_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -28,9 +29,9 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutM
     });
     clearTimeout(timeoutId);
     return response;
-  } catch (error) {
+  } catch {
     clearTimeout(timeoutId);
-    console.log('[ContactFinder] Fetch timeout/error for:', url.substring(0, 50));
+    logger.debug({ url: url.substring(0, 50) }, 'ContactFinder: Fetch timeout/error');
     return null;
   }
 }
@@ -105,25 +106,25 @@ function isValidPersonName(name: string): boolean {
  */
 async function searchForDecisionMaker(
   hotelName: string,
-  city: string | null
+  _city: string | null
 ): Promise<Array<{ name: string; title: string; source: string }>> {
   const results: Array<{ name: string; title: string; source: string }> = [];
 
   // Single optimized query
   const query = `"${hotelName}" "general manager" OR "hotel manager" OR "director"`;
-  console.log('[ContactFinder] Quick search for:', hotelName);
+  logger.debug({ hotelName }, 'ContactFinder: Quick search');
 
   try {
     const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
     const response = await fetchWithTimeout(searchUrl, { headers: FETCH_HEADERS }, 8000);
 
     if (!response || !response.ok) {
-      console.log('[ContactFinder] Search failed or timed out');
+      logger.debug('ContactFinder: Search failed or timed out');
       return results;
     }
 
     const html = await response.text();
-    console.log('[ContactFinder] Got HTML:', html.length, 'chars');
+    logger.debug({ htmlLength: html.length }, 'ContactFinder: Got HTML');
 
     // Extract names with titles from search results
     const namePatterns = [
@@ -143,13 +144,13 @@ async function searchForDecisionMaker(
           : match[2]?.trim();
 
         if (name && isValidPersonName(name)) {
-          console.log('[ContactFinder] Found:', name, '-', title);
+          logger.debug({ name, title }, 'ContactFinder: Found match');
           results.push({ name, title, source: 'google_search' });
         }
       }
     }
   } catch (error) {
-    console.error('[ContactFinder] Search error:', error);
+    logger.error({ error }, 'ContactFinder: Search error');
   }
 
   // Dedupe by name
@@ -169,11 +170,11 @@ async function searchForDecisionMaker(
 async function lookupWhois(domain: string): Promise<ContactFinderResult['whoisInfo']> {
   // Only try WHOIS for .com domains (most reliable)
   if (!domain.endsWith('.com')) {
-    console.log('[ContactFinder] Skipping WHOIS for non-.com domain');
+    logger.debug({ domain }, 'ContactFinder: Skipping WHOIS for non-.com domain');
     return null;
   }
 
-  console.log('[ContactFinder] Quick WHOIS lookup:', domain);
+  logger.debug({ domain }, 'ContactFinder: Quick WHOIS lookup');
 
   try {
     const rdapUrl = `https://rdap.verisign.com/com/v1/domain/${domain}`;
@@ -182,7 +183,7 @@ async function lookupWhois(domain: string): Promise<ContactFinderResult['whoisIn
     }, 5000);
 
     if (!response || !response.ok) {
-      console.log('[ContactFinder] WHOIS failed/timeout');
+      logger.debug({ domain }, 'ContactFinder: WHOIS failed/timeout');
       return null;
     }
 
@@ -204,13 +205,13 @@ async function lookupWhois(domain: string): Promise<ContactFinderResult['whoisIn
         }
 
         if (name || email) {
-          console.log('[ContactFinder] WHOIS found:', { name, email });
+          logger.debug({ name, email }, 'ContactFinder: WHOIS found');
           return { registrantName: name, registrantEmail: email, registrantOrg: org };
         }
       }
     }
-  } catch (error) {
-    console.log('[ContactFinder] WHOIS error');
+  } catch {
+    logger.debug({ domain }, 'ContactFinder: WHOIS error');
   }
 
   return null;
@@ -245,7 +246,7 @@ export async function findDecisionMakerContact(
   websiteUrl: string | null,
   city: string | null
 ): Promise<ContactFinderResult> {
-  console.log('[ContactFinder] Starting for:', hotelName, '| URL:', websiteUrl);
+  logger.info({ hotelName, websiteUrl }, 'ContactFinder: Starting');
 
   const result: ContactFinderResult = {
     decisionMaker: null,
@@ -259,20 +260,20 @@ export async function findDecisionMakerContact(
   // Step 1: Get domain
   if (websiteUrl) {
     result.domain = extractDomain(websiteUrl);
-    console.log('[ContactFinder] Extracted domain:', result.domain);
+    logger.debug({ domain: result.domain }, 'ContactFinder: Extracted domain');
   }
 
   // Step 2: Deep website scrape (already includes team/about/contact pages)
   if (websiteUrl) {
-    console.log('[ContactFinder] Step 2: Website scrape');
+    logger.debug('ContactFinder: Step 2 - Website scrape');
     const websiteData = await scrapeWebsite(websiteUrl);
     result.allEmails = [...websiteData.emails];
-    console.log('[ContactFinder] Found emails from website:', result.allEmails.length);
+    logger.debug({ count: result.allEmails.length }, 'ContactFinder: Found emails from website');
 
     // Add team members found on website (validate names)
     for (const member of websiteData.teamMembers) {
       if (isValidPersonName(member.name)) {
-        console.log('[ContactFinder] Valid team member from website:', member.name);
+        logger.debug({ name: member.name }, 'ContactFinder: Valid team member from website');
         result.allNames.push({
           name: member.name,
           title: member.title,

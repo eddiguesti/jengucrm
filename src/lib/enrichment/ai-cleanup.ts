@@ -10,6 +10,8 @@
 
 import { createServerClient } from '@/lib/supabase';
 import { JobPainPoints } from '@/lib/extract-job-pain-points';
+import { logger } from '@/lib/logger';
+import { executeWithCircuit } from '@/lib/scrapers/circuit-breaker';
 
 const XAI_API_KEY = process.env.XAI_API_KEY;
 
@@ -179,18 +181,21 @@ async function aiAnalyzeAndScoreProspects(prospects: ProspectForReview[]): Promi
   }).join('\n\n');
 
   try {
-    const response = await fetch('https://api.x.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${XAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'grok-3-mini',
-        messages: [
-          {
-            role: 'system',
-            content: `You are a B2B sales intelligence expert for Jengu, a hospitality tech startup.
+    // Use circuit breaker for Grok API
+    const response = await executeWithCircuit(
+      'grok-api',
+      () => fetch('https://api.x.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${XAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: 'grok-3-mini',
+          messages: [
+            {
+              role: 'system',
+              content: `You are a B2B sales intelligence expert for Jengu, a hospitality tech startup.
 
 ## ABOUT JENGU
 Jengu sells AI-powered guest communication software to hotels:
@@ -273,13 +278,16 @@ Return JSON array with one object per prospect:
             content: `Analyze and score these ${prospects.length} hotel prospects. Consider their job postings, pain points, and likelihood to buy our guest communication software:\n\n${prospectList}`
           }
         ],
-        temperature: 0.2,
-        max_tokens: 4000,
+          temperature: 0.2,
+          max_tokens: 4000,
+        }),
       }),
-    });
+      { throwOnOpen: true }
+    );
 
     if (!response.ok) {
-      console.error('Grok API error:', response.status, await response.text());
+      const errorText = await response.text();
+      logger.error({ status: response.status, error: errorText }, 'Grok API error');
       return prospects.map(p => ({
         prospect_id: p.id,
         action: 'keep' as const,
@@ -301,7 +309,7 @@ Return JSON array with one object per prospect:
     // Parse JSON from response
     const jsonMatch = content.match(/\[[\s\S]*\]/);
     if (!jsonMatch) {
-      console.error('Could not parse AI response:', content.slice(0, 200));
+      logger.error({ contentPreview: content.slice(0, 200) }, 'Could not parse AI response');
       return prospects.map(p => ({
         prospect_id: p.id,
         action: 'keep' as const,
@@ -346,7 +354,7 @@ Return JSON array with one object per prospect:
     })).filter(r => r.prospect_id);
 
   } catch (error) {
-    console.error('AI scoring error:', error);
+    logger.error({ error }, 'AI scoring error');
     return prospects.map(p => ({
       prospect_id: p.id,
       action: 'keep' as const,
@@ -402,7 +410,7 @@ export async function cleanupProspects(options: {
     .limit(limit);
 
   if (error || !prospects) {
-    console.error('Error fetching prospects:', error);
+    logger.error({ error }, 'Error fetching prospects');
     return { analyzed: 0, archived: 0, kept: 0, scored: 0, scoreBreakdown: { A: 0, B: 0, C: 0, D: 0, F: 0 }, results: [] };
   }
 
@@ -539,7 +547,7 @@ export async function scoreProspect(prospectId: string): Promise<AIScoreResult |
     .single();
 
   if (error || !prospect) {
-    console.error('Error fetching prospect:', error);
+    logger.error({ error, prospectId }, 'Error fetching prospect');
     return null;
   }
 

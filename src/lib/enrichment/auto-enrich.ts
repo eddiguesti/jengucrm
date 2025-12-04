@@ -1,6 +1,6 @@
 import { createServerClient } from '@/lib/supabase';
 import { enrichWithGooglePlaces } from './google-places';
-import { scrapeWebsite, extractDomain } from './website-scraper';
+import { scrapeWebsite } from './website-scraper';
 import { calculateScore, getTier } from './scoring';
 import { WebsiteData, EnrichmentData } from './types';
 import { findDecisionMakerEmail, findDecisionMaker } from './email-finder';
@@ -242,7 +242,7 @@ export async function autoEnrichProspect(prospectId: string): Promise<{
     );
 
     // Get best email from email finder
-    let email = prospect.email || emailFinderResult.validatedEmail;
+    const email = prospect.email || emailFinderResult.validatedEmail;
 
     // Get primary contact from email finder (uses priority-based role matching)
     const primaryContact = emailFinderResult.contactName

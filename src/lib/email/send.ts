@@ -24,12 +24,45 @@ import {
 import { getAvailableInbox, incrementInboxSendCount } from './inbox-tracker';
 import { formatEmailHtml, formatSimpleHtml } from './templates';
 import { logger } from '../logger';
+import { retry, retryable } from '../retry';
 import {
   canSendTo,
   parseBounceFromError,
   recordBounce,
   recordSuccessfulSend,
 } from './verification';
+
+/**
+ * Check if an SMTP/Graph error is retryable (transient)
+ */
+function isRetryableEmailError(error: unknown): boolean {
+  if (retryable.networkErrors(error)) return true;
+
+  const errorStr = String(error).toLowerCase();
+  // Transient SMTP errors
+  if (errorStr.includes('connection timeout') ||
+      errorStr.includes('connection refused') ||
+      errorStr.includes('socket hang up') ||
+      errorStr.includes('temporary') ||
+      errorStr.includes('try again') ||
+      errorStr.includes('service unavailable') ||
+      errorStr.includes('too many connections')) {
+    return true;
+  }
+
+  // Don't retry permanent failures (bounces, auth errors, etc.)
+  if (errorStr.includes('550 ') ||  // Permanent bounce
+      errorStr.includes('551 ') ||
+      errorStr.includes('552 ') ||
+      errorStr.includes('553 ') ||
+      errorStr.includes('554 ') ||
+      errorStr.includes('authentication') ||
+      errorStr.includes('invalid recipient')) {
+    return false;
+  }
+
+  return false;
+}
 
 /**
  * Create Microsoft Graph client
@@ -72,12 +105,23 @@ async function sendViaSmtp(
       },
     });
 
-    const result = await transporter.sendMail({
-      from: `${inbox.name} <${inbox.email}>`,
-      to: options.to,
-      subject: options.subject,
-      html: formatEmailHtml(options.body),
-    });
+    // Retry transient SMTP failures with exponential backoff
+    const result = await retry(
+      () => transporter.sendMail({
+        from: `${inbox.name} <${inbox.email}>`,
+        to: options.to,
+        subject: options.subject,
+        html: formatEmailHtml(options.body),
+      }),
+      {
+        attempts: 3,
+        delay: 2000,
+        isRetryable: isRetryableEmailError,
+        onRetry: (err, attempt) => {
+          logger.warn({ inbox: inbox.email, to: options.to, attempt, error: String(err) }, 'Retrying SMTP send');
+        },
+      }
+    );
 
     const deliveryTime = Date.now() - startTime;
     incrementInboxSendCount(inbox.email);
@@ -146,9 +190,20 @@ async function sendViaGraph(options: SendEmailOptions & { emailId?: string }): P
       },
     };
 
-    await client
-      .api(`/users/${AZURE_MAIL_FROM}/sendMail`)
-      .post({ message, saveToSentItems: true });
+    // Retry transient Graph API failures with exponential backoff
+    await retry(
+      () => client
+        .api(`/users/${AZURE_MAIL_FROM}/sendMail`)
+        .post({ message, saveToSentItems: true }),
+      {
+        attempts: 3,
+        delay: 2000,
+        isRetryable: isRetryableEmailError,
+        onRetry: (err, attempt) => {
+          logger.warn({ to: options.to, attempt, error: String(err) }, 'Retrying Graph send');
+        },
+      }
+    );
 
     const deliveryTime = Date.now() - startTime;
     const messageId = `graph-${Date.now()}`;

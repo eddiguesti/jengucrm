@@ -3,7 +3,7 @@
  * Database operations for campaigns
  */
 
-import { BaseRepository, PaginatedResult } from './base.repository';
+import { BaseRepository } from './base.repository';
 import { logger } from '@/lib/logger';
 
 export interface Campaign {
