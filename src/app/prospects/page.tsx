@@ -40,6 +40,16 @@ import {
   Clock,
   AlertCircle,
   Archive,
+  Linkedin,
+  Globe,
+  UserPlus,
+  Briefcase,
+  Target,
+  MessageSquare,
+  Flame,
+  Wrench,
+  Filter,
+  ChevronDown,
 } from 'lucide-react';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -59,6 +69,18 @@ type ViewMode = 'table' | 'cards' | 'grouped';
 
 // Readiness filter type
 type ReadinessFilter = ReadinessTier | 'all';
+
+// Smart view type
+type SmartView = 'all' | 'ready_to_contact' | 'awaiting_reply' | 'hot_leads' | 'needs_work';
+
+// Source filter type
+type SourceFilter = 'all' | 'sales_navigator' | 'google_maps' | 'manual' | 'job_board';
+
+// Email status filter type
+type EmailStatusFilter = 'all' | 'has_email' | 'no_email';
+
+// Contact status filter type
+type ContactStatusFilter = 'all' | 'not_contacted' | 'contacted' | 'replied';
 
 function getTierBadge(tier: string) {
   switch (tier) {
@@ -185,6 +207,13 @@ export default function ProspectsPage() {
   const [readinessFilter, setReadinessFilter] = useState<ReadinessFilter>('all');
   const [viewMode, setViewMode] = useState<ViewMode>('table');
   const [showAddDialog, setShowAddDialog] = useState(false);
+
+  // New filter states
+  const [smartView, setSmartView] = useState<SmartView>('all');
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
+  const [emailStatusFilter, setEmailStatusFilter] = useState<EmailStatusFilter>('all');
+  const [contactStatusFilter, setContactStatusFilter] = useState<ContactStatusFilter>('all');
+
   const { theme } = useTheme();
   const isLight = theme === 'light';
 
@@ -195,6 +224,10 @@ export default function ProspectsPage() {
       const params = new URLSearchParams();
       if (tierFilter) params.set('tier', tierFilter);
       if (searchQuery) params.set('search', searchQuery);
+      if (smartView !== 'all') params.set('smart_view', smartView);
+      if (sourceFilter !== 'all') params.set('source', sourceFilter);
+      if (emailStatusFilter !== 'all') params.set('email_status', emailStatusFilter);
+      if (contactStatusFilter !== 'all') params.set('contact_status', contactStatusFilter);
 
       const response = await fetch(`/api/prospects?${params.toString()}`);
       if (!response.ok) throw new Error('Failed to fetch prospects');
@@ -208,9 +241,32 @@ export default function ProspectsPage() {
     }
   };
 
+  // Clear other filters when smart view is selected
+  const handleSmartViewChange = (view: SmartView) => {
+    setSmartView(view);
+    if (view !== 'all') {
+      // Smart views are pre-built combinations, clear individual filters
+      setSourceFilter('all');
+      setEmailStatusFilter('all');
+      setContactStatusFilter('all');
+      setReadinessFilter('all');
+    }
+  };
+
+  // Clear smart view when individual filters are used
+  const handleFilterChange = (
+    filterType: 'source' | 'email' | 'contact',
+    value: string
+  ) => {
+    setSmartView('all'); // Clear smart view when using individual filters
+    if (filterType === 'source') setSourceFilter(value as SourceFilter);
+    if (filterType === 'email') setEmailStatusFilter(value as EmailStatusFilter);
+    if (filterType === 'contact') setContactStatusFilter(value as ContactStatusFilter);
+  };
+
   useEffect(() => {
     fetchProspects();
-  }, [tierFilter]);
+  }, [tierFilter, smartView, sourceFilter, emailStatusFilter, contactStatusFilter]);
 
   // Debounced search
   useEffect(() => {
@@ -312,6 +368,58 @@ export default function ProspectsPage() {
           </CardContent>
         </Card>
 
+        {/* Smart Views - Quick Filter Presets */}
+        <Card
+          className={cn(
+            "border",
+            isLight
+              ? "bg-white border-[#efe7dc] shadow-[var(--shadow-soft)]"
+              : "bg-zinc-900 border-zinc-800"
+          )}
+        >
+          <CardContent className="p-3 md:p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Target className={cn("h-4 w-4", isLight ? "text-slate-500" : "text-zinc-400")} />
+              <span className={cn("text-xs font-medium", isLight ? "text-slate-600" : "text-zinc-400")}>
+                Smart Views
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { key: 'all' as const, label: 'All Prospects', icon: Globe, color: 'zinc' },
+                { key: 'ready_to_contact' as const, label: 'Ready to Contact', icon: CheckCircle2, color: 'emerald' },
+                { key: 'awaiting_reply' as const, label: 'Awaiting Reply', icon: MessageSquare, color: 'blue' },
+                { key: 'hot_leads' as const, label: 'Hot Leads', icon: Flame, color: 'red' },
+                { key: 'needs_work' as const, label: 'Needs Work', icon: Wrench, color: 'amber' },
+              ].map((view) => {
+                const Icon = view.icon;
+                const isActive = smartView === view.key;
+                const colorClasses = {
+                  zinc: isActive ? 'bg-zinc-600 text-white' : isLight ? 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700',
+                  emerald: isActive ? 'bg-emerald-600 text-white' : isLight ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30',
+                  blue: isActive ? 'bg-blue-600 text-white' : isLight ? 'bg-blue-50 text-blue-700 hover:bg-blue-100' : 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30',
+                  red: isActive ? 'bg-red-600 text-white' : isLight ? 'bg-red-50 text-red-700 hover:bg-red-100' : 'bg-red-500/20 text-red-400 hover:bg-red-500/30',
+                  amber: isActive ? 'bg-amber-600 text-white' : isLight ? 'bg-amber-50 text-amber-700 hover:bg-amber-100' : 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30',
+                };
+                return (
+                  <button
+                    key={view.key}
+                    onClick={() => handleSmartViewChange(view.key)}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all",
+                      colorClasses[view.color as keyof typeof colorClasses]
+                    )}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">{view.label}</span>
+                    <span className="sm:hidden">{view.label.split(' ')[0]}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Filters & View Toggle */}
         <Card
           className={cn(
@@ -321,128 +429,255 @@ export default function ProspectsPage() {
           )}
         >
           <CardContent className="p-3 md:p-4">
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4">
-              {/* Search */}
-              <div className="relative flex-1">
-                <Search
-                  className={cn(
-                    "absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2",
-                    isLight ? "text-slate-400" : "text-zinc-500"
-                  )}
-                />
-                <Input
-                  placeholder="Search prospects..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className={cn(
-                    "pl-9 h-9 text-sm",
-                    isLight
-                      ? "bg-white border-[#efe7dc] text-slate-900 placeholder:text-slate-400"
-                      : "bg-zinc-800 border-zinc-700"
-                  )}
-                />
-              </div>
-
-              {/* Tier Filters - scrollable on mobile */}
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
-                <Button
-                  variant={tierFilter === null ? 'secondary' : 'ghost'}
-                  size="sm"
-                  onClick={() => setTierFilter(null)}
-                  className={cn(
-                    "h-8 px-2.5 text-xs flex-shrink-0",
-                    tierFilter === null
-                      ? isLight
-                        ? "bg-slate-900 text-white hover:bg-slate-800"
-                        : ""
-                      : isLight
-                        ? "text-slate-600 hover:bg-slate-100"
-                        : "text-zinc-300"
-                  )}
-                >
-                  All
-                </Button>
-                <Button
-                  variant={tierFilter === 'hot' ? 'secondary' : 'ghost'}
-                  size="sm"
-                  onClick={() => setTierFilter('hot')}
-                  className={cn(
-                    "h-8 px-2.5 text-xs flex-shrink-0",
-                    isLight ? "text-red-500 hover:bg-red-50" : "text-red-400"
-                  )}
-                >
-                  Hot
-                </Button>
-                <Button
-                  variant={tierFilter === 'warm' ? 'secondary' : 'ghost'}
-                  size="sm"
-                  onClick={() => setTierFilter('warm')}
-                  className={cn(
-                    "h-8 px-2.5 text-xs flex-shrink-0",
-                    isLight ? "text-amber-500 hover:bg-amber-50" : "text-amber-400"
-                  )}
-                >
-                  Warm
-                </Button>
-                <Button
-                  variant={tierFilter === 'cold' ? 'secondary' : 'ghost'}
-                  size="sm"
-                  onClick={() => setTierFilter('cold')}
-                  className={cn(
-                    "h-8 px-2.5 text-xs flex-shrink-0",
-                    isLight ? "text-slate-500 hover:bg-slate-50" : "text-zinc-400"
-                  )}
-                >
-                  Cold
-                </Button>
-              </div>
-
-              {/* View Mode Toggle & Refresh */}
-              <div className="flex items-center gap-2 sm:gap-3">
-                <div
-                  className={cn(
-                    "flex items-center gap-1 rounded-md p-0.5",
-                    isLight ? "border border-[#efe7dc] bg-white" : "border border-zinc-700"
-                  )}
-                >
-                  <Button
-                    variant={viewMode === 'table' ? 'secondary' : 'ghost'}
-                    size="sm"
+            <div className="flex flex-col gap-3">
+              {/* Row 1: Search + View Toggle + Refresh */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                {/* Search */}
+                <div className="relative flex-1">
+                  <Search
                     className={cn(
-                      "h-7 px-2",
-                      isLight && viewMode !== 'table' ? "text-slate-600 hover:bg-slate-100" : ""
+                      "absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2",
+                      isLight ? "text-slate-400" : "text-zinc-500"
                     )}
-                    onClick={() => setViewMode('table')}
-                  >
-                    <List className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant={viewMode === 'cards' ? 'secondary' : 'ghost'}
-                    size="sm"
+                  />
+                  <Input
+                    placeholder="Search prospects, contacts..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
                     className={cn(
-                      "h-7 px-2",
-                      isLight && viewMode !== 'cards' ? "text-slate-600 hover:bg-slate-100" : ""
+                      "pl-9 h-9 text-sm",
+                      isLight
+                        ? "bg-white border-[#efe7dc] text-slate-900 placeholder:text-slate-400"
+                        : "bg-zinc-800 border-zinc-700"
                     )}
-                    onClick={() => setViewMode('cards')}
-                  >
-                    <LayoutGrid className="h-4 w-4" />
-                  </Button>
+                  />
                 </div>
 
-                {/* Refresh */}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className={cn(
-                    "h-8 px-2.5",
-                    isLight ? "border-[#efe7dc] text-slate-700 hover:bg-slate-50" : "border-zinc-700"
-                  )}
-                  onClick={fetchProspects}
-                >
-                  <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-                  <span className="hidden sm:inline ml-2">Refresh</span>
-                </Button>
+                {/* View Mode Toggle & Refresh */}
+                <div className="flex items-center gap-2">
+                  <div
+                    className={cn(
+                      "flex items-center gap-1 rounded-md p-0.5",
+                      isLight ? "border border-[#efe7dc] bg-white" : "border border-zinc-700"
+                    )}
+                  >
+                    <Button
+                      variant={viewMode === 'table' ? 'secondary' : 'ghost'}
+                      size="sm"
+                      className={cn(
+                        "h-7 px-2",
+                        isLight && viewMode !== 'table' ? "text-slate-600 hover:bg-slate-100" : ""
+                      )}
+                      onClick={() => setViewMode('table')}
+                    >
+                      <List className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant={viewMode === 'cards' ? 'secondary' : 'ghost'}
+                      size="sm"
+                      className={cn(
+                        "h-7 px-2",
+                        isLight && viewMode !== 'cards' ? "text-slate-600 hover:bg-slate-100" : ""
+                      )}
+                      onClick={() => setViewMode('cards')}
+                    >
+                      <LayoutGrid className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className={cn(
+                      "h-8 px-2.5",
+                      isLight ? "border-[#efe7dc] text-slate-700 hover:bg-slate-50" : "border-zinc-700"
+                    )}
+                    onClick={fetchProspects}
+                  >
+                    <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                  </Button>
+                </div>
               </div>
+
+              {/* Row 2: Filter Dropdowns */}
+              <div className="flex flex-wrap items-center gap-2">
+                <Filter className={cn("h-4 w-4", isLight ? "text-slate-400" : "text-zinc-500")} />
+
+                {/* Source Filter */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className={cn(
+                        "h-8 text-xs gap-1",
+                        sourceFilter !== 'all'
+                          ? "bg-blue-500/10 border-blue-500/30 text-blue-500"
+                          : isLight ? "border-[#efe7dc] text-slate-600" : "border-zinc-700 text-zinc-400"
+                      )}
+                    >
+                      {sourceFilter === 'sales_navigator' && <Linkedin className="h-3.5 w-3.5" />}
+                      {sourceFilter === 'google_maps' && <Globe className="h-3.5 w-3.5" />}
+                      {sourceFilter === 'manual' && <UserPlus className="h-3.5 w-3.5" />}
+                      {sourceFilter === 'job_board' && <Briefcase className="h-3.5 w-3.5" />}
+                      {sourceFilter === 'all' ? 'Source' : sourceFilter.replace('_', ' ')}
+                      <ChevronDown className="h-3 w-3 opacity-50" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent className={cn(isLight ? "bg-white border-[#efe7dc]" : "bg-zinc-900 border-zinc-800")}>
+                    <DropdownMenuItem onClick={() => handleFilterChange('source', 'all')} className={cn(isLight ? "text-slate-700" : "text-zinc-300")}>
+                      <Globe className="h-4 w-4 mr-2" /> All Sources
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleFilterChange('source', 'sales_navigator')} className={cn(isLight ? "text-slate-700" : "text-zinc-300")}>
+                      <Linkedin className="h-4 w-4 mr-2 text-blue-500" /> Sales Navigator
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleFilterChange('source', 'google_maps')} className={cn(isLight ? "text-slate-700" : "text-zinc-300")}>
+                      <Globe className="h-4 w-4 mr-2 text-emerald-500" /> Google Maps
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleFilterChange('source', 'manual')} className={cn(isLight ? "text-slate-700" : "text-zinc-300")}>
+                      <UserPlus className="h-4 w-4 mr-2 text-purple-500" /> Manual Entry
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleFilterChange('source', 'job_board')} className={cn(isLight ? "text-slate-700" : "text-zinc-300")}>
+                      <Briefcase className="h-4 w-4 mr-2 text-amber-500" /> Job Boards
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                {/* Email Status Filter */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className={cn(
+                        "h-8 text-xs gap-1",
+                        emailStatusFilter !== 'all'
+                          ? emailStatusFilter === 'has_email' ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-500" : "bg-amber-500/10 border-amber-500/30 text-amber-500"
+                          : isLight ? "border-[#efe7dc] text-slate-600" : "border-zinc-700 text-zinc-400"
+                      )}
+                    >
+                      <Mail className="h-3.5 w-3.5" />
+                      {emailStatusFilter === 'all' ? 'Email' : emailStatusFilter === 'has_email' ? 'Has Email' : 'Needs Email'}
+                      <ChevronDown className="h-3 w-3 opacity-50" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent className={cn(isLight ? "bg-white border-[#efe7dc]" : "bg-zinc-900 border-zinc-800")}>
+                    <DropdownMenuItem onClick={() => handleFilterChange('email', 'all')} className={cn(isLight ? "text-slate-700" : "text-zinc-300")}>
+                      <Mail className="h-4 w-4 mr-2" /> All
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleFilterChange('email', 'has_email')} className={cn(isLight ? "text-slate-700" : "text-zinc-300")}>
+                      <CheckCircle2 className="h-4 w-4 mr-2 text-emerald-500" /> Has Email
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleFilterChange('email', 'no_email')} className={cn(isLight ? "text-slate-700" : "text-zinc-300")}>
+                      <AlertCircle className="h-4 w-4 mr-2 text-amber-500" /> Needs Email
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                {/* Contact Status Filter */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className={cn(
+                        "h-8 text-xs gap-1",
+                        contactStatusFilter !== 'all'
+                          ? contactStatusFilter === 'replied' ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-500" : "bg-blue-500/10 border-blue-500/30 text-blue-500"
+                          : isLight ? "border-[#efe7dc] text-slate-600" : "border-zinc-700 text-zinc-400"
+                      )}
+                    >
+                      <MessageSquare className="h-3.5 w-3.5" />
+                      {contactStatusFilter === 'all' ? 'Contact Status' : contactStatusFilter === 'not_contacted' ? 'Not Contacted' : contactStatusFilter === 'contacted' ? 'Contacted' : 'Replied'}
+                      <ChevronDown className="h-3 w-3 opacity-50" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent className={cn(isLight ? "bg-white border-[#efe7dc]" : "bg-zinc-900 border-zinc-800")}>
+                    <DropdownMenuItem onClick={() => handleFilterChange('contact', 'all')} className={cn(isLight ? "text-slate-700" : "text-zinc-300")}>
+                      <MessageSquare className="h-4 w-4 mr-2" /> All
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleFilterChange('contact', 'not_contacted')} className={cn(isLight ? "text-slate-700" : "text-zinc-300")}>
+                      <Clock className="h-4 w-4 mr-2 text-zinc-500" /> Not Contacted
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleFilterChange('contact', 'contacted')} className={cn(isLight ? "text-slate-700" : "text-zinc-300")}>
+                      <Mail className="h-4 w-4 mr-2 text-blue-500" /> Contacted
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleFilterChange('contact', 'replied')} className={cn(isLight ? "text-slate-700" : "text-zinc-300")}>
+                      <CheckCircle2 className="h-4 w-4 mr-2 text-emerald-500" /> Replied
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                {/* Tier Filters */}
+                <div className="flex items-center gap-1 ml-auto">
+                  {[
+                    { key: null, label: 'All' },
+                    { key: 'hot' as const, label: 'Hot', color: 'red' },
+                    { key: 'warm' as const, label: 'Warm', color: 'amber' },
+                    { key: 'cold' as const, label: 'Cold', color: 'zinc' },
+                  ].map((tier) => (
+                    <Button
+                      key={tier.key || 'all'}
+                      variant={tierFilter === tier.key ? 'secondary' : 'ghost'}
+                      size="sm"
+                      onClick={() => setTierFilter(tier.key)}
+                      className={cn(
+                        "h-7 px-2 text-xs",
+                        tierFilter === tier.key
+                          ? isLight ? "bg-slate-900 text-white" : ""
+                          : tier.color === 'red' ? (isLight ? "text-red-500 hover:bg-red-50" : "text-red-400")
+                          : tier.color === 'amber' ? (isLight ? "text-amber-500 hover:bg-amber-50" : "text-amber-400")
+                          : tier.color === 'zinc' ? (isLight ? "text-slate-500 hover:bg-slate-50" : "text-zinc-400")
+                          : (isLight ? "text-slate-600 hover:bg-slate-100" : "text-zinc-300")
+                      )}
+                    >
+                      {tier.label}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Active Filters Summary */}
+              {(sourceFilter !== 'all' || emailStatusFilter !== 'all' || contactStatusFilter !== 'all' || smartView !== 'all') && (
+                <div className="flex items-center gap-2 pt-2 border-t border-zinc-800">
+                  <span className={cn("text-xs", isLight ? "text-slate-500" : "text-zinc-500")}>Active:</span>
+                  <div className="flex flex-wrap gap-1">
+                    {smartView !== 'all' && (
+                      <Badge className="bg-purple-500/20 text-purple-400 text-xs">
+                        {smartView.replace(/_/g, ' ')}
+                      </Badge>
+                    )}
+                    {sourceFilter !== 'all' && (
+                      <Badge className="bg-blue-500/20 text-blue-400 text-xs">
+                        {sourceFilter.replace(/_/g, ' ')}
+                      </Badge>
+                    )}
+                    {emailStatusFilter !== 'all' && (
+                      <Badge className={cn("text-xs", emailStatusFilter === 'has_email' ? "bg-emerald-500/20 text-emerald-400" : "bg-amber-500/20 text-amber-400")}>
+                        {emailStatusFilter.replace(/_/g, ' ')}
+                      </Badge>
+                    )}
+                    {contactStatusFilter !== 'all' && (
+                      <Badge className="bg-blue-500/20 text-blue-400 text-xs">
+                        {contactStatusFilter.replace(/_/g, ' ')}
+                      </Badge>
+                    )}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs text-zinc-500 hover:text-zinc-300"
+                    onClick={() => {
+                      setSmartView('all');
+                      setSourceFilter('all');
+                      setEmailStatusFilter('all');
+                      setContactStatusFilter('all');
+                      setTierFilter(null);
+                    }}
+                  >
+                    Clear all
+                  </Button>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>

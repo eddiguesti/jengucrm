@@ -56,11 +56,30 @@ export const updateProspectSchema = createProspectSchema.partial().extend({
   archive_reason: z.string().max(500).optional(),
 });
 
+export const prospectSourceSchema = z.enum([
+  'sales_navigator', 'google_maps', 'manual', 'job_board', 'referral'
+]);
+
+export const emailStatusFilterSchema = z.enum(['has_email', 'no_email']);
+
+export const contactStatusFilterSchema = z.enum(['not_contacted', 'contacted', 'replied']);
+
+export const smartViewSchema = z.enum([
+  'ready_to_contact',  // Has email + researched + not contacted
+  'awaiting_reply',    // Contacted but no reply
+  'hot_leads',         // Replied or engaged
+  'needs_work',        // No email or no research
+]);
+
 export const prospectFiltersSchema = z.object({
   tier: prospectTierSchema.optional(),
   stage: prospectStageSchema.optional(),
   search: z.string().max(255).optional(),
   tags: z.string().max(50).optional(),
+  source: prospectSourceSchema.optional(),
+  email_status: emailStatusFilterSchema.optional(),
+  contact_status: contactStatusFilterSchema.optional(),
+  smart_view: smartViewSchema.optional(),
   ...paginationSchema.shape,
 });
 

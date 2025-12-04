@@ -16,9 +16,11 @@ export async function GET(request: NextRequest) {
     let query = supabase
       .from('prospects')
       .select('*', { count: 'exact' })
+      .eq('archived', false)
       .order('score', { ascending: false })
       .range(filters.offset, filters.offset + filters.limit - 1);
 
+    // Basic filters
     if (filters.tier) {
       query = query.eq('tier', filters.tier);
     }
@@ -26,10 +28,58 @@ export async function GET(request: NextRequest) {
       query = query.eq('stage', filters.stage);
     }
     if (filters.search) {
-      query = query.or(`name.ilike.%${filters.search}%,city.ilike.%${filters.search}%`);
+      query = query.or(`name.ilike.%${filters.search}%,city.ilike.%${filters.search}%,contact_name.ilike.%${filters.search}%`);
     }
     if (filters.tags) {
       query = query.contains('tags', [filters.tags]);
+    }
+
+    // Source filter - handles different source naming conventions
+    if (filters.source) {
+      if (filters.source === 'sales_navigator') {
+        query = query.or('source.eq.sales_navigator,source.eq.linkedin,tags.cs.{sales_navigator}');
+      } else if (filters.source === 'google_maps') {
+        query = query.or('source.eq.google_maps,source.eq.google,source.eq.scraper');
+      } else if (filters.source === 'job_board') {
+        query = query.or('source.eq.job_board,source.eq.hosco,source.eq.hcareers,source.eq.indeed');
+      } else {
+        query = query.eq('source', filters.source);
+      }
+    }
+
+    // Email status filter
+    if (filters.email_status === 'has_email') {
+      query = query.not('email', 'is', null).neq('email', '');
+    } else if (filters.email_status === 'no_email') {
+      query = query.or('email.is.null,email.eq.');
+    }
+
+    // Contact status filter - check stage for contact history
+    if (filters.contact_status === 'not_contacted') {
+      query = query.in('stage', ['new', 'researching']);
+    } else if (filters.contact_status === 'contacted') {
+      query = query.in('stage', ['outreach', 'contacted']);
+    } else if (filters.contact_status === 'replied') {
+      query = query.in('stage', ['engaged', 'meeting', 'proposal', 'won']);
+    }
+
+    // Smart view filters (pre-built combinations)
+    if (filters.smart_view === 'ready_to_contact') {
+      // Has email + has research + not contacted yet
+      query = query
+        .not('email', 'is', null)
+        .neq('email', '')
+        .not('grok_research', 'is', null)
+        .in('stage', ['new', 'researching']);
+    } else if (filters.smart_view === 'awaiting_reply') {
+      // Contacted but waiting for response
+      query = query.in('stage', ['outreach', 'contacted']);
+    } else if (filters.smart_view === 'hot_leads') {
+      // Replied or showing engagement
+      query = query.or('stage.in.(engaged,meeting,proposal),tier.eq.hot');
+    } else if (filters.smart_view === 'needs_work') {
+      // No email OR no research
+      query = query.or('email.is.null,email.eq.,grok_research.is.null');
     }
 
     const { data, error, count } = await query;
