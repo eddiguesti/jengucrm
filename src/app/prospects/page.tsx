@@ -50,6 +50,8 @@ import {
   Wrench,
   Filter,
   ChevronDown,
+  ArrowUpDown,
+  ChevronUp,
 } from 'lucide-react';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -81,6 +83,10 @@ type EmailStatusFilter = 'all' | 'has_email' | 'no_email';
 
 // Contact status filter type
 type ContactStatusFilter = 'all' | 'not_contacted' | 'contacted' | 'replied';
+
+// Sort column type
+type SortColumn = 'readiness' | 'name' | 'city' | 'rating' | 'tier' | 'stage' | 'score' | 'created_at';
+type SortDirection = 'asc' | 'desc';
 
 function getTierBadge(tier: string) {
   switch (tier) {
@@ -214,6 +220,10 @@ export default function ProspectsPage() {
   const [emailStatusFilter, setEmailStatusFilter] = useState<EmailStatusFilter>('all');
   const [contactStatusFilter, setContactStatusFilter] = useState<ContactStatusFilter>('all');
 
+  // Sorting state
+  const [sortColumn, setSortColumn] = useState<SortColumn>('score');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+
   const { theme } = useTheme();
   const isLight = theme === 'light';
 
@@ -281,15 +291,78 @@ export default function ProspectsPage() {
     return getReadinessSummary(prospects);
   }, [prospects]);
 
-  // Filter prospects by readiness
+  // Filter and sort prospects
   const filteredProspects = useMemo(() => {
-    if (readinessFilter === 'all') return prospects;
+    let filtered = prospects;
 
-    return prospects.filter((p) => {
-      const { tier } = calculateReadiness(p);
-      return tier === readinessFilter;
+    // Apply readiness filter
+    if (readinessFilter !== 'all') {
+      filtered = filtered.filter((p) => {
+        const { tier } = calculateReadiness(p);
+        return tier === readinessFilter;
+      });
+    }
+
+    // Apply sorting
+    const sorted = [...filtered].sort((a, b) => {
+      let aVal: number | string = 0;
+      let bVal: number | string = 0;
+
+      switch (sortColumn) {
+        case 'readiness':
+          aVal = calculateReadiness(a).total;
+          bVal = calculateReadiness(b).total;
+          break;
+        case 'name':
+          aVal = a.name?.toLowerCase() || '';
+          bVal = b.name?.toLowerCase() || '';
+          break;
+        case 'city':
+          aVal = a.city?.toLowerCase() || '';
+          bVal = b.city?.toLowerCase() || '';
+          break;
+        case 'rating':
+          aVal = a.google_rating || 0;
+          bVal = b.google_rating || 0;
+          break;
+        case 'tier':
+          const tierOrder = { hot: 3, warm: 2, cold: 1 };
+          aVal = tierOrder[a.tier as keyof typeof tierOrder] || 0;
+          bVal = tierOrder[b.tier as keyof typeof tierOrder] || 0;
+          break;
+        case 'stage':
+          const stageOrder = { new: 1, researching: 2, outreach: 3, contacted: 4, engaged: 5, meeting: 6, proposal: 7, won: 8, lost: 9 };
+          aVal = stageOrder[a.stage as keyof typeof stageOrder] || 0;
+          bVal = stageOrder[b.stage as keyof typeof stageOrder] || 0;
+          break;
+        case 'score':
+          aVal = a.score || 0;
+          bVal = b.score || 0;
+          break;
+        case 'created_at':
+          aVal = new Date(a.created_at || 0).getTime();
+          bVal = new Date(b.created_at || 0).getTime();
+          break;
+      }
+
+      if (typeof aVal === 'string' && typeof bVal === 'string') {
+        return sortDirection === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      }
+      return sortDirection === 'asc' ? (aVal as number) - (bVal as number) : (bVal as number) - (aVal as number);
     });
-  }, [prospects, readinessFilter]);
+
+    return sorted;
+  }, [prospects, readinessFilter, sortColumn, sortDirection]);
+
+  // Handle column sort
+  const handleSort = (column: SortColumn) => {
+    if (sortColumn === column) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(column);
+      setSortDirection('desc');
+    }
+  };
 
   // Group prospects by readiness for grouped view
   const groupedProspects = useMemo(() => {
@@ -778,13 +851,97 @@ export default function ProspectsPage() {
             <Table>
               <TableHeader>
                 <TableRow className={cn(isLight ? "border-[#efe7dc] hover:bg-transparent" : "border-zinc-800 hover:bg-transparent")}>
-                  <TableHead className={cn("w-12 text-xs", isLight ? "text-slate-500" : "text-zinc-400")}>Ready</TableHead>
-                  <TableHead className={cn("text-xs", isLight ? "text-slate-500" : "text-zinc-400")}>Property</TableHead>
-                  <TableHead className={cn("hidden md:table-cell text-xs", isLight ? "text-slate-500" : "text-zinc-400")}>Location</TableHead>
-                  <TableHead className={cn("hidden lg:table-cell text-xs", isLight ? "text-slate-500" : "text-zinc-400")}>Rating</TableHead>
-                  <TableHead className={cn("hidden sm:table-cell text-xs", isLight ? "text-slate-500" : "text-zinc-400")}>Tier</TableHead>
-                  <TableHead className={cn("hidden lg:table-cell text-xs", isLight ? "text-slate-500" : "text-zinc-400")}>Stage</TableHead>
-                  <TableHead className={cn("hidden md:table-cell text-xs", isLight ? "text-slate-500" : "text-zinc-400")}>Score</TableHead>
+                  <TableHead
+                    className={cn("w-12 text-xs cursor-pointer select-none hover:text-white transition-colors", isLight ? "text-slate-500 hover:text-slate-900" : "text-zinc-400")}
+                    onClick={() => handleSort('readiness')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Ready
+                      {sortColumn === 'readiness' ? (
+                        <ChevronUp className={cn("h-3 w-3", sortDirection === 'desc' && "rotate-180")} />
+                      ) : (
+                        <ArrowUpDown className="h-3 w-3 opacity-50" />
+                      )}
+                    </div>
+                  </TableHead>
+                  <TableHead
+                    className={cn("text-xs cursor-pointer select-none hover:text-white transition-colors", isLight ? "text-slate-500 hover:text-slate-900" : "text-zinc-400")}
+                    onClick={() => handleSort('name')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Property
+                      {sortColumn === 'name' ? (
+                        <ChevronUp className={cn("h-3 w-3", sortDirection === 'desc' && "rotate-180")} />
+                      ) : (
+                        <ArrowUpDown className="h-3 w-3 opacity-50" />
+                      )}
+                    </div>
+                  </TableHead>
+                  <TableHead
+                    className={cn("hidden md:table-cell text-xs cursor-pointer select-none hover:text-white transition-colors", isLight ? "text-slate-500 hover:text-slate-900" : "text-zinc-400")}
+                    onClick={() => handleSort('city')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Location
+                      {sortColumn === 'city' ? (
+                        <ChevronUp className={cn("h-3 w-3", sortDirection === 'desc' && "rotate-180")} />
+                      ) : (
+                        <ArrowUpDown className="h-3 w-3 opacity-50" />
+                      )}
+                    </div>
+                  </TableHead>
+                  <TableHead
+                    className={cn("hidden lg:table-cell text-xs cursor-pointer select-none hover:text-white transition-colors", isLight ? "text-slate-500 hover:text-slate-900" : "text-zinc-400")}
+                    onClick={() => handleSort('rating')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Rating
+                      {sortColumn === 'rating' ? (
+                        <ChevronUp className={cn("h-3 w-3", sortDirection === 'desc' && "rotate-180")} />
+                      ) : (
+                        <ArrowUpDown className="h-3 w-3 opacity-50" />
+                      )}
+                    </div>
+                  </TableHead>
+                  <TableHead
+                    className={cn("hidden sm:table-cell text-xs cursor-pointer select-none hover:text-white transition-colors", isLight ? "text-slate-500 hover:text-slate-900" : "text-zinc-400")}
+                    onClick={() => handleSort('tier')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Tier
+                      {sortColumn === 'tier' ? (
+                        <ChevronUp className={cn("h-3 w-3", sortDirection === 'desc' && "rotate-180")} />
+                      ) : (
+                        <ArrowUpDown className="h-3 w-3 opacity-50" />
+                      )}
+                    </div>
+                  </TableHead>
+                  <TableHead
+                    className={cn("hidden lg:table-cell text-xs cursor-pointer select-none hover:text-white transition-colors", isLight ? "text-slate-500 hover:text-slate-900" : "text-zinc-400")}
+                    onClick={() => handleSort('stage')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Stage
+                      {sortColumn === 'stage' ? (
+                        <ChevronUp className={cn("h-3 w-3", sortDirection === 'desc' && "rotate-180")} />
+                      ) : (
+                        <ArrowUpDown className="h-3 w-3 opacity-50" />
+                      )}
+                    </div>
+                  </TableHead>
+                  <TableHead
+                    className={cn("hidden md:table-cell text-xs cursor-pointer select-none hover:text-white transition-colors", isLight ? "text-slate-500 hover:text-slate-900" : "text-zinc-400")}
+                    onClick={() => handleSort('score')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Score
+                      {sortColumn === 'score' ? (
+                        <ChevronUp className={cn("h-3 w-3", sortDirection === 'desc' && "rotate-180")} />
+                      ) : (
+                        <ArrowUpDown className="h-3 w-3 opacity-50" />
+                      )}
+                    </div>
+                  </TableHead>
                   <TableHead className={cn("text-right text-xs", isLight ? "text-slate-500" : "text-zinc-400")}>Actions</TableHead>
                 </TableRow>
               </TableHeader>
