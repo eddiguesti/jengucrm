@@ -29,7 +29,8 @@ export type ActivityType =
   | 'meeting'
   | 'note'
   | 'stage_change'
-  | 'linkedin_message';
+  | 'linkedin_message'
+  | 'mystery_shopper';
 
 export interface Prospect {
   id: string;
