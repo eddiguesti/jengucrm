@@ -491,9 +491,10 @@ export default function ProspectDetailPage() {
 
             {/* Tabs */}
             <Tabs defaultValue="emails" className="space-y-3 md:space-y-4">
-              <TabsList className="bg-zinc-900 border border-zinc-800 w-full sm:w-auto">
+              <TabsList className="bg-zinc-900 border border-zinc-800 w-full sm:w-auto flex-wrap">
                 <TabsTrigger value="emails" className="text-xs md:text-sm flex-1 sm:flex-none">Emails ({emails.length})</TabsTrigger>
                 <TabsTrigger value="activity" className="text-xs md:text-sm flex-1 sm:flex-none">Activity ({activities.length})</TabsTrigger>
+                <TabsTrigger value="research" className="text-xs md:text-sm flex-1 sm:flex-none">Research</TabsTrigger>
                 <TabsTrigger value="notes" className="text-xs md:text-sm flex-1 sm:flex-none">Notes</TabsTrigger>
               </TabsList>
 
@@ -645,7 +646,7 @@ export default function ProspectDetailPage() {
                             <div className="flex-1 min-w-0">
                               <p className="text-xs md:text-sm text-white">{activity.title}</p>
                               {activity.description && (
-                                <p className="text-[10px] md:text-xs text-zinc-400">{activity.description}</p>
+                                <p className="text-[10px] md:text-xs text-zinc-400 whitespace-pre-wrap">{activity.description}</p>
                               )}
                               <p className="text-[10px] md:text-xs text-zinc-500">{formatTimeAgo(activity.created_at)}</p>
                             </div>
@@ -659,6 +660,133 @@ export default function ProspectDetailPage() {
                     )}
                   </CardContent>
                 </Card>
+              </TabsContent>
+
+              <TabsContent value="research" className="space-y-4">
+                {/* AI Analysis */}
+                {prospect.ai_analysis && (
+                  <Card className="bg-zinc-900 border-zinc-800">
+                    <CardHeader className="p-4 md:p-6">
+                      <CardTitle className="text-white text-sm md:text-base flex items-center gap-2">
+                        <Sparkles className="h-4 w-4 text-purple-400" />
+                        AI Analysis
+                        {prospect.ai_grade && (
+                          <Badge className={
+                            prospect.ai_grade === 'A' ? 'bg-emerald-500/20 text-emerald-400' :
+                            prospect.ai_grade === 'B' ? 'bg-blue-500/20 text-blue-400' :
+                            prospect.ai_grade === 'C' ? 'bg-amber-500/20 text-amber-400' :
+                            'bg-red-500/20 text-red-400'
+                          }>
+                            Grade {prospect.ai_grade}
+                          </Badge>
+                        )}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-4 md:p-6 pt-0 md:pt-0">
+                      <pre className="text-xs md:text-sm text-zinc-300 whitespace-pre-wrap bg-zinc-800/50 p-4 rounded-lg overflow-auto max-h-96">
+                        {typeof prospect.ai_analysis === 'string'
+                          ? prospect.ai_analysis
+                          : JSON.stringify(prospect.ai_analysis, null, 2)}
+                      </pre>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Job Pain Points */}
+                {prospect.job_pain_points && (
+                  <Card className="bg-zinc-900 border-zinc-800">
+                    <CardHeader className="p-4 md:p-6">
+                      <CardTitle className="text-white text-sm md:text-base flex items-center gap-2">
+                        <Bell className="h-4 w-4 text-amber-400" />
+                        Job Pain Points Analysis
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-4 md:p-6 pt-0 md:pt-0 space-y-4">
+                      {prospect.job_pain_points.summary && (
+                        <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                          <p className="text-sm text-amber-200">{prospect.job_pain_points.summary}</p>
+                        </div>
+                      )}
+
+                      {prospect.job_pain_points.pain_points && prospect.job_pain_points.pain_points.length > 0 && (
+                        <div>
+                          <p className="text-xs text-zinc-500 mb-2">Pain Points Identified</p>
+                          <ul className="space-y-1">
+                            {prospect.job_pain_points.pain_points.map((point, idx) => (
+                              <li key={idx} className="text-sm text-zinc-300 flex items-start gap-2">
+                                <span className="text-red-400">•</span> {point}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {prospect.job_pain_points.responsibilities && prospect.job_pain_points.responsibilities.length > 0 && (
+                        <div>
+                          <p className="text-xs text-zinc-500 mb-2">Key Responsibilities</p>
+                          <ul className="space-y-1">
+                            {prospect.job_pain_points.responsibilities.map((resp, idx) => (
+                              <li key={idx} className="text-sm text-zinc-300 flex items-start gap-2">
+                                <span className="text-blue-400">•</span> {resp}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {prospect.job_pain_points.communication_tasks && prospect.job_pain_points.communication_tasks.length > 0 && (
+                        <div>
+                          <p className="text-xs text-zinc-500 mb-2">Communication Tasks</p>
+                          <ul className="space-y-1">
+                            {prospect.job_pain_points.communication_tasks.map((task, idx) => (
+                              <li key={idx} className="text-sm text-zinc-300 flex items-start gap-2">
+                                <span className="text-emerald-400">•</span> {task}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Source Job Description */}
+                {prospect.source_job_description && (
+                  <Card className="bg-zinc-900 border-zinc-800">
+                    <CardHeader className="p-4 md:p-6">
+                      <CardTitle className="text-white text-sm md:text-base">
+                        Original Job Posting
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-4 md:p-6 pt-0 md:pt-0">
+                      <pre className="text-xs md:text-sm text-zinc-300 whitespace-pre-wrap bg-zinc-800/50 p-4 rounded-lg overflow-auto max-h-96">
+                        {prospect.source_job_description}
+                      </pre>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* No Research Yet */}
+                {!prospect.ai_analysis && !prospect.job_pain_points && !prospect.source_job_description && (
+                  <Card className="bg-zinc-900 border-zinc-800">
+                    <CardContent className="p-8 text-center">
+                      <Sparkles className="h-12 w-12 mx-auto mb-4 text-zinc-600" />
+                      <p className="text-zinc-500 mb-4">No research data available yet.</p>
+                      <Button
+                        onClick={handleEnrich}
+                        disabled={isEnriching}
+                        className="bg-purple-600 hover:bg-purple-700"
+                      >
+                        {isEnriching ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : (
+                          <Sparkles className="h-4 w-4 mr-2" />
+                        )}
+                        Run AI Research
+                      </Button>
+                    </CardContent>
+                  </Card>
+                )}
               </TabsContent>
 
               <TabsContent value="notes">
