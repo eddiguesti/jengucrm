@@ -7,48 +7,16 @@ import { SESSION } from '@/lib/constants';
 import { checkLoginRateLimit } from '@/lib/rate-limiter-db';
 import { z } from 'zod';
 
-// Login schema with captcha token
-const loginWithCaptchaSchema = z.object({
+// Login schema - password only (rate limiting provides protection)
+const loginSchema = z.object({
   password: z.string().min(1, 'Password is required'),
-  captchaToken: z.string().optional().nullable(),
 });
 
 /**
- * Verify Turnstile token with Cloudflare
- */
-async function verifyTurnstileToken(token: string): Promise<boolean> {
-  const secretKey = process.env.TURNSTILE_SECRET_KEY;
-
-  // Skip verification if no secret key configured (dev mode)
-  if (!secretKey) {
-    logger.warn('Turnstile secret key not configured, skipping verification');
-    return true;
-  }
-
-  try {
-    const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        secret: secretKey,
-        response: token,
-      }),
-    });
-
-    const result = await response.json();
-    return result.success === true;
-  } catch (error) {
-    logger.error({ error }, 'Turnstile verification failed');
-    return false;
-  }
-}
-
-/**
- * Login endpoint with rate limiting and CAPTCHA
+ * Login endpoint with rate limiting
  * - Rate limited to prevent brute force attacks
- * - CAPTCHA verification to stop bots
  * - Uses secure session tokens
- * - Shorter session duration (7 days instead of 30)
+ * - Session duration: 7 days
  */
 
 function getClientIp(request: NextRequest): string {
@@ -93,39 +61,15 @@ export async function POST(request: NextRequest) {
 
     // Parse and validate request body
     const body = await request.json();
-    const parsed = loginWithCaptchaSchema.safeParse(body);
+    const parsed = loginSchema.safeParse(body);
 
     if (!parsed.success) {
       throw new ValidationError(parsed.error.issues[0]?.message || 'Invalid request');
     }
 
-    const { password, captchaToken } = parsed.data;
+    const { password } = parsed.data;
 
-    // Verify CAPTCHA token (required in production)
-    if (config.isProd) {
-      if (!process.env.TURNSTILE_SECRET_KEY) {
-        logger.error('TURNSTILE_SECRET_KEY not configured in production - CAPTCHA verification disabled');
-        // In production without CAPTCHA, we still allow login but log the security concern
-        // This prevents breaking existing deployments, but the log will alert operators
-      } else {
-        if (!captchaToken) {
-          logger.warn({ ip }, 'Login attempt without CAPTCHA token');
-          return NextResponse.json(
-            { success: false, error: 'Security verification required' },
-            { status: 400 }
-          );
-        }
-
-        const captchaValid = await verifyTurnstileToken(captchaToken);
-        if (!captchaValid) {
-          logger.warn({ ip }, 'Login failed - invalid CAPTCHA');
-          return NextResponse.json(
-            { success: false, error: 'Security verification failed. Please try again.' },
-            { status: 400 }
-          );
-        }
-      }
-    }
+    // CAPTCHA disabled - using rate limiting for protection instead
 
     if (password === config.security.appPassword) {
       // Generate a session token (better than static 'authenticated')
