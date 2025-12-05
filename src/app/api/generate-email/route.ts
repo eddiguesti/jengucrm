@@ -58,6 +58,7 @@ const prospectSchema = z.object({
   star_rating: z.number().nullish(),
   room_count: z.number().nullish(),
   source_job_title: z.string().nullish(),
+  source: z.string().nullish(),
   tier: z.string().nullish(),
   contact_name: z.string().nullish(),
   contact_title: z.string().nullish(),
@@ -182,7 +183,8 @@ function buildPrompt(prospect: ProspectData) {
     details.push(`Contact: ${prospect.contact_name}${title}`);
   }
 
-  if (prospect.source_job_title) {
+  // Only mention job posting for non-Sales Navigator prospects (they already have names)
+  if (prospect.source_job_title && prospect.source !== 'sales_navigator') {
     details.push(`Found via job posting for: ${prospect.source_job_title}`);
   }
 
@@ -204,15 +206,18 @@ function buildPrompt(prospect: ProspectData) {
     hints.push('Luxury/spa property - focus on premium guest experience');
   }
 
-  const jobTitle = (prospect.source_job_title || '').toLowerCase();
-  if (jobTitle.includes('revenue') || jobTitle.includes('commercial')) {
-    hints.push('They\'re hiring for revenue/commercial roles - they\'re focused on growth');
-  }
-  if (jobTitle.includes('marketing') || jobTitle.includes('digital')) {
-    hints.push('They\'re hiring for marketing - they\'re investing in their brand');
-  }
-  if (jobTitle.includes('manager') || jobTitle.includes('director')) {
-    hints.push('Senior hire - they\'re building their leadership team');
+  // Only add job-related hints for non-Sales Navigator prospects
+  if (prospect.source !== 'sales_navigator') {
+    const jobTitle = (prospect.source_job_title || '').toLowerCase();
+    if (jobTitle.includes('revenue') || jobTitle.includes('commercial')) {
+      hints.push('They\'re hiring for revenue/commercial roles - they\'re focused on growth');
+    }
+    if (jobTitle.includes('marketing') || jobTitle.includes('digital')) {
+      hints.push('They\'re hiring for marketing - they\'re investing in their brand');
+    }
+    if (jobTitle.includes('manager') || jobTitle.includes('director')) {
+      hints.push('Senior hire - they\'re building their leadership team');
+    }
   }
 
   if (prospect.mystery_shopper_sent) {

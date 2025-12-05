@@ -10,6 +10,7 @@ interface ProspectContext {
   country: string | null;
   propertyType: string | null;
   jobTitle?: string | null;
+  contactName?: string | null;
   painSignals?: { keyword: string; snippet: string }[];
   jobPainPoints?: {
     summary?: string;
@@ -64,6 +65,7 @@ const authorityScarcityStrategy: CampaignStrategy = {
 
 === TARGET ===
 Property: ${prospect.name}
+${prospect.contactName ? `Contact: ${prospect.contactName}` : 'No contact name available'}
 Location: ${prospect.city}${prospect.country ? `, ${prospect.country}` : ''}
 Type: ${prospect.propertyType || 'hotel'}
 ${subtleContext}
@@ -92,8 +94,7 @@ Creates curiosity gap. Examples:
 - "${prospect.name} quick one"
 
 **GREETING:**
-- If you have a contact name, use "Hey [FirstName]," or "Hi [FirstName],"
-- If no contact name, use "Hey ${prospect.name} Team," or "Hi Team,"
+${prospect.contactName ? `- Use "Hey ${prospect.contactName.split(' ')[0]}," or "Hi ${prospect.contactName.split(' ')[0]}," (first name only)` : `- Use "Hey ${prospect.name} Team," or "Hi Team," (no contact name available)`}
 - NEVER use generic "Hello," or "Hi there,"
 
 **STRUCTURE - Use the 3Ps:**
@@ -176,6 +177,7 @@ const curiosityValueStrategy: CampaignStrategy = {
 
 === TARGET ===
 Property: ${prospect.name}
+${prospect.contactName ? `Contact: ${prospect.contactName}` : 'No contact name available'}
 Location: ${prospect.city}${prospect.country ? `, ${prospect.country}` : ''}
 Type: ${prospect.propertyType || 'hotel'}
 ${subtleContext}
@@ -211,8 +213,7 @@ Break their mental script. NOT a typical sales subject. Examples:
 - "honest question"
 
 **GREETING:**
-- If you have a contact name, use "Hey [FirstName]," (casual, no exclamation)
-- If no contact name, use "Hey ${prospect.name} Team," or "Hey Team,"
+${prospect.contactName ? `- Use "Hey ${prospect.contactName.split(' ')[0]}," (casual, first name only, no exclamation)` : `- Use "Hey ${prospect.name} Team," or "Hey Team," (no contact name available)`}
 - NEVER use exclamation marks - stay calm, not salesy
 
 **STRUCTURE (70-90 words total):**

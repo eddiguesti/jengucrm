@@ -3,6 +3,79 @@ import { createServerClient } from '@/lib/supabase';
 import { success, errors } from '@/lib/api-response';
 import { logger } from '@/lib/logger';
 
+/**
+ * Clean and format a person's name properly
+ * - Capitalizes first letter of each word
+ * - Handles hyphenated names (Jean-Pierre)
+ * - Handles prefixes like O', Mc, Mac
+ */
+function formatName(name: string): string {
+  if (!name) return '';
+
+  return name
+    .trim()
+    .toLowerCase()
+    .split(' ')
+    .map(word => {
+      // Handle hyphenated names
+      if (word.includes('-')) {
+        return word.split('-').map(part => capitalizeWord(part)).join('-');
+      }
+      return capitalizeWord(word);
+    })
+    .join(' ');
+}
+
+function capitalizeWord(word: string): string {
+  if (!word) return '';
+
+  // Handle O' prefix (O'Brien)
+  if (word.startsWith("o'") && word.length > 2) {
+    return "O'" + word.charAt(2).toUpperCase() + word.slice(3);
+  }
+
+  // Handle Mc prefix (McDonald)
+  if (word.startsWith('mc') && word.length > 2) {
+    return 'Mc' + word.charAt(2).toUpperCase() + word.slice(3);
+  }
+
+  // Handle Mac prefix (MacArthur) - be careful not to match "macy" etc
+  if (word.startsWith('mac') && word.length > 4 && /^mac[a-z]/.test(word)) {
+    return 'Mac' + word.charAt(3).toUpperCase() + word.slice(4);
+  }
+
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+/**
+ * Clean company/hotel name
+ * - Remove common redundant suffixes
+ * - Proper capitalization
+ */
+function formatCompanyName(name: string): string {
+  if (!name) return '';
+
+  let cleaned = name.trim();
+
+  // Remove common suffixes that don't add value
+  const redundantSuffixes = [
+    /\s*-\s*LinkedIn$/i,
+    /\s*\|\s*LinkedIn$/i,
+    /\s*Ltd\.?$/i,
+    /\s*LLC$/i,
+    /\s*Inc\.?$/i,
+    /\s*GmbH$/i,
+    /\s*SAS$/i,
+    /\s*SARL$/i,
+  ];
+
+  for (const suffix of redundantSuffixes) {
+    cleaned = cleaned.replace(suffix, '');
+  }
+
+  return cleaned.trim();
+}
+
 interface SalesNavProspect {
   profileUrl: string;
   name: string;
@@ -12,6 +85,7 @@ interface SalesNavProspect {
   email: string | null;
   emailStatus: string;
   jobTitle: string;
+  country?: string;
 }
 
 /**
@@ -46,8 +120,10 @@ export async function POST(request: NextRequest) {
 
     for (const prospect of prospects) {
       try {
-        const fullName = prospect.name || `${prospect.firstname} ${prospect.lastname}`.trim();
-        const company = prospect.company;
+        // Format names properly
+        const rawName = prospect.name || `${prospect.firstname} ${prospect.lastname}`.trim();
+        const fullName = formatName(rawName);
+        const company = formatCompanyName(prospect.company);
 
         if (!fullName || !company) {
           errorCount++;
@@ -74,6 +150,11 @@ export async function POST(request: NextRequest) {
         }
 
         // Create prospect
+        const tags = ['sales_navigator', 'linkedin'];
+        if (prospect.country) {
+          tags.push(prospect.country.toLowerCase().replace(/\s+/g, '-'));
+        }
+
         const { data: newProspect, error: insertError } = await supabase
           .from('prospects')
           .insert({
@@ -87,8 +168,9 @@ export async function POST(request: NextRequest) {
             tier: 'cold',
             score: prospect.email ? 30 : 10, // Higher score if has email
             property_type: 'hotel', // Default to hotel
-            tags: ['sales_navigator', 'linkedin'],
-            notes: `Imported from Sales Navigator\nJob Title: ${prospect.jobTitle || 'N/A'}`,
+            country: prospect.country || null,
+            tags,
+            notes: `Imported from Sales Navigator\nJob Title: ${prospect.jobTitle || 'N/A'}${prospect.country ? `\nCountry: ${prospect.country}` : ''}`,
           })
           .select()
           .single();

@@ -29,6 +29,8 @@ interface Prospect {
   google_review_count: number | null;
   source_job_title: string | null;
   source_job_description: string | null;
+  source: string | null;
+  contact_name: string | null;
   job_pain_points: {
     summary?: string;
     communicationTasks?: string[];
@@ -64,6 +66,7 @@ async function generateEmail(
       country: prospect.country,
       propertyType: prospect.property_type,
       jobTitle: prospect.source_job_title,
+      contactName: prospect.contact_name,
       jobPainPoints: prospect.job_pain_points || undefined,
       painSignals: prospect.pain_signals?.map(ps => ({
         keyword: ps.keyword_matched,
@@ -174,7 +177,7 @@ export async function POST(request: NextRequest) {
     // Find eligible prospects
     const baseSelect = `id, name, email, city, country, property_type,
         google_rating, google_review_count, source_job_title,
-        source_job_description, job_pain_points,
+        source_job_description, job_pain_points, source, contact_name,
         score, tier, pain_signals(keyword_matched, review_snippet)`;
 
     const { data: prospects } = await supabase

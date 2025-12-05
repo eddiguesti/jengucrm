@@ -10,7 +10,7 @@ import { z } from 'zod';
 // Login schema with captcha token
 const loginWithCaptchaSchema = z.object({
   password: z.string().min(1, 'Password is required'),
-  captchaToken: z.string().optional(),
+  captchaToken: z.string().optional().nullable(),
 });
 
 /**

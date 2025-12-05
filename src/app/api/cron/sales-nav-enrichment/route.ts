@@ -2,9 +2,9 @@ import { NextRequest } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 import { success, errors } from '@/lib/api-response';
 import { logger } from '@/lib/logger';
-import { getDomainPattern, applyPattern } from '@/lib/email/finder/domain-analyzer';
-import { validateEmail } from '@/lib/email/verification';
+import { findEmail, type EmailFinderResult } from '@/lib/email/finder/engine';
 import { enrichWithGooglePlaces } from '@/lib/enrichment/google-places';
+import { scrapeWebsite, extractDomain } from '@/lib/enrichment/website-scraper';
 import { config } from '@/lib/config';
 
 interface EnrichmentJob {
@@ -23,81 +23,279 @@ interface EnrichmentJob {
   created_at: string;
 }
 
-// Known hotel chain domains - these have predictable email patterns
-const CHAIN_DOMAINS: Record<string, { domain: string; pattern: string }> = {
-  'hilton': { domain: 'hilton.com', pattern: '{first}.{last}' },
-  'marriott': { domain: 'marriott.com', pattern: '{first}.{last}' },
-  'hyatt': { domain: 'hyatt.com', pattern: '{first}.{last}' },
-  'ihg': { domain: 'ihg.com', pattern: '{first}.{last}' },
-  'accor': { domain: 'accor.com', pattern: '{first}.{last}' },
-  'novotel': { domain: 'accor.com', pattern: '{first}.{last}' },
-  'sofitel': { domain: 'accor.com', pattern: '{first}.{last}' },
-  'ibis': { domain: 'accor.com', pattern: '{first}.{last}' },
-  'mercure': { domain: 'accor.com', pattern: '{first}.{last}' },
-  'radisson': { domain: 'radissonhotels.com', pattern: '{first}.{last}' },
-  'wyndham': { domain: 'wyndham.com', pattern: '{first}.{last}' },
-  'best western': { domain: 'bestwestern.com', pattern: '{first}.{last}' },
-  'choice hotels': { domain: 'choicehotels.com', pattern: '{first}.{last}' },
-  'four seasons': { domain: 'fourseasons.com', pattern: '{first}.{last}' },
-  'ritz carlton': { domain: 'ritzcarlton.com', pattern: '{first}.{last}' },
-  'intercontinental': { domain: 'ihg.com', pattern: '{first}.{last}' },
-  'crowne plaza': { domain: 'ihg.com', pattern: '{first}.{last}' },
-  'holiday inn': { domain: 'ihg.com', pattern: '{first}.{last}' },
-  'sheraton': { domain: 'marriott.com', pattern: '{first}.{last}' },
-  'westin': { domain: 'marriott.com', pattern: '{first}.{last}' },
-  'w hotels': { domain: 'marriott.com', pattern: '{first}.{last}' },
-  'doubletree': { domain: 'hilton.com', pattern: '{first}.{last}' },
-  'hampton': { domain: 'hilton.com', pattern: '{first}.{last}' },
-  'embassy suites': { domain: 'hilton.com', pattern: '{first}.{last}' },
-};
+/**
+ * Search DuckDuckGo for hotel website
+ */
+async function searchForWebsite(hotelName: string, country: string): Promise<string | null> {
+  try {
+    const query = `${hotelName} hotel ${country} official website`;
+    const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+
+    const response = await fetch(searchUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+      },
+    });
+
+    if (!response.ok) return null;
+
+    const html = await response.text();
+
+    // Extract URLs from search results
+    const urlMatches = html.match(/href="(https?:\/\/[^"]+)"/gi) || [];
+
+    // Filter for likely hotel websites (exclude booking sites, social media, etc.)
+    const excludePatterns = /booking\.com|expedia|tripadvisor|hotels\.com|agoda|trivago|kayak|facebook|twitter|instagram|linkedin|youtube|wikipedia|yelp/i;
+
+    for (const match of urlMatches) {
+      const url = match.replace(/href="|"/g, '');
+      if (!excludePatterns.test(url) && !url.includes('duckduckgo')) {
+        // Validate it looks like a hotel website
+        if (url.includes('hotel') || url.includes('resort') || url.includes('inn')) {
+          return url;
+        }
+      }
+    }
+
+    // Return first non-excluded result
+    for (const match of urlMatches.slice(0, 10)) {
+      const url = match.replace(/href="|"/g, '');
+      if (!excludePatterns.test(url) && !url.includes('duckduckgo') && url.startsWith('http')) {
+        return url;
+      }
+    }
+
+    return null;
+  } catch (error) {
+    logger.debug({ error }, 'DuckDuckGo search failed');
+    return null;
+  }
+}
 
 /**
- * Try to find hotel chain from company name
+ * Priority titles for decision makers
  */
-function findChainDomain(companyName: string): { domain: string; pattern: string } | null {
-  const lowerName = companyName.toLowerCase();
-  for (const [chain, info] of Object.entries(CHAIN_DOMAINS)) {
-    if (lowerName.includes(chain)) {
-      return info;
+const PRIORITY_TITLES = [
+  'general manager', 'gm', 'owner', 'managing director',
+  'hotel manager', 'director', 'operations manager',
+  'sales director', 'marketing director',
+];
+
+/**
+ * Process a single enrichment job
+ * Returns the email result and method used
+ */
+async function processEnrichmentJob(
+  job: EnrichmentJob,
+  prospect: {
+    id: string;
+    name: string;
+    website: string | null;
+    city: string | null;
+    country: string | null;
+    tags: string[] | null;
+    score: number | null;
+    full_address: string | null;
+  },
+  supabase: ReturnType<typeof createServerClient>
+): Promise<{
+  email: string | null;
+  confidence: number;
+  confidenceLevel: string;
+  method: string;
+  website: string | null;
+}> {
+  let websiteFound = prospect.website;
+  let domain: string | null = null;
+
+  // ============================================
+  // STEP 1: Find or discover the hotel website
+  // ============================================
+
+  // Strategy 1A: Use existing website
+  if (websiteFound) {
+    domain = extractDomain(websiteFound);
+    logger.debug({ hotel: job.company, website: websiteFound, domain }, 'Using existing website');
+  }
+
+  // Strategy 1B: Try Google Places to find website
+  if (!websiteFound && prospect.country) {
+    try {
+      const placesData = await enrichWithGooglePlaces(
+        job.company || prospect.name,
+        prospect.city || '',
+        prospect.country
+      );
+
+      if (placesData.website) {
+        websiteFound = placesData.website;
+        domain = extractDomain(websiteFound);
+        logger.info({ hotel: job.company, website: websiteFound }, 'Found website via Google Places');
+
+        // Update prospect with found data
+        await supabase
+          .from('prospects')
+          .update({
+            website: websiteFound,
+            google_place_id: placesData.google_place_id,
+            full_address: placesData.full_address || prospect.full_address,
+          })
+          .eq('id', prospect.id);
+      }
+    } catch (e) {
+      logger.debug({ error: e }, 'Google Places lookup failed');
     }
   }
-  return null;
-}
 
-/**
- * Generate email from pattern
- */
-function generateEmailFromPattern(pattern: string, firstname: string, lastname: string, domain: string): string {
-  // Clean names - remove special chars, lowercase
-  const first = firstname.toLowerCase().replace(/[^a-z]/g, '');
-  const last = lastname.toLowerCase().replace(/[^a-z]/g, '');
+  // Strategy 1C: DuckDuckGo search as fallback
+  if (!websiteFound && prospect.country) {
+    websiteFound = await searchForWebsite(job.company || prospect.name, prospect.country);
+    if (websiteFound) {
+      domain = extractDomain(websiteFound);
+      logger.info({ hotel: job.company, website: websiteFound }, 'Found website via DuckDuckGo search');
 
-  return pattern
-    .replace('{first}', first)
-    .replace('{last}', last)
-    .replace('{f}', first[0] || '')
-    .replace('{l}', last[0] || '')
-    + '@' + domain;
-}
+      await supabase
+        .from('prospects')
+        .update({ website: websiteFound })
+        .eq('id', prospect.id);
+    }
+  }
 
-/**
- * Generate common email permutations
- */
-function generateEmailPermutations(firstname: string, lastname: string, domain: string): string[] {
-  const first = firstname.toLowerCase().replace(/[^a-z]/g, '');
-  const last = lastname.toLowerCase().replace(/[^a-z]/g, '');
-  const f = first[0] || '';
+  // ============================================
+  // STEP 2: Scrape website for emails & contacts
+  // ============================================
 
-  if (!first || !last) return [];
+  let scrapedEmails: string[] = [];
+  let scrapedTeamMembers: Array<{ name: string; title: string; email?: string }> = [];
 
-  return [
-    `${first}.${last}@${domain}`,      // john.smith@
-    `${first}${last}@${domain}`,       // johnsmith@
-    `${f}${last}@${domain}`,           // jsmith@
-    `${first}@${domain}`,              // john@
-    `${last}.${first}@${domain}`,      // smith.john@
-    `${f}.${last}@${domain}`,          // j.smith@
-  ];
+  if (websiteFound) {
+    try {
+      const scrapeResult = await scrapeWebsite(websiteFound);
+      scrapedEmails = scrapeResult.emails || [];
+      scrapedTeamMembers = scrapeResult.teamMembers || [];
+
+      logger.debug({
+        hotel: job.company,
+        emailsFound: scrapedEmails.length,
+        teamMembersFound: scrapedTeamMembers.length,
+      }, 'Website scrape complete');
+
+      // Check if we found a decision maker with their email
+      for (const member of scrapedTeamMembers) {
+        const isDecisionMaker = PRIORITY_TITLES.some(t =>
+          member.title.toLowerCase().includes(t)
+        );
+
+        if (isDecisionMaker && member.email) {
+          logger.info({
+            hotel: job.company,
+            name: member.name,
+            title: member.title,
+            email: member.email
+          }, 'Found decision maker email on website!');
+
+          return {
+            email: member.email,
+            confidence: 90,
+            confidenceLevel: 'high',
+            method: 'website_scrape_dm',
+            website: websiteFound,
+          };
+        }
+      }
+
+      // Check if any scraped email matches the contact's name
+      if (scrapedEmails.length > 0 && job.lastname) {
+        const lastNameLower = job.lastname.toLowerCase();
+        const matchingEmail = scrapedEmails.find(e =>
+          e.toLowerCase().includes(lastNameLower)
+        );
+
+        if (matchingEmail) {
+          logger.info({ hotel: job.company, email: matchingEmail }, 'Found matching email on website');
+          return {
+            email: matchingEmail,
+            confidence: 85,
+            confidenceLevel: 'high',
+            method: 'website_scrape_name_match',
+            website: websiteFound,
+          };
+        }
+      }
+    } catch (e) {
+      logger.debug({ error: e }, 'Website scrape failed');
+    }
+  }
+
+  // ============================================
+  // STEP 3: Use the Email Finder Engine
+  // ============================================
+
+  if (domain && job.firstname && job.lastname) {
+    try {
+      const finderResult: EmailFinderResult = await findEmail({
+        firstName: job.firstname,
+        lastName: job.lastname,
+        domain,
+        website: websiteFound || undefined,
+        companyName: job.company,
+        verifySmtp: true,
+        useHunter: true,
+        maxCandidates: 5,
+        timeout: 15000,
+      });
+
+      if (finderResult.email && finderResult.confidence >= 40) {
+        logger.info({
+          hotel: job.company,
+          email: finderResult.email,
+          confidence: finderResult.confidence,
+          method: finderResult.verificationMethod,
+        }, 'Email finder engine found email');
+
+        return {
+          email: finderResult.email,
+          confidence: finderResult.confidence,
+          confidenceLevel: finderResult.confidenceLevel,
+          method: `finder_${finderResult.verificationMethod}`,
+          website: websiteFound,
+        };
+      }
+    } catch (e) {
+      logger.debug({ error: e }, 'Email finder engine failed');
+    }
+  }
+
+  // ============================================
+  // STEP 4: Fallback - use generic email if found
+  // ============================================
+
+  // If we found generic emails on website (info@, contact@), use as fallback
+  if (scrapedEmails.length > 0) {
+    const genericEmail = scrapedEmails.find(e =>
+      /^(info|contact|hello|enquiries|reservations)@/i.test(e)
+    );
+
+    if (genericEmail) {
+      logger.debug({ hotel: job.company, email: genericEmail }, 'Using generic fallback email');
+      return {
+        email: genericEmail,
+        confidence: 30,
+        confidenceLevel: 'low',
+        method: 'website_generic',
+        website: websiteFound,
+      };
+    }
+  }
+
+  // No email found
+  return {
+    email: null,
+    confidence: 0,
+    confidenceLevel: 'very_low',
+    method: 'none',
+    website: websiteFound,
+  };
 }
 
 /**
@@ -115,7 +313,7 @@ export async function GET(request: NextRequest) {
   const supabase = createServerClient();
 
   try {
-    // Get pending jobs (process 50 at a time for faster throughput)
+    // Get pending jobs (process 50 at a time with parallel execution)
     const { data: pendingJobs } = await supabase
       .from('sales_nav_enrichment_queue')
       .select('*')
@@ -129,202 +327,146 @@ export async function GET(request: NextRequest) {
 
     logger.info({ count: pendingJobs.length }, 'Cron: Starting Sales Navigator enrichment');
 
-    let processed = 0;
+    // Mark all as processing upfront
+    const jobIds = pendingJobs.map(j => j.id);
+    await supabase
+      .from('sales_nav_enrichment_queue')
+      .update({ status: 'processing' })
+      .in('id', jobIds);
+
+    // Process jobs in parallel with concurrency limit of 10
+    const CONCURRENCY = 10;
+    const results: Array<{ company: string; email: string | null; method: string; confidence: number }> = [];
     let succeeded = 0;
     let failed = 0;
 
-    for (const job of pendingJobs as EnrichmentJob[]) {
-      try {
-        processed++;
+    // Process in chunks of CONCURRENCY
+    for (let i = 0; i < pendingJobs.length; i += CONCURRENCY) {
+      const chunk = pendingJobs.slice(i, i + CONCURRENCY) as EnrichmentJob[];
 
-        // Mark as processing
-        await supabase
-          .from('sales_nav_enrichment_queue')
-          .update({ status: 'processing' })
-          .eq('id', job.id);
-
-        // Get the prospect
-        const { data: prospect } = await supabase
-          .from('prospects')
-          .select('*')
-          .eq('id', job.prospect_id)
-          .single();
-
-        if (!prospect) {
-          await supabase
-            .from('sales_nav_enrichment_queue')
-            .update({ status: 'failed', error: 'Prospect not found' })
-            .eq('id', job.id);
-          failed++;
-          continue;
-        }
-
-        // Try to find email using multiple strategies
-        let email: string | null = null;
-        let domain: string | null = null;
-        let websiteFound: string | null = prospect.website;
-        let enrichmentMethod = '';
-
-        // Strategy 1: Check if it's a known hotel chain
-        const chainInfo = findChainDomain(job.company || prospect.name);
-        if (chainInfo && job.firstname && job.lastname) {
-          domain = chainInfo.domain;
-          const candidateEmail = generateEmailFromPattern(chainInfo.pattern, job.firstname, job.lastname, domain);
-
-          logger.info({ company: job.company, chain: domain, email: candidateEmail }, 'Trying chain email');
-
-          const validation = await validateEmail(candidateEmail);
-          if (validation.isValid) {
-            email = candidateEmail;
-            enrichmentMethod = 'chain_pattern';
-          }
-        }
-
-        // Strategy 2: If no website, try Google Places to find one
-        if (!email && !websiteFound && prospect.country) {
+      const chunkResults = await Promise.all(
+        chunk.map(async (job) => {
           try {
-            const placesData = await enrichWithGooglePlaces(
-              job.company || prospect.name,
-              prospect.city || '',
-              prospect.country
-            );
+            // Get the prospect
+            const { data: prospect } = await supabase
+              .from('prospects')
+              .select('*')
+              .eq('id', job.prospect_id)
+              .single();
 
-            if (placesData.website) {
-              websiteFound = placesData.website;
-              logger.info({ company: job.company, website: websiteFound }, 'Found website via Google Places');
+            if (!prospect) {
+              await supabase
+                .from('sales_nav_enrichment_queue')
+                .update({ status: 'failed', error: 'Prospect not found' })
+                .eq('id', job.id);
+              return { job, success: false };
+            }
 
-              // Update prospect with found website
+            // Process enrichment
+            const result = await processEnrichmentJob(job, prospect, supabase);
+
+            if (result.email && result.confidence >= 40) {
+              // Found a valid email with decent confidence
+              const currentTags = prospect.tags || [];
+              const newTags = currentTags.filter((t: string) => t !== 'needs-email');
+              if (!newTags.includes('email-found')) {
+                newTags.push('email-found');
+              }
+              newTags.push(`email-${result.confidenceLevel}`);
+
+              const scoreBoost = Math.floor(result.confidence / 5);
+
               await supabase
                 .from('prospects')
                 .update({
-                  website: websiteFound,
-                  google_place_id: placesData.google_place_id,
-                  full_address: placesData.full_address || prospect.full_address,
+                  email: result.email,
+                  website: result.website || prospect.website,
+                  stage: 'researching',
+                  score: Math.min((prospect.score || 10) + scoreBoost, 100),
+                  tags: [...new Set(newTags)],
                 })
                 .eq('id', prospect.id);
-            }
-          } catch (e) {
-            logger.debug({ error: e }, 'Google Places lookup failed');
-          }
-        }
 
-        // Strategy 3: Use website domain for email patterns
-        if (!email && websiteFound && job.firstname && job.lastname) {
-          try {
-            const url = new URL(websiteFound.startsWith('http') ? websiteFound : `https://${websiteFound}`);
-            domain = url.hostname.replace('www.', '');
+              await supabase
+                .from('sales_nav_enrichment_queue')
+                .update({
+                  status: 'completed',
+                  email_found: result.email,
+                  email_verified: result.confidence >= 60,
+                  research_done: true,
+                  error: null,
+                })
+                .eq('id', job.id);
 
-            // Try known domain pattern first
-            const pattern = await getDomainPattern(domain);
-
-            if (pattern && pattern.pattern) {
-              const candidateEmail = applyPattern(pattern.pattern, job.firstname, job.lastname, domain);
-              if (candidateEmail) {
-                const validation = await validateEmail(candidateEmail);
-                if (validation.isValid) {
-                  email = candidateEmail;
-                  enrichmentMethod = 'domain_pattern';
-                }
+              return { job, success: true, result };
+            } else {
+              // No email found or low confidence
+              const currentTags = prospect.tags || [];
+              if (!currentTags.includes('needs-email')) {
+                await supabase
+                  .from('prospects')
+                  .update({
+                    tags: [...currentTags, 'needs-email'],
+                    website: result.website || prospect.website,
+                  })
+                  .eq('id', prospect.id);
               }
-            }
 
-            // If no pattern, try common permutations
-            if (!email) {
-              const permutations = generateEmailPermutations(job.firstname, job.lastname, domain);
-
-              for (const candidateEmail of permutations) {
-                const validation = await validateEmail(candidateEmail);
-                if (validation.isValid) {
-                  email = candidateEmail;
-                  enrichmentMethod = 'email_permutation';
-                  break;
-                }
+              let errorReason = 'No valid email found';
+              if (!job.firstname || !job.lastname) {
+                errorReason = 'Missing name data';
+              } else if (!result.website) {
+                errorReason = 'Could not find hotel website';
               }
+
+              await supabase
+                .from('sales_nav_enrichment_queue')
+                .update({
+                  status: 'completed',
+                  email_found: null,
+                  email_verified: false,
+                  research_done: true,
+                  error: errorReason,
+                })
+                .eq('id', job.id);
+
+              return { job, success: false, result };
             }
-          } catch (e) {
-            logger.debug({ error: e }, 'Email pattern generation failed');
-          }
-        }
-
-        // Update prospect with email if found
-        if (email) {
-          const currentTags = prospect.tags || [];
-          const newTags = currentTags.filter((t: string) => t !== 'needs-email');
-          if (!newTags.includes('email-found')) {
-            newTags.push('email-found');
-          }
-
-          await supabase
-            .from('prospects')
-            .update({
-              email,
-              stage: 'researching', // Ready for email outreach
-              score: Math.min((prospect.score || 10) + 20, 100),
-              tags: newTags,
-            })
-            .eq('id', prospect.id);
-
-          await supabase
-            .from('sales_nav_enrichment_queue')
-            .update({
-              status: 'completed',
-              email_found: email,
-              email_verified: true,
-              research_done: true,
-              error: null, // Clear any previous error
-            })
-            .eq('id', job.id);
-
-          logger.info({ company: job.company, email, method: enrichmentMethod }, 'Email found');
-          succeeded++;
-        } else {
-          // No email found - tag for manual review
-          const currentTags = prospect.tags || [];
-          if (!currentTags.includes('needs-email')) {
+          } catch (error) {
+            logger.error({ error, jobId: job.id }, 'Enrichment job failed');
             await supabase
-              .from('prospects')
-              .update({ tags: [...currentTags, 'needs-email'] })
-              .eq('id', prospect.id);
+              .from('sales_nav_enrichment_queue')
+              .update({ status: 'failed', error: String(error) })
+              .eq('id', job.id);
+            return { job, success: false };
           }
+        })
+      );
 
-          // Determine why it failed
-          let errorReason = 'No valid email found';
-          if (!job.firstname || !job.lastname) {
-            errorReason = 'Missing name data';
-          } else if (!websiteFound && !chainInfo) {
-            errorReason = 'No website found and not a known chain';
-          } else if (!domain) {
-            errorReason = 'Could not extract domain';
+      // Aggregate results
+      for (const r of chunkResults) {
+        if (r.success) {
+          succeeded++;
+          if (r.result) {
+            results.push({
+              company: r.job.company,
+              email: r.result.email,
+              method: r.result.method,
+              confidence: r.result.confidence,
+            });
           }
-
-          await supabase
-            .from('sales_nav_enrichment_queue')
-            .update({
-              status: 'completed',
-              email_found: null,
-              email_verified: false,
-              research_done: true,
-              error: errorReason,
-            })
-            .eq('id', job.id);
-
-          logger.debug({ company: job.company, reason: errorReason }, 'Email not found');
+        } else {
           failed++;
         }
-      } catch (error) {
-        logger.error({ error, jobId: job.id }, 'Enrichment job failed');
-        await supabase
-          .from('sales_nav_enrichment_queue')
-          .update({ status: 'failed', error: String(error) })
-          .eq('id', job.id);
-        failed++;
       }
     }
+
+    const processed = pendingJobs.length;
 
     // Log activity
     await supabase.from('activity_log').insert({
       activity_type: 'sales_nav_enrichment',
-      details: { processed, succeeded, failed },
+      details: { processed, succeeded, failed, results: results.slice(0, 10) },
     });
 
     logger.info({ processed, succeeded, failed }, 'Cron: Sales Navigator enrichment complete');
@@ -334,6 +476,7 @@ export async function GET(request: NextRequest) {
       processed,
       succeeded,
       failed,
+      results: results.slice(0, 10),
     });
   } catch (error) {
     logger.error({ error }, 'Sales Nav enrichment cron failed');

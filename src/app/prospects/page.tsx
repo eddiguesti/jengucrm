@@ -219,6 +219,11 @@ export default function ProspectsPage() {
   const [emailStatusFilter, setEmailStatusFilter] = useState<EmailStatusFilter>('all');
   const [contactStatusFilter, setContactStatusFilter] = useState<ContactStatusFilter>('all');
 
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalProspects, setTotalProspects] = useState(0);
+  const pageSize = 100; // Show 100 prospects per page
+
   // Sorting state
   const [sortColumn, setSortColumn] = useState<SortColumn>('score');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
@@ -226,11 +231,13 @@ export default function ProspectsPage() {
   const { theme } = useTheme();
   const isLight = theme === 'light';
 
-  const fetchProspects = async () => {
+  const fetchProspects = async (page: number = currentPage) => {
     setLoading(true);
     setError(null);
     try {
       const params = new URLSearchParams();
+      params.set('limit', String(pageSize));
+      params.set('offset', String((page - 1) * pageSize));
       if (tierFilter) params.set('tier', tierFilter);
       if (searchQuery) params.set('search', searchQuery);
       if (smartView !== 'all') params.set('smart_view', smartView);
@@ -243,6 +250,7 @@ export default function ProspectsPage() {
 
       const data = await response.json();
       setProspects(data.data?.prospects || data.prospects || []);
+      setTotalProspects(data.data?.total || data.total || 0);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load prospects');
     } finally {
@@ -274,18 +282,34 @@ export default function ProspectsPage() {
   };
 
   useEffect(() => {
-    fetchProspects();
+    setCurrentPage(1); // Reset to page 1 when filters change
+    fetchProspects(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tierFilter, smartView, sourceFilter, emailStatusFilter, contactStatusFilter]);
+
+  // Fetch when page changes
+  useEffect(() => {
+    fetchProspects(currentPage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage]);
 
   // Debounced search
   useEffect(() => {
     const timer = setTimeout(() => {
-      fetchProspects();
+      setCurrentPage(1);
+      fetchProspects(1);
     }, 300);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery]);
+
+  // Pagination helpers
+  const totalPages = Math.ceil(totalProspects / pageSize);
+  const handlePageChange = (page: number) => {
+    if (page >= 1 && page <= totalPages) {
+      setCurrentPage(page);
+    }
+  };
 
   // Calculate readiness summary
   const readinessSummary = useMemo(() => {
@@ -410,7 +434,7 @@ export default function ProspectsPage() {
     >
       <Header
         title="Prospects"
-        subtitle={`${prospects.length} total prospects`}
+        subtitle={`${totalProspects.toLocaleString()} total prospects`}
         action={{
           label: 'Add Prospect',
           onClick: () => setShowAddDialog(true),
@@ -560,7 +584,7 @@ export default function ProspectsPage() {
                       "h-8 px-2.5",
                       isLight ? "border-[#efe7dc] text-slate-700 hover:bg-slate-50" : "border-zinc-700"
                     )}
-                    onClick={fetchProspects}
+                    onClick={() => fetchProspects()}
                   >
                     <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
                   </Button>
@@ -767,7 +791,7 @@ export default function ProspectsPage() {
                 variant="outline"
                 size="sm"
                 className={cn("mt-2", isLight ? "border-red-200 text-red-600 hover:bg-red-50" : "border-red-500/30 text-red-400")}
-                onClick={fetchProspects}
+                onClick={() => fetchProspects()}
               >
                 Retry
               </Button>
@@ -872,6 +896,9 @@ export default function ProspectsPage() {
                         <ArrowUpDown className="h-3 w-3 opacity-50" />
                       )}
                     </div>
+                  </TableHead>
+                  <TableHead className={cn("hidden sm:table-cell text-xs", isLight ? "text-slate-500" : "text-zinc-400")}>
+                    Contact
                   </TableHead>
                   <TableHead
                     className={cn("hidden md:table-cell text-xs cursor-pointer select-none hover:text-white transition-colors", isLight ? "text-slate-500 hover:text-slate-900" : "text-zinc-400")}
@@ -1010,6 +1037,18 @@ export default function ProspectsPage() {
                             </div>
                           </Link>
                         </TableCell>
+                        <TableCell className="hidden sm:table-cell py-2">
+                          {prospect.contact_name ? (
+                            <div className="flex items-center gap-1.5">
+                              <User className={cn("h-3 w-3 flex-shrink-0", isLight ? "text-slate-400" : "text-zinc-500")} />
+                              <span className={cn("text-xs md:text-sm truncate max-w-[120px]", isLight ? "text-slate-700" : "text-zinc-300")}>
+                                {prospect.contact_name}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className={cn("text-xs", isLight ? "text-slate-400" : "text-zinc-500")}>-</span>
+                          )}
+                        </TableCell>
                         <TableCell className="hidden md:table-cell py-2">
                           <div className={cn("flex items-center gap-1 text-xs md:text-sm", isLight ? "text-slate-700" : "text-zinc-300")}>
                             <MapPin className={cn("h-3 w-3", isLight ? "text-slate-400" : "text-zinc-500")} />
@@ -1123,12 +1162,57 @@ export default function ProspectsPage() {
         {/* Results Count */}
         {!loading && !error && filteredProspects.length > 0 && (
           <div className={cn("text-xs md:text-sm text-center", isLight ? "text-slate-600" : "text-zinc-500")}>
-            Showing {filteredProspects.length} of {prospects.length} prospects
+            Showing {filteredProspects.length} of {totalProspects.toLocaleString()} prospects (page {currentPage} of {totalPages})
             {readinessFilter !== 'all' && (
               <span className="ml-1 md:ml-2">
                 (filtered by {readinessFilter.replace('_', ' ')})
               </span>
             )}
+          </div>
+        )}
+
+        {/* Pagination Controls */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-center gap-2 mt-4">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handlePageChange(1)}
+              disabled={currentPage === 1}
+              className={cn(isLight ? "border-[#efe7dc]" : "")}
+            >
+              First
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handlePageChange(currentPage - 1)}
+              disabled={currentPage === 1}
+              className={cn(isLight ? "border-[#efe7dc]" : "")}
+            >
+              Previous
+            </Button>
+            <span className={cn("px-3 py-1 text-sm", isLight ? "text-slate-700" : "text-zinc-300")}>
+              Page {currentPage} of {totalPages}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handlePageChange(currentPage + 1)}
+              disabled={currentPage === totalPages}
+              className={cn(isLight ? "border-[#efe7dc]" : "")}
+            >
+              Next
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handlePageChange(totalPages)}
+              disabled={currentPage === totalPages}
+              className={cn(isLight ? "border-[#efe7dc]" : "")}
+            >
+              Last
+            </Button>
           </div>
         )}
       </div>

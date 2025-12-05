@@ -43,11 +43,12 @@ async function generateMysteryEmail(
   hotelName: string,
   senderName: string,
   intel: HotelIntel | null,
-  language: 'french' | 'english'
+  language: 'french' | 'english',
+  contactName?: string | null
 ): Promise<{ subject: string; body: string; scenario: string }> {
   if (!config.ai.apiKey) {
     // Fallback to simple template if no AI
-    return getFallbackEmail(hotelName, senderName, language);
+    return getFallbackEmail(hotelName, senderName, language, contactName);
   }
 
   // Determine best scenario based on intel
@@ -89,25 +90,35 @@ async function generateMysteryEmail(
         messages: [
           {
             role: 'system',
-            content: `You write mystery shopper emails to hotels. You pretend to be a real person making an inquiry to test their response time. Your goal is to get a reply and ideally get the GM or manager's direct contact.
+            content: `You write mystery shopper emails to hotels. You pretend to be a real person making a genuine inquiry. Your goal is to get a reply and ideally get the GM or manager's direct contact.
 
 CRITICAL RULES:
 1. Write like a real person texting a friend. Not corporate at all.
 2. NEVER use dashes, hyphens, bullet points, or special characters
 3. NEVER use emojis
 4. Keep it short. 60 to 80 words maximum.
-5. Sound natural and warm
-6. Include specific details to seem genuine (dates, guest numbers, reason)
+5. Sound natural, warm and polite
+6. Include specific details to seem genuine (dates, guest numbers, reason for visit)
 7. Ask for the GM or manager's email directly in a natural way
 8. ${langInstructions}
 
-Your email should feel like it was written quickly by someone genuinely interested, not crafted by a marketer.`,
+ABSOLUTELY FORBIDDEN - NEVER MENTION:
+- Job postings, hiring, or recruitment
+- LinkedIn, Sales Navigator, or how you found them
+- That you're testing response times
+- Anything about job titles or positions
+- That this is a business inquiry from a vendor
+
+You are ONLY a potential GUEST making a genuine travel inquiry. Sound like a real person planning a trip.
+
+Your email should feel like it was written quickly by someone genuinely interested in staying at the hotel.`,
           },
           {
             role: 'user',
             content: `Write a mystery shopper inquiry email to ${hotelName}.
 
 SENDER NAME: ${senderName}
+${contactName ? `PERSON TO ADDRESS: ${contactName.split(' ')[0]} (use their first name naturally in greeting, ask to be connected with them)` : 'PERSON TO ADDRESS: Unknown (ask politely for the manager or GM email)'}
 SCENARIO TO USE: ${scenarioHint}
 ${thingsToAvoid.length > 0 ? `DO NOT MENTION: ${thingsToAvoid.join(', ')}` : ''}
 
@@ -164,16 +175,28 @@ Generate JSON:
 function getFallbackEmail(
   hotelName: string,
   senderName: string,
-  language: 'french' | 'english'
+  language: 'french' | 'english',
+  contactName?: string | null
 ): { subject: string; body: string; scenario: string } {
+  // Greeting based on whether we know the contact name
+  const greeting = contactName ? `Hi ${contactName.split(' ')[0]},` : 'Hi there,';
+  const contactRequest = contactName
+    ? `Could you put me in touch with ${contactName} directly?`
+    : 'Could you share the manager or GMs email so I can discuss options directly?';
+
   if (language === 'french') {
+    const frenchGreeting = contactName ? `Bonjour ${contactName.split(' ')[0]},` : 'Bonjour,';
+    const frenchContactRequest = contactName
+      ? `Est ce que tu pourrais me mettre en contact avec ${contactName} directement?`
+      : 'Est ce que tu pourrais me donner le mail du directeur pour qu\'on discute directement des options?';
+
     return {
       subject: `Question sur ${hotelName}`,
-      body: `Bonjour,
+      body: `${frenchGreeting}
 
 Je cherche un endroit sympa pour un weekend en famille le mois prochain. ${hotelName} a l'air parfait d'apres les photos.
 
-On serait environ 8 personnes, 2 nuits. Est ce que tu pourrais me donner le mail du directeur pour qu'on discute directement des options?
+On serait environ 8 personnes, 2 nuits. ${frenchContactRequest}
 
 Merci beaucoup!
 
@@ -184,11 +207,11 @@ ${senderName}`,
 
   return {
     subject: `Quick question about ${hotelName}`,
-    body: `Hi there,
+    body: `${greeting}
 
 Looking for somewhere nice for a family weekend next month and ${hotelName} looks perfect from what I've seen online.
 
-We'd be about 8 people for 2 nights. Could you share the manager or GMs email so I can discuss options directly?
+We'd be about 8 people for 2 nights. ${contactRequest}
 
 Thanks so much!
 
@@ -279,7 +302,8 @@ export async function POST(request: NextRequest) {
       prospect.name,
       gmailConfig.senderName,
       intel,
-      language
+      language,
+      prospect.contact_name // Pass contact name if we know it from Sales Navigator
     );
 
     // Create Gmail transporter
@@ -387,7 +411,7 @@ export async function PUT(request: NextRequest) {
     // Find prospects with generic emails that haven't received inquiry
     const { data: prospects, error } = await supabase
       .from('prospects')
-      .select('id, name, email, tags, city, country, website')
+      .select('id, name, email, tags, city, country, website, contact_name')
       .not('email', 'is', null)
       .limit(500);
 
@@ -467,7 +491,8 @@ export async function PUT(request: NextRequest) {
           prospect.name,
           gmailConfig.senderName,
           intel,
-          language
+          language,
+          prospect.contact_name
         );
 
         // Send

@@ -1,29 +1,13 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Turnstile, type TurnstileInstance } from '@marsidev/react-turnstile';
 
 export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
-  const [captchaReady, setCaptchaReady] = useState(false);
-  const turnstileRef = useRef<TurnstileInstance>(null);
   const router = useRouter();
-
-  const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '1x00000000000000000000AA'; // Test key
-
-  // Allow login after 3 seconds if CAPTCHA doesn't load
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (!captchaReady) {
-        setCaptchaReady(true);
-      }
-    }, 3000);
-    return () => clearTimeout(timer);
-  }, [captchaReady]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,7 +19,7 @@ export default function LoginPage() {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password, captchaToken }),
+        body: JSON.stringify({ password }),
       });
 
       const data = await res.json();
@@ -45,14 +29,9 @@ export default function LoginPage() {
         router.refresh();
       } else {
         setError(data.error || 'Invalid password');
-        // Reset captcha on failure
-        turnstileRef.current?.reset();
-        setCaptchaToken(null);
       }
     } catch {
       setError('Something went wrong');
-      turnstileRef.current?.reset();
-      setCaptchaToken(null);
     } finally {
       setLoading(false);
     }
@@ -78,46 +57,18 @@ export default function LoginPage() {
             />
           </div>
 
-          {/* Cloudflare Turnstile CAPTCHA */}
-          <div className="flex justify-center">
-            <Turnstile
-              ref={turnstileRef}
-              siteKey={siteKey}
-              onSuccess={(token) => {
-                setCaptchaToken(token);
-                setCaptchaReady(true);
-              }}
-              onError={() => {
-                setError('Security check failed. Please try again.');
-                setCaptchaToken(null);
-                setCaptchaReady(true); // Allow fallback
-              }}
-              onExpire={() => {
-                setCaptchaToken(null);
-              }}
-              options={{
-                theme: 'dark',
-                size: 'normal',
-              }}
-            />
-          </div>
-
           {error && (
             <p className="text-red-500 text-sm text-center">{error}</p>
           )}
 
           <button
             type="submit"
-            disabled={loading || !password || (!captchaToken && !captchaReady)}
+            disabled={loading || !password}
             className="w-full py-3 bg-white text-black font-medium rounded-lg hover:bg-zinc-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {loading ? 'Signing in...' : 'Sign in'}
           </button>
         </form>
-
-        <p className="text-zinc-600 text-xs text-center mt-6">
-          Protected by Cloudflare Turnstile
-        </p>
       </div>
     </div>
   );

@@ -114,9 +114,10 @@ export async function GET(request: NextRequest) {
 
     // Step 1A: Find NEW prospects with generic emails that haven't received mystery shopper
     // These are automatically eligible - no tag required
+    // Note: Sales Navigator prospects will only reach here if email finder failed and fallback added generic email
     const { data: newProspects, error: newProspectsError } = await supabase
       .from('prospects')
-      .select('id, name, email, score, tier, tags')
+      .select('id, name, email, score, tier, tags, source')
       .eq('archived', false)
       .not('email', 'is', null)
       .order('created_at', { ascending: false })
@@ -139,10 +140,11 @@ export async function GET(request: NextRequest) {
     stats.new_prospects_found = eligibleNewProspects.length;
     logger.info({ count: eligibleNewProspects.length }, 'Found new prospects with generic emails');
 
-    // Step 1B: Also get prospects with 'needs-contact-discovery' tag (legacy behavior)
+    // Step 1B: Also get prospects with 'needs-contact-discovery' tag (legacy behavior + fallback)
+    // This includes Sales Navigator prospects where email finder failed and fallback was triggered
     const { data: taggedProspects, error: taggedError } = await supabase
       .from('prospects')
-      .select('id, name, email, score, tier, tags')
+      .select('id, name, email, score, tier, tags, source')
       .contains('tags', ['needs-contact-discovery'])
       .order('score', { ascending: false })
       .limit(50);

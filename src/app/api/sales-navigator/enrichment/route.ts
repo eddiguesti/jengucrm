@@ -158,14 +158,47 @@ export async function POST(request: NextRequest) {
 
         succeeded++;
 
+        // If no personal email found, tag for manual review
+        // Sales Navigator prospects should receive proper Jengu sales emails, not mystery shopper
+        if (!email) {
+          // Get current tags
+          const { data: prospect } = await supabase
+            .from('prospects')
+            .select('tags, contact_name')
+            .eq('id', job.prospect_id)
+            .single();
+
+          const currentTags = prospect?.tags || [];
+          const newTags = currentTags.includes('needs-email')
+            ? currentTags
+            : [...currentTags, 'needs-email'];
+
+          // Update tags to mark as needing email
+          const updateData: Record<string, unknown> = {
+            tags: newTags,
+          };
+
+          // If we have the contact name from the enrichment job, ensure it's saved
+          if (job.prospect_name && !prospect?.contact_name) {
+            updateData.contact_name = job.prospect_name;
+          }
+
+          await supabase
+            .from('prospects')
+            .update(updateData)
+            .eq('id', job.prospect_id);
+
+          logger.info({ prospectId: job.prospect_id, contactName: job.prospect_name }, 'Email not found - tagged for manual review');
+        }
+
         // Log activity
         await supabase.from('activities').insert({
           prospect_id: job.prospect_id,
           type: 'note',
           title: 'Enrichment completed',
           description: email
-            ? `Found email: ${email}`
-            : 'Email not found, research completed',
+            ? `Found email: ${email} - ready for Jengu outreach`
+            : 'Personal email not found - needs manual email discovery',
         });
 
       } catch (err) {
