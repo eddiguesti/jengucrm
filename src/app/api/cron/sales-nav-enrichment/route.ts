@@ -4,7 +4,7 @@ import { success, errors } from '@/lib/api-response';
 import { logger } from '@/lib/logger';
 import { getDomainPattern, applyPattern } from '@/lib/email/finder/domain-analyzer';
 import { validateEmail } from '@/lib/email/verification';
-import { researchHotel } from '@/lib/hotel-research';
+import { enrichWithGooglePlaces } from '@/lib/enrichment/google-places';
 import { config } from '@/lib/config';
 
 interface EnrichmentJob {
@@ -21,6 +21,83 @@ interface EnrichmentJob {
   research_done: boolean;
   error: string | null;
   created_at: string;
+}
+
+// Known hotel chain domains - these have predictable email patterns
+const CHAIN_DOMAINS: Record<string, { domain: string; pattern: string }> = {
+  'hilton': { domain: 'hilton.com', pattern: '{first}.{last}' },
+  'marriott': { domain: 'marriott.com', pattern: '{first}.{last}' },
+  'hyatt': { domain: 'hyatt.com', pattern: '{first}.{last}' },
+  'ihg': { domain: 'ihg.com', pattern: '{first}.{last}' },
+  'accor': { domain: 'accor.com', pattern: '{first}.{last}' },
+  'novotel': { domain: 'accor.com', pattern: '{first}.{last}' },
+  'sofitel': { domain: 'accor.com', pattern: '{first}.{last}' },
+  'ibis': { domain: 'accor.com', pattern: '{first}.{last}' },
+  'mercure': { domain: 'accor.com', pattern: '{first}.{last}' },
+  'radisson': { domain: 'radissonhotels.com', pattern: '{first}.{last}' },
+  'wyndham': { domain: 'wyndham.com', pattern: '{first}.{last}' },
+  'best western': { domain: 'bestwestern.com', pattern: '{first}.{last}' },
+  'choice hotels': { domain: 'choicehotels.com', pattern: '{first}.{last}' },
+  'four seasons': { domain: 'fourseasons.com', pattern: '{first}.{last}' },
+  'ritz carlton': { domain: 'ritzcarlton.com', pattern: '{first}.{last}' },
+  'intercontinental': { domain: 'ihg.com', pattern: '{first}.{last}' },
+  'crowne plaza': { domain: 'ihg.com', pattern: '{first}.{last}' },
+  'holiday inn': { domain: 'ihg.com', pattern: '{first}.{last}' },
+  'sheraton': { domain: 'marriott.com', pattern: '{first}.{last}' },
+  'westin': { domain: 'marriott.com', pattern: '{first}.{last}' },
+  'w hotels': { domain: 'marriott.com', pattern: '{first}.{last}' },
+  'doubletree': { domain: 'hilton.com', pattern: '{first}.{last}' },
+  'hampton': { domain: 'hilton.com', pattern: '{first}.{last}' },
+  'embassy suites': { domain: 'hilton.com', pattern: '{first}.{last}' },
+};
+
+/**
+ * Try to find hotel chain from company name
+ */
+function findChainDomain(companyName: string): { domain: string; pattern: string } | null {
+  const lowerName = companyName.toLowerCase();
+  for (const [chain, info] of Object.entries(CHAIN_DOMAINS)) {
+    if (lowerName.includes(chain)) {
+      return info;
+    }
+  }
+  return null;
+}
+
+/**
+ * Generate email from pattern
+ */
+function generateEmailFromPattern(pattern: string, firstname: string, lastname: string, domain: string): string {
+  // Clean names - remove special chars, lowercase
+  const first = firstname.toLowerCase().replace(/[^a-z]/g, '');
+  const last = lastname.toLowerCase().replace(/[^a-z]/g, '');
+
+  return pattern
+    .replace('{first}', first)
+    .replace('{last}', last)
+    .replace('{f}', first[0] || '')
+    .replace('{l}', last[0] || '')
+    + '@' + domain;
+}
+
+/**
+ * Generate common email permutations
+ */
+function generateEmailPermutations(firstname: string, lastname: string, domain: string): string[] {
+  const first = firstname.toLowerCase().replace(/[^a-z]/g, '');
+  const last = lastname.toLowerCase().replace(/[^a-z]/g, '');
+  const f = first[0] || '';
+
+  if (!first || !last) return [];
+
+  return [
+    `${first}.${last}@${domain}`,      // john.smith@
+    `${first}${last}@${domain}`,       // johnsmith@
+    `${f}${last}@${domain}`,           // jsmith@
+    `${first}@${domain}`,              // john@
+    `${last}.${first}@${domain}`,      // smith.john@
+    `${f}.${last}@${domain}`,          // j.smith@
+  ];
 }
 
 /**
@@ -82,60 +159,108 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
-        // Try to find email using domain patterns
+        // Try to find email using multiple strategies
         let email: string | null = null;
+        let domain: string | null = null;
+        let websiteFound: string | null = prospect.website;
+        let enrichmentMethod = '';
 
-        if (prospect.website) {
-          try {
-            const url = new URL(prospect.website.startsWith('http') ? prospect.website : `https://${prospect.website}`);
-            const domain = url.hostname.replace('www.', '');
+        // Strategy 1: Check if it's a known hotel chain
+        const chainInfo = findChainDomain(job.company || prospect.name);
+        if (chainInfo && job.firstname && job.lastname) {
+          domain = chainInfo.domain;
+          const candidateEmail = generateEmailFromPattern(chainInfo.pattern, job.firstname, job.lastname, domain);
 
-            // Get domain pattern
-            const pattern = await getDomainPattern(domain);
+          logger.info({ company: job.company, chain: domain, email: candidateEmail }, 'Trying chain email');
 
-            if (pattern && pattern.pattern && job.firstname && job.lastname) {
-              const candidateEmail = applyPattern(pattern.pattern, job.firstname, job.lastname, domain);
-
-              if (candidateEmail) {
-                // Verify the email
-                const validation = await validateEmail(candidateEmail);
-                if (validation.isValid) {
-                  email = candidateEmail;
-                }
-              }
-            }
-          } catch (e) {
-            // Domain pattern failed, continue
+          const validation = await validateEmail(candidateEmail);
+          if (validation.isValid) {
+            email = candidateEmail;
+            enrichmentMethod = 'chain_pattern';
           }
         }
 
-        // Research hotel for additional context (if not already done)
-        if (!job.research_done && prospect.website) {
+        // Strategy 2: If no website, try Google Places to find one
+        if (!email && !websiteFound && prospect.country) {
           try {
-            const research = await researchHotel(prospect.website, prospect.name);
-            if (research) {
+            const placesData = await enrichWithGooglePlaces(
+              job.company || prospect.name,
+              prospect.city || '',
+              prospect.country
+            );
+
+            if (placesData.website) {
+              websiteFound = placesData.website;
+              logger.info({ company: job.company, website: websiteFound }, 'Found website via Google Places');
+
+              // Update prospect with found website
               await supabase
                 .from('prospects')
                 .update({
-                  notes: (prospect.notes || '') + '\n\n' + research.researchSummary,
-                  star_rating: research.starRating || prospect.star_rating,
-                  room_count: research.roomCount || prospect.room_count,
+                  website: websiteFound,
+                  google_place_id: placesData.google_place_id,
+                  full_address: placesData.full_address || prospect.full_address,
                 })
                 .eq('id', prospect.id);
             }
           } catch (e) {
-            // Research failed, continue
+            logger.debug({ error: e }, 'Google Places lookup failed');
+          }
+        }
+
+        // Strategy 3: Use website domain for email patterns
+        if (!email && websiteFound && job.firstname && job.lastname) {
+          try {
+            const url = new URL(websiteFound.startsWith('http') ? websiteFound : `https://${websiteFound}`);
+            domain = url.hostname.replace('www.', '');
+
+            // Try known domain pattern first
+            const pattern = await getDomainPattern(domain);
+
+            if (pattern && pattern.pattern) {
+              const candidateEmail = applyPattern(pattern.pattern, job.firstname, job.lastname, domain);
+              if (candidateEmail) {
+                const validation = await validateEmail(candidateEmail);
+                if (validation.isValid) {
+                  email = candidateEmail;
+                  enrichmentMethod = 'domain_pattern';
+                }
+              }
+            }
+
+            // If no pattern, try common permutations
+            if (!email) {
+              const permutations = generateEmailPermutations(job.firstname, job.lastname, domain);
+
+              for (const candidateEmail of permutations) {
+                const validation = await validateEmail(candidateEmail);
+                if (validation.isValid) {
+                  email = candidateEmail;
+                  enrichmentMethod = 'email_permutation';
+                  break;
+                }
+              }
+            }
+          } catch (e) {
+            logger.debug({ error: e }, 'Email pattern generation failed');
           }
         }
 
         // Update prospect with email if found
         if (email) {
+          const currentTags = prospect.tags || [];
+          const newTags = currentTags.filter((t: string) => t !== 'needs-email');
+          if (!newTags.includes('email-found')) {
+            newTags.push('email-found');
+          }
+
           await supabase
             .from('prospects')
             .update({
               email,
               stage: 'researching', // Ready for email outreach
               score: Math.min((prospect.score || 10) + 20, 100),
+              tags: newTags,
             })
             .eq('id', prospect.id);
 
@@ -146,9 +271,11 @@ export async function GET(request: NextRequest) {
               email_found: email,
               email_verified: true,
               research_done: true,
+              error: null, // Clear any previous error
             })
             .eq('id', job.id);
 
+          logger.info({ company: job.company, email, method: enrichmentMethod }, 'Email found');
           succeeded++;
         } else {
           // No email found - tag for manual review
@@ -160,6 +287,16 @@ export async function GET(request: NextRequest) {
               .eq('id', prospect.id);
           }
 
+          // Determine why it failed
+          let errorReason = 'No valid email found';
+          if (!job.firstname || !job.lastname) {
+            errorReason = 'Missing name data';
+          } else if (!websiteFound && !chainInfo) {
+            errorReason = 'No website found and not a known chain';
+          } else if (!domain) {
+            errorReason = 'Could not extract domain';
+          }
+
           await supabase
             .from('sales_nav_enrichment_queue')
             .update({
@@ -167,10 +304,11 @@ export async function GET(request: NextRequest) {
               email_found: null,
               email_verified: false,
               research_done: true,
-              error: 'No valid email pattern found',
+              error: errorReason,
             })
             .eq('id', job.id);
 
+          logger.debug({ company: job.company, reason: errorReason }, 'Email not found');
           failed++;
         }
       } catch (error) {
