@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 import { updateProspectSchema, parseBody, ValidationError } from '@/lib/validation';
+import { errors } from '@/lib/api-response';
 
 export async function GET(
   request: NextRequest,
@@ -98,12 +99,9 @@ export async function PATCH(
     return NextResponse.json({ prospect: data });
   } catch (error) {
     if (error instanceof ValidationError) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      return errors.badRequest(error.message);
     }
-    return NextResponse.json(
-      { error: 'Update failed', details: String(error) },
-      { status: 500 }
-    );
+    return errors.internal('Update failed', error);
   }
 }
 

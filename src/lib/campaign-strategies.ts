@@ -250,11 +250,166 @@ Output ONLY valid JSON:
 };
 
 /**
+ * STRATEGY C: Pure Cold - Direct (No Job Board Context)
+ * For Sales Navigator leads with NO job posting intel.
+ * Ultra-short, research-backed, psychology-driven.
+ */
+const coldDirectStrategy: CampaignStrategy = {
+  key: 'cold_direct',
+  name: 'Cold: Direct & Human',
+  description: 'Pure cold email. 80-100 words. Vulnerable, human tone.',
+  generatePrompt: (prospect) => {
+    return `You are Edd from Jengu. Write a HUMAN, slightly awkward cold email.
+
+=== TONE ===
+- Vulnerable, slightly uncertain
+- NOT salesy or polished
+- Like texting a friend of a friend
+- Self-aware that cold emails are annoying
+
+=== KEY ELEMENTS TO INCLUDE ===
+
+1. VULNERABLE OPENER + FORWARD REQUEST:
+"This might be a weird one - not even sure if you're the right person. If not, would you mind forwarding to whoever handles operations? Would genuinely appreciate it."
+
+2. WHAT WE DO (keep vague):
+"We implement different types of AI systems for hotels - stuff that genuinely saves time and money without feeling robotic."
+
+3. THE HOOK (curiosity, not specifics):
+"Most hotels are surprised what's actually possible now."
+
+4. QUALIFYING CTA (flip the dynamic - WE are qualifying THEM):
+"Would love a quick chat to see if you'd be a good fit for us. Totally fine if it's not for you - just let me know either way?"
+
+=== TARGET ===
+Property: ${prospect.name}
+${prospect.contactName ? `Contact: ${prospect.contactName}` : ''}
+Location: ${prospect.city}${prospect.country ? `, ${prospect.country}` : ''}
+Type: ${prospect.propertyType || 'hotel'}
+
+=== STRUCTURE ===
+
+**SUBJECT (2-4 words, lowercase - RESEARCH-BACKED for 46% open rate):**
+Questions + personalization = highest opens. Generate a UNIQUE variation, don't copy examples:
+${prospect.contactName ? `- "quick question, ${prospect.contactName.split(' ')[0]}?" (question + first name)` : ''}
+- "${prospect.name} + ai?" (company name = +22% opens)
+- "right person?" (question + pattern interrupt)
+- "1 min question" (number + question = +113% opens)
+${prospect.contactName ? `- "${prospect.contactName.split(' ')[0]} - quick thought"` : '- "quick thought"'}
+
+IMPORTANT: Create a NEW subject each time. Never reuse the same one twice.
+
+**GREETING:**
+${prospect.contactName ? `"Hey ${prospect.contactName.split(' ')[0]},"` : `"Hey,"`}
+
+**BODY (80-100 words, 2-3 short paragraphs):**
+
+Paragraph 1: Vulnerable opener + forward request
+
+Paragraph 2: What we do (vague - AI systems, saves time and money) + curiosity hook (surprised what's possible)
+
+Paragraph 3: Qualifying CTA - we want to see if THEY are right for US
+
+=== STRICT RULES ===
+- Sound like a human, not a marketer
+- Self-aware, slightly awkward
+- NO corporate speak
+- NO "I hope this finds you well"
+- NO hype words
+- Keep what we do VAGUE - just "AI systems that save time and money"
+- Flip the dynamic: WE are seeing if they're right for us
+- Include forward request (increases replies)
+
+Output ONLY valid JSON:
+{"subject": "lowercase subject here", "body": "email body here"}`;
+  },
+};
+
+/**
+ * STRATEGY D: Pure Cold - Pattern Interrupt (No Job Board Context)
+ * Disarms with vulnerability, uses labeling and negative reverse.
+ */
+const coldPatternInterruptStrategy: CampaignStrategy = {
+  key: 'cold_pattern_interrupt',
+  name: 'Cold: Pattern Interrupt',
+  description: 'More direct variation with same human tone. 80-100 words.',
+  generatePrompt: (prospect) => {
+    return `You are Edd from Jengu. Write a HUMAN, direct but self-aware cold email.
+
+=== TONE ===
+- Direct but not aggressive
+- Self-aware, slightly self-deprecating
+- NOT polished or corporate
+- Acknowledges this is a cold email
+
+=== KEY ELEMENTS TO INCLUDE ===
+
+1. HONEST OPENER:
+"I'll keep this short - I know you probably get a ton of these."
+
+2. WHAT WE DO (keep vague):
+"We implement different types of AI systems for hotels - the kind that actually saves time and money without feeling robotic or annoying guests."
+
+3. CURIOSITY HOOK:
+"Most hotels are surprised what's actually possible now - and what they're leaving on the table."
+
+4. QUALIFYING CTA (flip the dynamic - WE are qualifying THEM):
+"Would love a quick chat to see if you'd be a good fit for us. Totally fine if it's not for you - just let me know either way?"
+
+=== TARGET ===
+Property: ${prospect.name}
+${prospect.contactName ? `Contact: ${prospect.contactName}` : ''}
+Location: ${prospect.city}${prospect.country ? `, ${prospect.country}` : ''}
+Type: ${prospect.propertyType || 'hotel'}
+
+=== STRUCTURE ===
+
+**SUBJECT (2-4 words, lowercase - RESEARCH-BACKED for 46% open rate):**
+Questions + personalization = highest opens. Generate a UNIQUE variation:
+${prospect.contactName ? `- "${prospect.contactName.split(' ')[0]} - quick one?" (personalized question)` : ''}
+- "honest question" (question + vulnerable tone)
+- "2 min ask" (number + question = +113% opens)
+- "${prospect.name} question" (company name = +22% opens)
+${prospect.contactName ? `- "curious, ${prospect.contactName.split(' ')[0]}?"` : '- "curious about this?"'}
+
+IMPORTANT: Create a NEW subject each time. Never reuse the same one twice.
+
+**GREETING:**
+${prospect.contactName ? `"Hey ${prospect.contactName.split(' ')[0]},"` : `"Hey,"`}
+
+**BODY (80-100 words, 2-3 short paragraphs):**
+
+Paragraph 1: Honest opener acknowledging this is a cold email
+
+Paragraph 2: What we do (vague - AI systems, saves time and money) + curiosity hook
+
+Paragraph 3: Qualifying CTA - we want to see if THEY are right for US
+
+=== STRICT RULES ===
+- Sound human and direct
+- Self-aware but not apologetic
+- NO corporate jargon
+- NO "I hope this finds you well"
+- NO hype words
+- Keep what we do VAGUE - just "AI systems that save time and money"
+- Flip the dynamic: WE are seeing if they're right for us
+- End with low-pressure qualifying CTA
+
+Output ONLY valid JSON:
+{"subject": "lowercase subject here", "body": "email body here"}`;
+  },
+};
+
+/**
  * All available campaign strategies
  */
 export const CAMPAIGN_STRATEGIES: Record<string, CampaignStrategy> = {
+  // Job board response strategies (use when we have job posting intel)
   authority_scarcity: authorityScarcityStrategy,
   curiosity_value: curiosityValueStrategy,
+  // Pure cold email strategies (no job context)
+  cold_direct: coldDirectStrategy,
+  cold_pattern_interrupt: coldPatternInterruptStrategy,
 };
 
 /**

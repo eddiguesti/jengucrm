@@ -1,18 +1,57 @@
 /**
- * Phase 1: Find websites using Google Places Text Search (New API)
+ * Phase 1: Find websites using FREE methods (DuckDuckGo + Grok AI)
  * Searches by business name + country to find the closest match
  *
- * This is the correct approach - NOT domain guessing
+ * Priority: 1) DuckDuckGo (free) → 2) Grok AI (already paying)
+ * Google Places API DISABLED (costs money)
+ *
+ * Features:
+ * - Checkpoint/resume: Saves progress to file, can resume if interrupted
+ * - Run with: caffeinate -i npx tsx scripts/enrich-phase1-google-search.ts
  */
 
-import { createClient } from '@supabase/supabase-js';
+import * as fs from 'fs';
+import * as path from 'path';
+import { supabase } from './lib/supabase';
 
-const supabase = createClient(
-  'https://bxcwlwglvcqujrdudxkw.supabase.co',
-  process.env.SUPABASE_SERVICE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ4Y3dsd2dsdmNxdWpyZHVkeGt3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NDI4NTIwMiwiZXhwIjoyMDc5ODYxMjAyfQ.bK2ai2Hfhb-Mud3vSItTrE0uzcwY3rbiu8J3UuWiR48'
-);
+// Checkpoint file to track progress
+const CHECKPOINT_FILE = path.join('/tmp', 'enrich-websites-checkpoint.json');
 
-const GOOGLE_API_KEY = process.env.GOOGLE_PLACES_API_KEY || 'AIzaSyArpHhD6G4hyNoMW9jw37Cy7mJ3nut-mOo';
+interface Checkpoint {
+  processedIds: string[];
+  lastUpdated: string;
+  stats: {
+    processed: number;
+    found: number;
+    emailsFound: number;
+    verified: number;
+  };
+}
+
+function loadCheckpoint(): Checkpoint {
+  try {
+    if (fs.existsSync(CHECKPOINT_FILE)) {
+      const data = fs.readFileSync(CHECKPOINT_FILE, 'utf-8');
+      const checkpoint = JSON.parse(data);
+      console.log(`📂 Loaded checkpoint: ${checkpoint.processedIds.length} already processed`);
+      return checkpoint;
+    }
+  } catch (error) {
+    console.log('⚠️ Could not load checkpoint, starting fresh');
+  }
+  return { processedIds: [], lastUpdated: new Date().toISOString(), stats: { processed: 0, found: 0, emailsFound: 0, verified: 0 } };
+}
+
+function saveCheckpoint(checkpoint: Checkpoint): void {
+  try {
+    checkpoint.lastUpdated = new Date().toISOString();
+    fs.writeFileSync(CHECKPOINT_FILE, JSON.stringify(checkpoint, null, 2));
+  } catch (error) {
+    console.error('⚠️ Could not save checkpoint:', error);
+  }
+}
+
+const GOOGLE_API_KEY = process.env.GOOGLE_PLACES_API_KEY || '';
 const GROK_API_KEY = process.env.GROK_API_KEY || process.env.XAI_API_KEY || '';
 
 // Sites to NEVER accept as results (booking aggregators, social media, etc.)
@@ -313,7 +352,7 @@ async function searchWithGrok(businessName: string, country: string): Promise<{ 
         'Authorization': `Bearer ${GROK_API_KEY}`,
       },
       body: JSON.stringify({
-        model: 'grok-beta',
+        model: 'grok-4-1-fast-non-reasoning',
         messages: [
           {
             role: 'system',
@@ -419,56 +458,21 @@ interface ProcessResult {
 
 /**
  * Process a single prospect - find website, scrape, and save all data
+ * ORDER: DuckDuckGo (free) → Grok AI (already paying) → skip Google Places (paid)
  */
 async function processProspect(prospect: {
   id: string;
   name: string;
   country: string | null;
 }): Promise<ProcessResult> {
-  if (!prospect.country) {
-    return { found: false };
-  }
+  // Country is optional - Grok can often find hotels by name alone
+  const countryHint = prospect.country || 'Europe'; // Default to Europe for Greek/Italian/Portuguese hotels
 
-  // Try Google Places first
-  const result = await searchGooglePlaces(prospect.name, prospect.country);
+  // DISABLED: Google Places API costs money even with "free tier" fields
+  // Use free alternatives instead: DuckDuckGo + Grok (already paying for email gen)
 
-  if (result.website) {
-    // Scrape to verify and extract data
-    const scraped = await scrapeAndVerify(result.website, prospect.name);
-
-    const updateData: Record<string, unknown> = {
-      website: result.website,
-      full_address: result.address,
-    };
-
-    if (scraped) {
-      if (scraped.emails.length > 0) {
-        updateData.email = scraped.emails[0];  // Best email
-      }
-      if (scraped.phones.length > 0) {
-        updateData.phone = scraped.phones[0];
-      }
-      if (scraped.description) {
-        updateData.notes = scraped.description;
-      }
-    }
-
-    await supabase
-      .from('prospects')
-      .update(updateData)
-      .eq('id', prospect.id);
-
-    return {
-      found: true,
-      website: result.website,
-      source: 'google',
-      emails: scraped?.emails.length || 0,
-      verified: scraped?.isHotel || false,
-    };
-  }
-
-  // Fallback to DuckDuckGo if Google didn't find anything
-  const ddgWebsite = await searchDuckDuckGo(prospect.name, prospect.country);
+  // Try DuckDuckGo first (FREE - web scraping) - only if we have country
+  const ddgWebsite = prospect.country ? await searchDuckDuckGo(prospect.name, prospect.country) : null;
 
   if (ddgWebsite) {
     // Scrape to verify and extract data
@@ -504,7 +508,7 @@ async function processProspect(prospect: {
 
   // Final fallback: Ask Grok AI (already returns scraped data)
   if (GROK_API_KEY) {
-    const grokResult = await searchWithGrok(prospect.name, prospect.country);
+    const grokResult = await searchWithGrok(prospect.name, countryHint);
 
     if (grokResult) {
       const { website, scraped } = grokResult;
@@ -540,17 +544,21 @@ async function processProspect(prospect: {
 }
 
 async function main() {
-  console.log('=== Phase 1: Website Discovery via Google Search ===\n');
-  console.log('Using Google Places Text Search (New API)');
-  console.log('Searching by: business name + country\n');
+  console.log('=== Phase 1: Website Discovery (FREE methods only) ===\n');
+  console.log('Priority: 1) DuckDuckGo (free) → 2) Grok AI (already paying)');
+  console.log('Google Places API DISABLED (costs money)');
+  console.log('TIP: Run with "caffeinate -i" to prevent sleep\n');
 
-  // Get count first
+  // Load checkpoint for resume capability
+  const checkpoint = loadCheckpoint();
+  const processedSet = new Set(checkpoint.processedIds);
+
+  // Get count first - include prospects with OR without country
   const { count } = await supabase
     .from('prospects')
     .select('id', { count: 'exact', head: true })
     .eq('source', 'sales_navigator')
-    .is('website', null)
-    .not('country', 'is', null);
+    .is('website', null);
 
   console.log(`Found ${count} prospects without websites\n`);
 
@@ -560,7 +568,7 @@ async function main() {
   }
 
   // Fetch all prospects using pagination (Supabase limits to 1000 per request)
-  const prospects: Array<{ id: string; name: string; country: string | null }> = [];
+  const allProspects: Array<{ id: string; name: string; country: string | null }> = [];
   const PAGE_SIZE = 1000;
 
   for (let offset = 0; offset < count; offset += PAGE_SIZE) {
@@ -569,56 +577,84 @@ async function main() {
       .select('id, name, country')
       .eq('source', 'sales_navigator')
       .is('website', null)
-      .not('country', 'is', null)
       .order('created_at', { ascending: true })
       .range(offset, offset + PAGE_SIZE - 1);
 
     if (page) {
-      prospects.push(...page);
+      allProspects.push(...page);
     }
-    console.log(`Fetched ${prospects.length}/${count} prospects...`);
+    console.log(`Fetched ${allProspects.length}/${count} prospects...`);
+  }
+
+  // Filter out already processed prospects
+  const prospects = allProspects.filter(p => !processedSet.has(p.id));
+  const skipped = allProspects.length - prospects.length;
+
+  if (skipped > 0) {
+    console.log(`\n⏭️ Skipping ${skipped} already processed (from checkpoint)`);
   }
 
   console.log(`\nReady to process ${prospects.length} prospects\n`);
 
-  const BATCH_SIZE = 10;  // Process 10 at a time
-  const DELAY_MS = 200;   // Small delay between requests to avoid rate limiting
+  if (prospects.length === 0) {
+    console.log('All prospects already processed!');
+    return;
+  }
 
-  let processed = 0;
-  let found = 0;
-  let emailsFound = 0;
-  let verified = 0;
+  const CONCURRENCY = 5;  // Run 5 parallel API calls for faster processing
+  const BATCH_SIZE = 50;  // Process 50 at a time, with 5 concurrent
 
-  // Process in batches
+  let processed = checkpoint.stats.processed;
+  let found = checkpoint.stats.found;
+  let emailsFound = checkpoint.stats.emailsFound;
+  let verified = checkpoint.stats.verified;
+
+  // Process in batches with parallel execution
   for (let i = 0; i < prospects.length; i += BATCH_SIZE) {
     const batch = prospects.slice(i, i + BATCH_SIZE);
 
-    // Process batch sequentially (to avoid rate limits)
-    for (const prospect of batch) {
-      processed++;
-      process.stdout.write(`[${processed}/${prospects.length}] ${prospect.name}... `);
+    // Process batch in chunks of CONCURRENCY
+    for (let j = 0; j < batch.length; j += CONCURRENCY) {
+      const chunk = batch.slice(j, j + CONCURRENCY);
 
-      const result = await processProspect(prospect);
+      // Process chunk in parallel
+      const results = await Promise.all(
+        chunk.map(async (prospect, idx) => {
+          const prospectNum = skipped + i + j + idx + 1;
+          try {
+            const result = await processProspect(prospect);
+            return { prospect, prospectNum, result };
+          } catch (error) {
+            return { prospect, prospectNum, result: { found: false, website: null, source: null, verified: false, emails: 0 } };
+          }
+        })
+      );
 
-      if (result.found) {
-        found++;
-        if (result.emails && result.emails > 0) emailsFound++;
-        if (result.verified) verified++;
+      // Log results and update checkpoint
+      for (const { prospect, prospectNum, result } of results) {
+        processed++;
+        checkpoint.processedIds.push(prospect.id);
 
-        const srcTag = result.source === 'duckduckgo' ? ' [DDG]' : result.source === 'grok' ? ' [GROK]' : '';
-        const emailTag = result.emails && result.emails > 0 ? ` 📧${result.emails}` : '';
-        const verifyTag = result.verified ? ' ✅' : '';
-        console.log(`✓${srcTag}${verifyTag}${emailTag} ${result.website}`);
-      } else {
-        console.log('✗ no website');
+        if (result.found) {
+          found++;
+          if (result.emails && result.emails > 0) emailsFound++;
+          if (result.verified) verified++;
+          const srcTag = result.source === 'duckduckgo' ? ' [DDG]' : result.source === 'grok' ? ' [GROK]' : '';
+          const emailTag = result.emails && result.emails > 0 ? ` 📧${result.emails}` : '';
+          const verifyTag = result.verified ? ' ✅' : '';
+          console.log(`[${prospectNum}/${allProspects.length}] ${prospect.name}... ✓${srcTag}${verifyTag}${emailTag} ${result.website}`);
+        } else {
+          console.log(`[${prospectNum}/${allProspects.length}] ${prospect.name}... ✗ no website`);
+        }
       }
 
-      // Small delay to avoid rate limiting
-      await new Promise(r => setTimeout(r, DELAY_MS));
+      // Save checkpoint after each chunk (every 5 prospects)
+      checkpoint.stats = { processed, found, emailsFound, verified };
+      saveCheckpoint(checkpoint);
     }
 
     // Progress summary every batch
-    const pct = Math.round((processed / prospects.length) * 100);
+    const pct = Math.round((processed / allProspects.length) * 100);
     const successRate = Math.round((found / processed) * 100);
     console.log(`\n--- Progress: ${pct}% | Found: ${found}/${processed} (${successRate}%) | Emails: ${emailsFound} | Verified: ${verified} ---\n`);
   }
@@ -628,6 +664,12 @@ async function main() {
   console.log(`Websites found: ${found} (${Math.round(found/processed*100)}%)`);
   console.log(`Emails extracted: ${emailsFound}`);
   console.log(`Verified as hotels: ${verified}`);
+
+  // Clean up checkpoint on completion
+  try {
+    fs.unlinkSync(CHECKPOINT_FILE);
+    console.log('\n✅ Checkpoint file cleaned up');
+  } catch {}
 }
 
 main().catch(console.error);

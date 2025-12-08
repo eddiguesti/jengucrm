@@ -16,6 +16,9 @@ import {
   Database,
   UserSearch,
   Linkedin,
+  MessageSquare,
+  Bell,
+  Activity,
 } from 'lucide-react';
 
 const navigation = [
@@ -23,6 +26,9 @@ const navigation = [
   { name: 'Prospects', href: '/prospects', icon: Users },
   { name: 'Pipeline', href: '/pipeline', icon: Kanban },
   { name: 'Emails', href: '/emails', icon: Mail },
+  { name: 'Replies', href: '/replies', icon: MessageSquare },
+  { name: 'Notifications', href: '/notifications', icon: Bell },
+  { name: 'Activity', href: '/activity', icon: Activity },
   { name: 'Mystery Shopper', href: '/mystery-shopper', icon: UserSearch },
   { name: 'Sales Navigator', href: '/sales-navigator', icon: Linkedin },
   { name: 'Lead Sources', href: '/lead-sources', icon: Database },

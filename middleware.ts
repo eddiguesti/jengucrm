@@ -3,14 +3,22 @@ import type { NextRequest } from 'next/server';
 
 /**
  * Middleware for authentication and route protection
- * - Validates session tokens (supports both old 'authenticated' and new 'session_*' format)
+ * - Validates session tokens (session_* format only)
  * - Protects API routes and pages
  * - Validates cron job requests
+ *
+ * Security improvements:
+ * - Legacy 'authenticated' token disabled by default (use LEGACY_AUTH_ENABLED=true to enable)
+ * - Only cryptographically secure session_* tokens accepted
+ * - Token length validation to prevent short/weak tokens
  */
 
 // Session configuration (must be inline for Edge runtime)
 const SESSION_COOKIE_NAME = 'auth_token';
 const SESSION_TOKEN_PREFIX = 'session_';
+
+// Feature flag for legacy auth (disabled by default for security)
+const LEGACY_AUTH_ENABLED = process.env.LEGACY_AUTH_ENABLED === 'true';
 
 // Routes that don't require authentication
 const publicRoutes = ['/login', '/api/auth/login'];
@@ -20,14 +28,23 @@ const cronRoutes = ['/api/cron/', '/api/check-replies', '/api/auto-email', '/api
 
 /**
  * Check if a session token is valid
- * Supports both legacy 'authenticated' and new 'session_*' format
+ * Only accepts secure session_* tokens (UUID-based, 36+ chars after prefix)
+ * Legacy 'authenticated' token is deprecated and disabled by default
  */
 function isValidSessionToken(token: string | undefined): boolean {
   if (!token) return false;
-  // Support legacy token during migration
-  if (token === 'authenticated') return true;
-  // New secure token format
-  if (token.startsWith(SESSION_TOKEN_PREFIX)) return true;
+
+  // New secure token format (required: prefix + UUID = 8 + 36 = 44 chars minimum)
+  if (token.startsWith(SESSION_TOKEN_PREFIX) && token.length >= 44) {
+    return true;
+  }
+
+  // Legacy token support (disabled by default, enable with LEGACY_AUTH_ENABLED=true)
+  if (LEGACY_AUTH_ENABLED && token === 'authenticated') {
+    console.warn('SECURITY WARNING: Legacy auth token used. Set LEGACY_AUTH_ENABLED=false to disable.');
+    return true;
+  }
+
   return false;
 }
 

@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
 
   let query = supabase
     .from('notifications')
-    .select('*')
+    .select('*, prospects(name, company)')
     .order('created_at', { ascending: false })
     .limit(limit);
 

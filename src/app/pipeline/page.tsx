@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import { Header } from '@/components/layout/header';
+import { MobilePageHeader } from '@/components/layout/mobile-page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star, Loader2 } from 'lucide-react';
+import { Star, Loader2, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 import type { Prospect, ProspectStage } from '@/types';
 
@@ -112,7 +113,17 @@ export default function PipelinePage() {
         }}
       />
 
-      <div className="flex-1 p-3 md:p-6 overflow-x-auto">
+      <MobilePageHeader
+        title="Pipeline"
+        subtitle={`${totalProspects} prospects`}
+        action={{
+          icon: <RefreshCw className="h-4 w-4" />,
+          label: 'Refresh',
+          onClick: fetchProspects,
+        }}
+      />
+
+      <div className="flex-1 px-3 pb-3 md:p-6 overflow-x-auto">
         {loading ? (
           <div className="flex items-center justify-center h-full">
             <Loader2 className="h-8 w-8 animate-spin text-amber-500" />

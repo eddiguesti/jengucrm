@@ -1,9 +1,15 @@
 import { NextResponse } from 'next/server';
 import { logger } from './logger';
+import { flags } from './feature-flags';
 
 /**
  * Standardized API response helpers
  * Ensures consistent response format across all endpoints
+ *
+ * Security:
+ * - Never exposes stack traces in production
+ * - Uses STRICT_ERROR_HANDLING flag for additional protection
+ * - Generates error IDs for correlation without exposing details
  */
 
 export interface ApiSuccessResponse<T = unknown> {
@@ -41,24 +47,33 @@ export function error(
   const errorId = crypto.randomUUID().slice(0, 8);
   const isDev = process.env.NODE_ENV === 'development';
 
-  // Log full error details server-side
+  // Determine if we should show error details
+  // - Never in production with STRICT_ERROR_HANDLING
+  // - Only in development when flag allows
+  const showDetails = isDev && !flags.STRICT_ERROR_HANDLING;
+
+  // Log full error details server-side (always)
   logger.error({
     errorId,
     message,
     status,
     cause: cause instanceof Error ? cause.message : String(cause),
     stack: cause instanceof Error ? cause.stack : undefined,
-  }, `API Error: ${message}`);
+  }, `API Error [${errorId}]: ${message}`);
 
-  return NextResponse.json(
-    {
-      success: false,
-      error: message,
-      errorId,
-      details: isDev && cause ? (cause instanceof Error ? cause.message : String(cause)) : undefined,
-    },
-    { status }
-  );
+  // Build sanitized response
+  const response: ApiErrorResponse = {
+    success: false,
+    error: message,
+    errorId,
+  };
+
+  // Only include details in development with strict handling disabled
+  if (showDetails && cause) {
+    response.details = cause instanceof Error ? cause.message : String(cause);
+  }
+
+  return NextResponse.json(response, { status });
 }
 
 /**

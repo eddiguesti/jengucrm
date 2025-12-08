@@ -9,7 +9,7 @@ import { processHotelReply, findGmailInboxByEmail, analyzeHotelReply } from '@/l
 import { JENGU_KNOWLEDGE } from '@/lib/jengu-knowledge';
 import { analyzeReplyWithAI, getActionPriority } from '@/lib/reply-analysis';
 import { logger } from '@/lib/logger';
-import Anthropic from '@anthropic-ai/sdk';
+import { aiGateway } from '@/lib/ai-gateway';
 
 // Azure credentials for edd@jengu.ai
 const AZURE_TENANT_ID = process.env.AZURE_TENANT_ID;
@@ -99,16 +99,11 @@ async function sendInstantReply(
   analysis: ReplyAnalysis,
   replyFromInbox?: string // Which inbox to send the reply from (for thread continuity)
 ): Promise<{ success: boolean; error?: string }> {
-  const apiKey = process.env.XAI_API_KEY || process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
+  if (!aiGateway.isConfigured()) {
     return { success: false, error: 'No AI API key configured' };
   }
 
   try {
-    const anthropic = new Anthropic({
-      apiKey,
-      baseURL: process.env.XAI_API_KEY ? 'https://api.x.ai' : undefined,
-    });
 
     // Try to extract sender's name from email "From" field or use a generic opener
     // Email format might be "John Smith <john@hotel.com>" or just "john@hotel.com"
@@ -269,23 +264,18 @@ Edd"
 Return ONLY valid JSON:
 {"subject": "Re: ${incomingEmail.subject}", "body": "your reply here"}`;
 
-    const response = await anthropic.messages.create({
-      model: process.env.XAI_API_KEY ? 'grok-4-1-fast-non-reasoning' : 'claude-sonnet-4-20250514',
-      max_tokens: 300,
-      messages: [{ role: 'user', content: prompt }],
+    // Use AI Gateway for reply generation
+    const result = await aiGateway.generateJSON<{ subject: string; body: string }>({
+      prompt,
+      maxTokens: 300,
+      context: `instant-reply:${prospect.name}`,
     });
 
-    const textContent = response.content.find(c => c.type === 'text');
-    if (!textContent || textContent.type !== 'text') {
-      return { success: false, error: 'No text in AI response' };
+    if (!result.data) {
+      return { success: false, error: 'Failed to parse reply JSON from AI' };
     }
 
-    const jsonMatch = textContent.text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      return { success: false, error: 'No JSON in AI response' };
-    }
-
-    const reply = JSON.parse(jsonMatch[0]) as { subject: string; body: string };
+    const reply = result.data;
 
     // Send the reply from the SAME inbox that received it (thread continuity)
     const sendResult = await sendEmail({
@@ -643,14 +633,15 @@ export async function POST(request: NextRequest) {
             continue;
           }
 
-          // Check if we already have this email
-          const { data: existing } = await supabase
+          // Check if we already have this email (use maybeSingle to handle 0 or >1 results)
+          const { data: existing, error: existingError } = await supabase
             .from('emails')
             .select('id')
             .eq('message_id', email.messageId)
-            .single();
+            .limit(1);
 
-          if (existing) continue;
+          // Skip if already exists (data array has items) or if we found duplicates (error from constraint)
+          if ((existing && existing.length > 0) || existingError) continue;
 
           // Check if this is a reply to a mystery shopper email (from any Gmail inbox)
           const isMysteryShopperReply = gmailEmails.includes(email.receivedByInbox?.toLowerCase() || '');
@@ -903,8 +894,8 @@ export async function POST(request: NextRequest) {
                 message: email.bodyPreview.substring(0, 300),
               });
 
-              // Send instant email notification to us
-              if (graphClient && analysis.isMeetingRequest) {
+              // Send instant email notification for ANY real reply (meeting request or positive)
+              if (graphClient) {
                 await sendNotificationEmail(graphClient, prospect, email, analysis);
                 results.notifications++;
               }
@@ -928,6 +919,51 @@ export async function POST(request: NextRequest) {
                 description: `Subject: ${email.subject}\n${email.bodyPreview.substring(0, 200)}...`,
                 email_id: savedEmail?.id,
               });
+            } else if (aiAnalysis.intent === 'delegation' || aiAnalysis.intent === 'out_of_office') {
+              // Delegation or OOO - DON'T auto-reply, ARCHIVE the prospect so they don't get more emails
+              const archiveReason = aiAnalysis.intent === 'delegation'
+                ? 'Contact no longer at company'
+                : 'Out of office auto-reply';
+
+              await supabase
+                .from('prospects')
+                .update({
+                  archived: true,
+                  archived_at: new Date().toISOString(),
+                  archive_reason: archiveReason,
+                  stage: 'lost',
+                })
+                .eq('id', prospect.id);
+
+              results.archived++;
+
+              await supabase.from('activities').insert({
+                prospect_id: prospect.id,
+                type: 'archived',
+                title: `Prospect archived: ${archiveReason}`,
+                description: `Subject: ${email.subject}\n${email.bodyPreview.substring(0, 200)}...\n\nAction: ${aiAnalysis.recommendedAction}`,
+                email_id: savedEmail?.id,
+              });
+
+              // If they mentioned someone else to contact, extract that
+              if (aiAnalysis.recommendedAction === 'contact_alternate' && email.bodyPreview) {
+                // Try to extract alternate contact from the email
+                const emailMatch = email.bodyPreview.match(/[\w.-]+@[\w.-]+\.\w+/);
+                if (emailMatch && emailMatch[0] !== email.from) {
+                  await supabase.from('activities').insert({
+                    prospect_id: prospect.id,
+                    type: 'contact_discovered',
+                    title: `Alternate contact found: ${emailMatch[0]}`,
+                    description: `Extracted from delegation email`,
+                  });
+                }
+              }
+
+              logger.info({
+                prospect: prospect.name,
+                reason: archiveReason,
+                email: email.from,
+              }, 'Prospect archived due to delegation/OOO');
             } else {
               // Regular reply - update stage and send instant response
               await supabase

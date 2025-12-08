@@ -1,16 +1,18 @@
 /**
- * Import Sales Navigator CSV files into the database
- * Usage: npx tsx scripts/import-sales-nav.ts
+ * Import Sales Navigator CSV files in batches
  */
+
+import { config as dotenvConfig } from 'dotenv';
+dotenvConfig({ path: '.env.local' });
 
 import fs from 'fs';
 import path from 'path';
-import { parse } from 'csv-parse/sync';
 
 const SALES_NAV_DIR = '/Users/edd/Documents/Jengu/sales navigator';
 const API_URL = 'http://localhost:3000/api/sales-navigator';
+const BATCH_SIZE = 100;
 
-interface SalesNavRecord {
+interface Prospect {
   profileUrl: string;
   name: string;
   firstname: string;
@@ -22,112 +24,108 @@ interface SalesNavRecord {
   searchQuery: string;
 }
 
-async function importCsvFile(filePath: string): Promise<{ imported: number; duplicates: number; errors: number }> {
-  const filename = path.basename(filePath);
-  console.log(`\nImporting: ${filename}`);
+function parseCSV(csvPath: string): Prospect[] {
+  const csv = fs.readFileSync(csvPath, 'utf-8');
+  const lines = csv.split(/\r?\n/).filter(l => l.trim());
+  const headers = lines[0].split(',').map(h => h.trim());
 
-  // Read and parse CSV
-  const content = fs.readFileSync(filePath, 'utf-8');
-  const records: SalesNavRecord[] = parse(content, {
-    columns: true,
-    skip_empty_lines: true,
-    trim: true,
+  const prospects: Prospect[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const values: string[] = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (const char of lines[i]) {
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        values.push(current);
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    values.push(current);
+
+    const obj: Record<string, string> = {};
+    headers.forEach((h, idx) => obj[h] = values[idx] || '');
+
+    if (obj.profileUrl) {
+      prospects.push(obj as unknown as Prospect);
+    }
+  }
+
+  return prospects;
+}
+
+async function importBatch(prospects: Prospect[], filename: string, batchNum: number): Promise<{ imported: number; duplicates: number; errors: number }> {
+  const response = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prospects, filename: `${filename}_batch${batchNum}` }),
   });
 
-  console.log(`  Found ${records.length} records`);
+  const data = await response.json();
+  return {
+    imported: data.imported || 0,
+    duplicates: data.duplicates || 0,
+    errors: data.errors || 0,
+  };
+}
 
-  if (records.length === 0) {
-    return { imported: 0, duplicates: 0, errors: 0 };
+async function importFile(filename: string): Promise<void> {
+  const csvPath = path.join(SALES_NAV_DIR, filename);
+
+  if (!fs.existsSync(csvPath)) {
+    console.error('File not found: ' + csvPath);
+    return;
   }
 
-  // Extract country from filename for tagging
-  // Handles: "Anguilla.csv", "Barbados_GMs.cvs.csv", "France.cvs.csv"
-  const countryMatch = filename.match(/^(.+?)(?:_GMs)?(?:\.cvs)?\.csv$/i);
-  let country = countryMatch ? countryMatch[1].replace(/_/g, ' ') : 'Unknown';
+  console.log('\n=== Importing ' + filename + ' ===');
+  const prospects = parseCSV(csvPath);
+  console.log('Parsed ' + prospects.length + ' prospects');
 
-  // Fix common typos/variations
-  if (country.toLowerCase() === 'bahams') country = 'Bahamas';
-  if (country.toLowerCase() === 'st lucia') country = 'Saint Lucia';
+  let totalImported = 0;
+  let totalDuplicates = 0;
+  let totalErrors = 0;
 
-  console.log(`  Country detected: ${country}`);
+  const batches = Math.ceil(prospects.length / BATCH_SIZE);
 
-  // Transform records for API
-  const prospects = records.map(r => ({
-    profileUrl: r.profileUrl,
-    name: r.name,
-    firstname: r.firstname,
-    lastname: r.lastname,
-    company: r.company,
-    email: r.email || null,
-    emailStatus: r.emailStatus,
-    jobTitle: r.jobTitle,
-    country, // Add country from filename
-  }));
+  for (let i = 0; i < batches; i++) {
+    const start = i * BATCH_SIZE;
+    const end = Math.min(start + BATCH_SIZE, prospects.length);
+    const batch = prospects.slice(start, end);
 
-  // Send to API
-  try {
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prospects, filename }),
-    });
+    console.log('  Batch ' + (i + 1) + '/' + batches + ' (' + start + '-' + end + ')...');
 
-    const data = await response.json();
-
-    if (data.success && data.result) {
-      console.log(`  Imported: ${data.result.imported}, Duplicates: ${data.result.duplicates}, Errors: ${data.result.errors}`);
-      return {
-        imported: data.result.imported,
-        duplicates: data.result.duplicates,
-        errors: data.result.errors,
-      };
-    } else {
-      console.error(`  ERROR: ${data.error || 'Unknown error'}`);
-      return { imported: 0, duplicates: 0, errors: records.length };
+    try {
+      const result = await importBatch(batch, filename, i + 1);
+      totalImported += result.imported;
+      totalDuplicates += result.duplicates;
+      totalErrors += result.errors;
+      console.log('    Done: Imported: ' + result.imported + ', Duplicates: ' + result.duplicates + ', Errors: ' + result.errors);
+    } catch (error) {
+      console.error('    Batch failed:', error);
+      totalErrors += batch.length;
     }
-  } catch (err) {
-    console.error(`  ERROR: ${err}`);
-    return { imported: 0, duplicates: 0, errors: records.length };
+
+    await new Promise(r => setTimeout(r, 500));
   }
+
+  console.log('\n' + filename + ' complete: Imported ' + totalImported + ', Duplicates ' + totalDuplicates + ', Errors ' + totalErrors);
 }
 
 async function main() {
-  console.log('='.repeat(60));
-  console.log('Sales Navigator CSV Import');
-  console.log('='.repeat(60));
+  const files = ['Greece.csv', 'Italy.csv', 'Portugal.csv'];
 
-  // Find all CSV files
-  const files = fs.readdirSync(SALES_NAV_DIR)
-    .filter(f => f.endsWith('.csv'))
-    .map(f => path.join(SALES_NAV_DIR, f));
-
-  console.log(`Found ${files.length} CSV files to import`);
-
-  const totals = { imported: 0, duplicates: 0, errors: 0 };
+  console.log('Starting Sales Navigator import...');
+  console.log('Files to import: ' + files.join(', '));
 
   for (const file of files) {
-    const result = await importCsvFile(file);
-    totals.imported += result.imported;
-    totals.duplicates += result.duplicates;
-    totals.errors += result.errors;
+    await importFile(file);
   }
 
-  console.log('\n' + '='.repeat(60));
-  console.log('IMPORT COMPLETE');
-  console.log('='.repeat(60));
-  console.log(`Total Imported:   ${totals.imported}`);
-  console.log(`Total Duplicates: ${totals.duplicates}`);
-  console.log(`Total Errors:     ${totals.errors}`);
-  console.log('='.repeat(60));
-
-  // List .numbers files that need manual export
-  const numbersFiles = fs.readdirSync(SALES_NAV_DIR)
-    .filter(f => f.endsWith('.numbers') && !files.some(csv => csv.includes(f.replace('.numbers', ''))));
-
-  if (numbersFiles.length > 0) {
-    console.log('\n.numbers files without CSV (need manual export):');
-    numbersFiles.forEach(f => console.log(`  - ${f}`));
-  }
+  console.log('\n=== All imports complete ===');
 }
 
 main().catch(console.error);

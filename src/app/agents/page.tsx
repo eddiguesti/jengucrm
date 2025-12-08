@@ -3,9 +3,10 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Header } from '@/components/layout/header';
-import { Mail, MessageSquare, Calendar, TrendingUp, Inbox, Loader2 } from 'lucide-react';
+import { Mail, MessageSquare, Calendar, TrendingUp, Inbox, Loader2, ExternalLink } from 'lucide-react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { cn } from '@/lib/utils';
+import Link from 'next/link';
 
 interface AgentStats {
   email: string;
@@ -112,12 +113,13 @@ function AgentCard({ agent }: { agent: AgentStats }) {
         </div>
       </div>
 
-      {/* Quick Stats Grid */}
+      {/* Quick Stats Grid - Clickable */}
       <div className="grid grid-cols-2 gap-2 md:gap-4 mb-4 md:mb-6">
-        <div
+        <Link
+          href={`/emails?from=${encodeURIComponent(email)}`}
           className={cn(
-            "rounded-lg p-3 md:p-4 border",
-            isLight ? "bg-slate-50 border-slate-100" : "bg-white/[0.03] border-white/[0.06]"
+            "rounded-lg p-3 md:p-4 border transition-all hover:scale-[1.02] cursor-pointer group",
+            isLight ? "bg-slate-50 border-slate-100 hover:border-sky-200 hover:bg-sky-50/50" : "bg-white/[0.03] border-white/[0.06] hover:border-sky-500/30 hover:bg-sky-500/5"
           )}
         >
           <div className="flex items-center gap-1 md:gap-2 mb-1">
@@ -125,6 +127,7 @@ function AgentCard({ agent }: { agent: AgentStats }) {
             <span className={cn("text-[10px] md:text-xs", isLight ? "text-slate-500" : "text-zinc-400")}>
               Sent Today
             </span>
+            <ExternalLink className="h-2.5 w-2.5 opacity-0 group-hover:opacity-100 transition-opacity ml-auto text-sky-500" />
           </div>
           <p
             className={cn(
@@ -137,12 +140,13 @@ function AgentCard({ agent }: { agent: AgentStats }) {
           <p className={cn("text-[10px] md:text-xs", isLight ? "text-slate-500" : "text-zinc-500")}>
             {stats.sent.total} total
           </p>
-        </div>
+        </Link>
 
-        <div
+        <Link
+          href={`/replies?from=${encodeURIComponent(email)}`}
           className={cn(
-            "rounded-lg p-3 md:p-4 border",
-            isLight ? "bg-slate-50 border-slate-100" : "bg-white/[0.03] border-white/[0.06]"
+            "rounded-lg p-3 md:p-4 border transition-all hover:scale-[1.02] cursor-pointer group",
+            isLight ? "bg-slate-50 border-slate-100 hover:border-emerald-200 hover:bg-emerald-50/50" : "bg-white/[0.03] border-white/[0.06] hover:border-emerald-500/30 hover:bg-emerald-500/5"
           )}
         >
           <div className="flex items-center gap-1 md:gap-2 mb-1">
@@ -150,6 +154,7 @@ function AgentCard({ agent }: { agent: AgentStats }) {
             <span className={cn("text-[10px] md:text-xs", isLight ? "text-slate-500" : "text-zinc-400")}>
               Replies
             </span>
+            <ExternalLink className="h-2.5 w-2.5 opacity-0 group-hover:opacity-100 transition-opacity ml-auto text-emerald-500" />
           </div>
           <p
             className={cn(
@@ -162,7 +167,7 @@ function AgentCard({ agent }: { agent: AgentStats }) {
           <p className={cn("text-[10px] md:text-xs", isLight ? "text-slate-500" : "text-zinc-500")}>
             {stats.replies.thisWeek} this week
           </p>
-        </div>
+        </Link>
 
         <div
           className={cn(
@@ -186,10 +191,11 @@ function AgentCard({ agent }: { agent: AgentStats }) {
           </p>
         </div>
 
-        <div
+        <Link
+          href={`/notifications?type=meeting_request`}
           className={cn(
-            "rounded-lg p-3 md:p-4 border",
-            isLight ? "bg-slate-50 border-slate-100" : "bg-white/[0.03] border-white/[0.06]"
+            "rounded-lg p-3 md:p-4 border transition-all hover:scale-[1.02] cursor-pointer group",
+            isLight ? "bg-slate-50 border-slate-100 hover:border-purple-200 hover:bg-purple-50/50" : "bg-white/[0.03] border-white/[0.06] hover:border-purple-500/30 hover:bg-purple-500/5"
           )}
         >
           <div className="flex items-center gap-1 md:gap-2 mb-1">
@@ -197,6 +203,7 @@ function AgentCard({ agent }: { agent: AgentStats }) {
             <span className={cn("text-[10px] md:text-xs", isLight ? "text-slate-500" : "text-zinc-400")}>
               Meetings
             </span>
+            <ExternalLink className="h-2.5 w-2.5 opacity-0 group-hover:opacity-100 transition-opacity ml-auto text-purple-500" />
           </div>
           <p
             className={cn(
@@ -206,7 +213,7 @@ function AgentCard({ agent }: { agent: AgentStats }) {
           >
             {stats.meetingRequests}
           </p>
-        </div>
+        </Link>
       </div>
 
       {/* Assigned Prospects */}

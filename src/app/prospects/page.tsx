@@ -441,7 +441,50 @@ export default function ProspectsPage() {
         }}
       />
 
-      <div className="flex-1 p-4 md:p-6 space-y-3 md:space-y-4 overflow-auto">
+      {/* Mobile Page Title - Premium Design */}
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+        className="md:hidden px-4 pt-3 pb-2 flex items-center justify-between"
+      >
+        <div>
+          <h1 className={cn(
+            "text-2xl font-bold tracking-tight",
+            isLight ? "text-zinc-900" : "text-white"
+          )}>
+            Prospects
+          </h1>
+          <p className={cn(
+            "text-sm font-medium mt-0.5",
+            isLight ? "text-zinc-500" : "text-white/50"
+          )}>
+            {totalProspects.toLocaleString()} total
+          </p>
+        </div>
+        <motion.div
+          initial={{ opacity: 0, scale: 0.8 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ delay: 0.2, type: 'spring', damping: 20 }}
+        >
+          <Button
+            onClick={() => setShowAddDialog(true)}
+            size="sm"
+            className={cn(
+              "rounded-xl h-9 px-3.5 font-medium shadow-lg",
+              "active:scale-95 transition-transform",
+              isLight
+                ? "bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white shadow-blue-500/25"
+                : "bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white shadow-blue-500/30"
+            )}
+          >
+            <UserPlus className="h-4 w-4 mr-1.5" />
+            Add
+          </Button>
+        </motion.div>
+      </motion.div>
+
+      <div className="flex-1 px-4 pb-4 md:p-6 space-y-3 md:space-y-4 overflow-auto">
         {/* Readiness Summary */}
         <Card
           className={cn(

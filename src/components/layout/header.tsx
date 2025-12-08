@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Search, Bell, Plus, Command, RefreshCw, Mail, Calendar, Loader2, Moon, Sun } from 'lucide-react';
+import { Search, Bell, Plus, Command, RefreshCw, Mail, Calendar, Loader2, Moon, Sun, ExternalLink } from 'lucide-react';
 import Link from 'next/link';
 import { useTheme } from '@/contexts/ThemeContext';
 import { cn } from '@/lib/utils';
@@ -122,26 +122,30 @@ export function Header({ title, subtitle, action }: HeaderProps) {
 
   return (
     <header
-      className={`sticky top-0 z-40 flex h-14 items-center justify-between border-b bg-background/80 backdrop-blur-xl px-6 transition-colors ${
+      className={cn(
+        "sticky top-0 z-40 flex h-14 items-center justify-between border-b bg-background/80 backdrop-blur-xl transition-colors",
+        "px-4 md:px-6",
+        "hidden md:flex", // Hide on mobile - we have our own mobile header
         isLight ? 'border-[#efe7dc] shadow-[0_12px_32px_-28px_rgba(0,0,0,0.15)]' : 'border-white/[0.06]'
-      }`}
+      )}
     >
-      <div>
-        <h1 className="text-lg font-semibold text-foreground">{title}</h1>
-        {subtitle && <p className="text-xs text-muted-foreground">{subtitle}</p>}
+      <div className="min-w-0 flex-1">
+        <h1 className="text-base md:text-lg font-semibold text-foreground truncate">{title}</h1>
+        {subtitle && <p className="text-xs text-muted-foreground truncate">{subtitle}</p>}
       </div>
 
-      <div className="flex items-center gap-3">
-        {/* Search - macOS Spotlight style */}
-        <div className="relative">
+      <div className="flex items-center gap-2 md:gap-3 flex-shrink-0">
+        {/* Search - macOS Spotlight style - hidden on small screens */}
+        <div className="relative hidden lg:block">
           <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Search..."
-            className={`w-56 h-8 pl-9 pr-12 text-xs rounded-lg macos-transition ${
+            className={cn(
+              "w-48 xl:w-56 h-8 pl-9 pr-12 text-xs rounded-lg macos-transition",
               isLight
                 ? 'bg-white border-slate-200 text-slate-700 placeholder:text-slate-400 focus:border-sky-400 focus:ring-1 focus:ring-sky-300'
                 : 'bg-white/[0.06] border-white/[0.08] text-white placeholder:text-white/40 focus:bg-white/[0.08] focus:border-blue-500/50'
-            }`}
+            )}
           />
           <div
             className={cn(
@@ -153,6 +157,20 @@ export function Header({ title, subtitle, action }: HeaderProps) {
             <span>K</span>
           </div>
         </div>
+
+        {/* Search icon for medium screens */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className={cn(
+            "h-8 w-8 rounded-lg macos-transition lg:hidden",
+            isLight
+              ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              : 'text-white/60 hover:text-white hover:bg-white/[0.06]'
+          )}
+        >
+          <Search className="h-4 w-4" />
+        </Button>
 
         {/* Theme toggle */}
         {ready && (
@@ -233,7 +251,7 @@ export function Header({ title, subtitle, action }: HeaderProps) {
                 )}
               </div>
 
-              <div className="max-h-80 overflow-y-auto">
+              <div className="max-h-64 overflow-y-auto">
                 {notifications.length > 0 ? (
                   notifications.map((notification, idx) => {
                     const safeKey =
@@ -305,6 +323,38 @@ export function Header({ title, subtitle, action }: HeaderProps) {
                     <p>No notifications yet</p>
                   </div>
                 )}
+              </div>
+
+              {/* View All & Quick Links */}
+              <div className={cn(
+                "p-2 border-t flex items-center justify-between gap-2",
+                isLight ? "border-slate-200 bg-slate-50" : "border-zinc-800 bg-zinc-900/50"
+              )}>
+                <Link
+                  href="/notifications"
+                  onClick={() => setShowNotifications(false)}
+                  className={cn(
+                    "flex-1 text-center text-xs py-1.5 px-3 rounded-md transition-colors",
+                    isLight
+                      ? "text-sky-600 hover:bg-sky-50"
+                      : "text-blue-400 hover:bg-blue-500/10"
+                  )}
+                >
+                  View All Notifications
+                </Link>
+                <Link
+                  href="/replies"
+                  onClick={() => setShowNotifications(false)}
+                  className={cn(
+                    "text-xs py-1.5 px-3 rounded-md transition-colors flex items-center gap-1",
+                    isLight
+                      ? "text-slate-600 hover:bg-slate-100"
+                      : "text-zinc-400 hover:bg-zinc-800"
+                  )}
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  Replies
+                </Link>
               </div>
             </div>
           )}

@@ -5,12 +5,7 @@
  * 3. Only process prospects that look like hotels
  */
 
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  'https://bxcwlwglvcqujrdudxkw.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ4Y3dsd2dsdmNxdWpyZHVkeGt3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NDI4NTIwMiwiZXhwIjoyMDc5ODYxMjAyfQ.bK2ai2Hfhb-Mud3vSItTrE0uzcwY3rbiu8J3UuWiR48'
-);
+import { supabase } from './lib/supabase';
 
 // Generate possible domain names from hotel name
 function generateDomainGuesses(hotelName: string): string[] {

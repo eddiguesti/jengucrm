@@ -13,6 +13,7 @@ import { logger } from '../../logger';
 // API Keys from environment
 const HUNTER_API_KEY = process.env.HUNTER_API_KEY;
 const ZEROBOUNCE_API_KEY = process.env.ZEROBOUNCE_API_KEY;
+const MILLIONVERIFIER_API_KEY = process.env.MILLIONVERIFIER_API_KEY;
 
 export interface HunterEmailResult {
   email: string;
@@ -72,6 +73,26 @@ export interface ZeroBounceResult {
   zipCode?: string;
   country?: string;
   processedAt?: string;
+}
+
+/**
+ * MillionVerifier API result
+ * Result codes:
+ * 1 = ok (valid)
+ * 2 = catch_all
+ * 3 = unknown
+ * 4 = error
+ * 5 = disposable
+ * 6 = invalid
+ */
+export interface MillionVerifierResult {
+  email: string;
+  result: 'ok' | 'catch_all' | 'unknown' | 'error' | 'disposable' | 'invalid';
+  resultcode: number;
+  subresult: string;
+  free: boolean;
+  role: boolean;  // true if generic/role email (info@, support@, etc.)
+  credits: number;  // remaining credits
 }
 
 /**
@@ -294,6 +315,85 @@ export async function zeroBounceVerify(email: string): Promise<ZeroBounceResult 
 }
 
 /**
+ * MillionVerifier - Fast, cheap email verification
+ * $0.0039 per verification (500 credits = ~$2)
+ *
+ * Results:
+ * - ok: Valid email that will receive mail
+ * - catch_all: Domain accepts all emails (can't verify individual)
+ * - unknown: Could not verify (temporary issue)
+ * - error: Verification failed
+ * - disposable: Temporary/throwaway email
+ * - invalid: Email does not exist
+ */
+export async function millionVerifierVerify(email: string): Promise<MillionVerifierResult | null> {
+  if (!MILLIONVERIFIER_API_KEY) {
+    logger.debug('MillionVerifier API key not configured');
+    return null;
+  }
+
+  try {
+    const params = new URLSearchParams({
+      api: MILLIONVERIFIER_API_KEY,
+      email,
+      timeout: '10',  // 10 second timeout
+    });
+
+    const response = await fetch(
+      `https://api.millionverifier.com/api/v3/?${params}`,
+      { method: 'GET' }
+    );
+
+    if (!response.ok) {
+      const error = await response.text();
+      logger.warn({ status: response.status, error }, 'MillionVerifier verify failed');
+      return null;
+    }
+
+    const data = await response.json();
+
+    logger.debug({
+      email,
+      result: data.result,
+      subresult: data.subresult,
+      role: data.role,
+      credits: data.credits,
+    }, 'MillionVerifier result');
+
+    return {
+      email: data.email || email,
+      result: data.result,
+      resultcode: data.resultcode,
+      subresult: data.subresult || '',
+      free: data.free === true,
+      role: data.role === true,
+      credits: data.credits || 0,
+    };
+  } catch (error) {
+    logger.error({ error, email }, 'MillionVerifier verify error');
+    return null;
+  }
+}
+
+/**
+ * Check MillionVerifier remaining credits
+ */
+export async function getMillionVerifierCredits(): Promise<number | null> {
+  if (!MILLIONVERIFIER_API_KEY) {
+    return null;
+  }
+
+  try {
+    // MillionVerifier returns credits in every response
+    // Use a test email to check credits
+    const result = await millionVerifierVerify('test@test.com');
+    return result?.credits ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Check Hunter.io API quota
  */
 export async function getHunterQuota(): Promise<{ used: number; available: number } | null> {
@@ -353,5 +453,6 @@ export function getConfiguredServices(): string[] {
   const services: string[] = [];
   if (HUNTER_API_KEY) services.push('hunter');
   if (ZEROBOUNCE_API_KEY) services.push('zerobounce');
+  if (MILLIONVERIFIER_API_KEY) services.push('millionverifier');
   return services;
 }

@@ -6,18 +6,65 @@ import { auditCronRun } from '@/lib/audit';
 import { dbCache } from '@/lib/cache';
 
 /**
+ * ================================================================================
+ * JENGU MARKETING AGENT - COMPLETE CRON SCHEDULE DOCUMENTATION
+ * ================================================================================
+ *
+ * VERCEL-MANAGED (vercel.json):
+ * ┌─────────────────────────────────────────────────────────────────────────────┐
+ * │ /api/cron/daily        │ 0 7 * * *      │ 7:00 AM UTC daily                 │
+ * │   - Master pipeline: scrape → enrich → mine → replies → follow-ups → clean │
+ * └─────────────────────────────────────────────────────────────────────────────┘
+ *
+ * EXTERNAL CRON SERVICE (cron-job.org or similar):
+ * ┌─────────────────────────────────────────────────────────────────────────────┐
+ * │ ENDPOINT                        │ SCHEDULE                │ PURPOSE        │
+ * ├─────────────────────────────────────────────────────────────────────────────┤
+ * │ /api/cron/hourly-email          │ *‎/5 8-18 * * 1-5       │ Email sending  │
+ * │   Every 5 min, 8am-6pm Mon-Fri  │ ~56 emails/day          │ Human-like     │
+ * ├─────────────────────────────────────────────────────────────────────────────┤
+ * │ /api/cron/mystery-shopper       │ *‎/30 8-20 * * *        │ Contact disc.  │
+ * │   Every 30 min, 8am-8pm daily   │ ~50 inquiries/day       │ GM finding     │
+ * ├─────────────────────────────────────────────────────────────────────────────┤
+ * │ /api/cron/sales-nav-enrichment  │ *‎/15 * * * *           │ Email finding  │
+ * │   Every 15 minutes, 24/7        │ 50 jobs/batch           │ Sales Nav      │
+ * ├─────────────────────────────────────────────────────────────────────────────┤
+ * │ /api/cron/check-replies         │ 0 *‎/4 * * *            │ Reply check    │
+ * │   Every 4 hours                 │ Last 6 hours            │ Instant reply  │
+ * ├─────────────────────────────────────────────────────────────────────────────┤
+ * │ /api/cron/rescore               │ 0 6 * * 0               │ Weekly rescore │
+ * │   Sundays at 6:00 AM UTC        │ All prospects           │ Tier updates   │
+ * ├─────────────────────────────────────────────────────────────────────────────┤
+ * │ /api/cron/re-engage             │ 0 5 * * 0               │ Re-engagement  │
+ * │   Sundays at 5:00 AM UTC        │ Stale prospects         │ Archive/retry  │
+ * └─────────────────────────────────────────────────────────────────────────────┘
+ *
+ * EXTERNAL CRON SETUP (cron-job.org):
+ * 1. Create account at https://cron-job.org
+ * 2. Add each endpoint with schedule above
+ * 3. Set Authorization header: Bearer YOUR_CRON_SECRET
+ * 4. Enable notifications for failures
+ *
+ * RATE LIMITS:
+ * - Emails: 80/day (4 inboxes × 20/inbox warmup limit)
+ * - Mystery Shopper: ~50/day (randomized for human-like pattern)
+ * - Enrichment: ~200/day (50/batch × 4 batches/hour)
+ * - Google Places: 300/day (free tier)
+ *
+ * ================================================================================
  * MASTER DAILY CRON - Complete automation pipeline
+ * ================================================================================
  *
  * Flow:
  * 1. Scrape job boards → hot leads with job pain points
  * 2. Enrich new prospects → website scrape, GM name, WHOIS, email finding
  * 3. Mine reviews → pain signals for personalization
  * 4. Check replies → process inbound, auto-respond
- * 5. Auto-email → send to high-score prospects with real emails
+ * 5. Auto-email → SKIPPED (handled by hourly-email cron)
  * 6. Follow-ups → nudge contacted prospects with no reply
  * 7. Cleanup → clear expired cache and old data
  *
- * Note: Mystery shopper runs separately every 30 mins (8am-8pm) for 50 emails/day
+ * Note: Mystery shopper runs separately every 30 mins (8am-8pm) for ~50 emails/day
  * This runs at 7am UTC to prepare prospects before 8am email send
  */
 
@@ -112,33 +159,14 @@ export async function GET(request: NextRequest) {
     logger.error({ requestId, step: 4, error: err }, 'Daily cron: Check replies failed');
   }
 
-  // 5. Auto-send emails to high-score prospects
-  try {
-    logger.info({ requestId, step: 5 }, 'Daily cron: Auto-sending emails...');
-    const response = await fetch(`${baseUrl}/api/auto-email`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': cronSecret ? `Bearer ${cronSecret}` : '',
-      },
-      body: JSON.stringify({
-        max_emails: 80,
-        min_score: 50,
-        stagger_delay: true,
-      }),
-    });
-    const data = await response.json();
-    results.auto_emails = { success: response.ok, error: response.ok ? null : data.error, stats: data };
-    logger.info({ requestId, step: 5, success: response.ok, sent: data.sent || 0 }, 'Daily cron: Auto emails complete');
-
-    // Check bounce rate and alert if high
-    if (data.bounced && data.sent) {
-      await checkAndAlertBounceRate(data.bounced, data.sent);
-    }
-  } catch (err) {
-    results.auto_emails.error = String(err);
-    logger.error({ requestId, step: 5, error: err }, 'Daily cron: Auto emails failed');
-  }
+  // 5. Auto-send emails - SKIPPED (handled by hourly-email cron for proper staggering)
+  // Use external cron (cron-job.org) to call /api/cron/hourly-email every hour 8am-6pm
+  results.auto_emails = {
+    success: true,
+    error: null,
+    stats: { skipped: true, reason: 'Handled by hourly-email cron for staggered sending' }
+  };
+  logger.info({ requestId, step: 5 }, 'Daily cron: Auto-emails skipped (handled by hourly cron)');
 
   // 6. Send follow-ups
   try {

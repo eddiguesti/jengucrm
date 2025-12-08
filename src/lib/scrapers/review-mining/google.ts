@@ -106,6 +106,23 @@ export class GoogleReviewScraper {
 
   async scrape(location: string): Promise<ReviewMiningResult> {
     const startTime = Date.now();
+
+    // DISABLED: Google Reviews API is PAID only (~$30/1000 requests)
+    // The OLD Places API (maps.googleapis.com) has NO free tier
+    // Reviews specifically require paid "Atmosphere" fields
+    // Use TripAdvisor scraper instead (web scraping = free)
+    return {
+      platform: 'google',
+      location,
+      properties_scanned: 0,
+      reviews_scanned: 0,
+      properties: [],
+      errors: ['DISABLED: Google Reviews API costs ~$30/1000 requests. Use TripAdvisor instead.'],
+      duration: Date.now() - startTime,
+    };
+
+    // Original code disabled below - DO NOT ENABLE without budget approval
+    /* eslint-disable no-unreachable */
     const properties: ReviewMinedProperty[] = [];
     const errors: string[] = [];
     let propertiesScanned = 0;

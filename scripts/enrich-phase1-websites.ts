@@ -4,12 +4,7 @@
  * Runs in parallel batches for speed
  */
 
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  'https://bxcwlwglvcqujrdudxkw.supabase.co',
-  process.env.SUPABASE_SERVICE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ4Y3dsd2dsdmNxdWpyZHVkeGt3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NDI4NTIwMiwiZXhwIjoyMDc5ODYxMjAyfQ.bK2ai2Hfhb-Mud3vSItTrE0uzcwY3rbiu8J3UuWiR48'
-);
+import { supabase } from './lib/supabase';
 
 const GOOGLE_PLACES_KEY = process.env.GOOGLE_PLACES_API_KEY || '';
 
@@ -54,38 +49,12 @@ async function searchDuckDuckGo(hotelName: string, country: string): Promise<str
   }
 }
 
-// Search Google Places for hotel
-async function searchGooglePlaces(hotelName: string, city: string, country: string): Promise<{ website: string | null; placeId: string | null; address: string | null }> {
-  if (!GOOGLE_PLACES_KEY) {
-    return { website: null, placeId: null, address: null };
-  }
-
-  try {
-    const query = `${hotelName} hotel ${city} ${country}`;
-    const searchUrl = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(query)}&inputtype=textquery&fields=place_id,name,formatted_address&key=${GOOGLE_PLACES_KEY}`;
-
-    const searchRes = await fetch(searchUrl);
-    const searchData = await searchRes.json();
-
-    if (searchData.candidates && searchData.candidates.length > 0) {
-      const placeId = searchData.candidates[0].place_id;
-      const address = searchData.candidates[0].formatted_address;
-
-      // Get website from place details
-      const detailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=website&key=${GOOGLE_PLACES_KEY}`;
-      const detailsRes = await fetch(detailsUrl);
-      const detailsData = await detailsRes.json();
-
-      return {
-        website: detailsData.result?.website || null,
-        placeId,
-        address,
-      };
-    }
-  } catch {
-    // Ignore errors
-  }
-
+// DISABLED: Google Places API - even "free tier" has costs
+// Use DuckDuckGo + Grok instead (see enrich-phase1-google-search.ts)
+async function searchGooglePlaces(_hotelName: string, _city: string, _country: string): Promise<{ website: string | null; placeId: string | null; address: string | null }> {
+  // Google Places API DISABLED to avoid unexpected charges
+  // Use the main enrichment script instead: npx ts-node scripts/enrich-phase1-google-search.ts
+  console.log('  [SKIPPED] Google Places API disabled - use enrich-phase1-google-search.ts instead');
   return { website: null, placeId: null, address: null };
 }
 

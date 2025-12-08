@@ -32,7 +32,7 @@ export async function GET() {
       // Query 2: Emails with details (limited for performance)
       supabase
         .from('emails')
-        .select('id, direction, status, email_type, sent_at, from_email, created_at')
+        .select('id, direction, status, email_type, sent_at, from_email, created_at, opened_at, strategy_variant')
         .order('created_at', { ascending: false })
         .limit(20000),
 
@@ -139,9 +139,15 @@ export async function GET() {
     let repliesToday = 0;
     let repliesThisWeek = 0;
     let repliesThisMonth = 0;
+    let opensTotal = 0;
+    let opensToday = 0;
+    let opensThisWeek = 0;
+    let opensThisMonth = 0;
     const sentByInbox: Record<string, number> = {};
     const sentByDay: Record<string, number> = {};
     const repliesByDay: Record<string, number> = {};
+    const opensByDay: Record<string, number> = {};
+    const byStrategy: Record<string, { sent: number; opened: number; replied: number }> = {};
 
     for (const e of emails || []) {
       const sentDate = e.sent_at ? new Date(e.sent_at) : new Date(e.created_at);
@@ -158,6 +164,26 @@ export async function GET() {
         if (sentDate >= today) sentToday++;
         if (sentDate >= thisWeekStart) sentThisWeek++;
         if (sentDate >= thisMonthStart) sentThisMonth++;
+
+        // Track opens
+        if (e.opened_at) {
+          opensTotal++;
+          const openDate = new Date(e.opened_at);
+          const openDayKey = openDate.toISOString().split('T')[0];
+          opensByDay[openDayKey] = (opensByDay[openDayKey] || 0) + 1;
+
+          if (openDate >= today) opensToday++;
+          if (openDate >= thisWeekStart) opensThisWeek++;
+          if (openDate >= thisMonthStart) opensThisMonth++;
+        }
+
+        // Track by strategy variant (A/B testing)
+        const strategy = e.strategy_variant || 'default';
+        if (!byStrategy[strategy]) {
+          byStrategy[strategy] = { sent: 0, opened: 0, replied: 0 };
+        }
+        byStrategy[strategy].sent++;
+        if (e.opened_at) byStrategy[strategy].opened++;
       }
 
       if (e.direction === 'inbound') {
@@ -174,6 +200,21 @@ export async function GET() {
     const replyRateTotal = sentTotal > 0 ? ((repliesTotal / sentTotal) * 100).toFixed(1) : '0';
     const replyRateWeek = sentThisWeek > 0 ? ((repliesThisWeek / sentThisWeek) * 100).toFixed(1) : '0';
     const replyRateMonth = sentThisMonth > 0 ? ((repliesThisMonth / sentThisMonth) * 100).toFixed(1) : '0';
+
+    // Calculate open rates
+    const openRateTotal = sentTotal > 0 ? ((opensTotal / sentTotal) * 100).toFixed(1) : '0';
+    const openRateWeek = sentThisWeek > 0 ? ((opensThisWeek / sentThisWeek) * 100).toFixed(1) : '0';
+    const openRateMonth = sentThisMonth > 0 ? ((opensThisMonth / sentThisMonth) * 100).toFixed(1) : '0';
+
+    // Calculate strategy performance
+    const strategyPerformance = Object.entries(byStrategy).map(([strategy, stats]) => ({
+      strategy,
+      sent: stats.sent,
+      opened: stats.opened,
+      replied: stats.replied,
+      openRate: stats.sent > 0 ? ((stats.opened / stats.sent) * 100).toFixed(1) : '0',
+      replyRate: stats.sent > 0 ? ((stats.replied / stats.sent) * 100).toFixed(1) : '0',
+    })).sort((a, b) => parseFloat(b.replyRate) - parseFloat(a.replyRate));
 
     // === CONVERSION FUNNEL ===
     // Note: Stage counts are from sampled data, rates calculated consistently
@@ -274,6 +315,13 @@ export async function GET() {
           byInbox: sentByInbox,
           byDay: sentByDay,
         },
+        opens: {
+          total: opensTotal,
+          today: opensToday,
+          thisWeek: opensThisWeek,
+          thisMonth: opensThisMonth,
+          byDay: opensByDay,
+        },
         replies: {
           total: repliesTotal,
           today: repliesToday,
@@ -281,11 +329,17 @@ export async function GET() {
           thisMonth: repliesThisMonth,
           byDay: repliesByDay,
         },
+        openRates: {
+          total: parseFloat(openRateTotal),
+          thisWeek: parseFloat(openRateWeek),
+          thisMonth: parseFloat(openRateMonth),
+        },
         replyRates: {
           total: parseFloat(replyRateTotal),
           thisWeek: parseFloat(replyRateWeek),
           thisMonth: parseFloat(replyRateMonth),
         },
+        strategyPerformance,
       },
       funnel,
       inboxes: {

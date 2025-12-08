@@ -120,10 +120,22 @@ export const config = {
     get apiKey() { return getEnvOptional('HUNTER_API_KEY'); },
   },
 
+  // MillionVerifier (email verification)
+  millionVerifier: {
+    get apiKey() { return getEnvOptional('MILLIONVERIFIER_API_KEY'); },
+    get isConfigured() { return !!this.apiKey; },
+  },
+
   // Security
   security: {
     get cronSecret() { return getEnvOptional('CRON_SECRET'); },
-    get appPassword() { return getEnv('APP_PASSWORD', 'JenguCRMbeta1!'); },
+    get appPassword() {
+      const password = process.env.APP_PASSWORD;
+      if (!password) {
+        throw new Error('APP_PASSWORD environment variable is required. Set it in your .env file.');
+      }
+      return password;
+    },
   },
 
   // Notifications

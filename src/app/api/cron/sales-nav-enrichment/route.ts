@@ -267,28 +267,22 @@ async function processEnrichmentJob(
   }
 
   // ============================================
-  // STEP 4: Fallback - use generic email if found
+  // STEP 4: NO GENERIC FALLBACK
+  // We want ONLY personal emails for Sales Nav contacts
+  // Generic emails like info@, contact@ are useless for cold outreach
   // ============================================
 
-  // If we found generic emails on website (info@, contact@), use as fallback
+  // Log if we found generic emails but are not using them
   if (scrapedEmails.length > 0) {
-    const genericEmail = scrapedEmails.find(e =>
-      /^(info|contact|hello|enquiries|reservations)@/i.test(e)
+    const genericEmails = scrapedEmails.filter(e =>
+      /^(info|contact|hello|enquiries|reservations|reception|booking|sales|mail|admin|office)@/i.test(e)
     );
-
-    if (genericEmail) {
-      logger.debug({ hotel: job.company, email: genericEmail }, 'Using generic fallback email');
-      return {
-        email: genericEmail,
-        confidence: 30,
-        confidenceLevel: 'low',
-        method: 'website_generic',
-        website: websiteFound,
-      };
+    if (genericEmails.length > 0) {
+      logger.debug({ hotel: job.company, genericEmails }, 'Found generic emails but NOT using them (need personal email)');
     }
   }
 
-  // No email found
+  // No personal email found
   return {
     email: null,
     confidence: 0,
@@ -313,6 +307,57 @@ export async function GET(request: NextRequest) {
   const supabase = createServerClient();
 
   try {
+    // ============================================
+    // AUTO-REQUEUE: Retry failed jobs after 24 hours
+    // ============================================
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: failedJobs } = await supabase
+      .from('sales_nav_enrichment_queue')
+      .select('id, prospect_id, attempts')
+      .eq('status', 'failed')
+      .lt('updated_at', oneDayAgo)
+      .limit(20);
+
+    if (failedJobs && failedJobs.length > 0) {
+      // Only requeue jobs with < 3 attempts
+      const toRequeue = failedJobs.filter(j => (j.attempts || 1) < 3);
+      if (toRequeue.length > 0) {
+        // Reset status to pending and increment attempts
+        for (const job of toRequeue) {
+          await supabase
+            .from('sales_nav_enrichment_queue')
+            .update({
+              status: 'pending',
+              error: null,
+              attempts: (job.attempts || 1) + 1,
+            })
+            .eq('id', job.id);
+        }
+
+        logger.info({ count: toRequeue.length }, 'Auto-requeued failed enrichment jobs');
+      }
+    }
+
+    // ============================================
+    // AUTO-REQUEUE: Stuck "processing" jobs (> 30 min)
+    // ============================================
+    const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    const { data: stuckJobs } = await supabase
+      .from('sales_nav_enrichment_queue')
+      .select('id')
+      .eq('status', 'processing')
+      .lt('updated_at', thirtyMinAgo)
+      .limit(20);
+
+    if (stuckJobs && stuckJobs.length > 0) {
+      await supabase
+        .from('sales_nav_enrichment_queue')
+        .update({ status: 'pending', error: 'Requeued: was stuck in processing' })
+        .in('id', stuckJobs.map(j => j.id));
+
+      logger.info({ count: stuckJobs.length }, 'Requeued stuck processing jobs');
+    }
+
     // Get pending jobs (process 50 at a time with parallel execution)
     const { data: pendingJobs } = await supabase
       .from('sales_nav_enrichment_queue')

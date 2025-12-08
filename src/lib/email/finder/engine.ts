@@ -14,7 +14,7 @@
 import { logger } from '../../logger';
 import { generateEmailsFromName, extractDomainFromUrl, parseFullName, type EmailCandidate } from './patterns';
 import { getDomainPattern, applyPattern, saveDomainPattern, type DomainPattern } from './domain-analyzer';
-import { hunterFindEmail, hunterVerifyEmail, getConfiguredServices, type HunterVerifyResult } from './services';
+import { hunterFindEmail, hunterVerifyEmail, millionVerifierVerify, getConfiguredServices, type HunterVerifyResult, type MillionVerifierResult } from './services';
 import { verifyEmailSmtp, type SmtpVerifyResult } from './smtp-verify';
 import { canSendTo } from '../verification';
 
@@ -23,7 +23,7 @@ export interface EmailFinderResult {
   confidence: number; // 0-100
   confidenceLevel: 'high' | 'medium' | 'low' | 'very_low';
   isVerified: boolean;
-  verificationMethod: 'hunter' | 'smtp' | 'pattern_only' | 'none';
+  verificationMethod: 'hunter' | 'millionverifier' | 'smtp' | 'pattern_only' | 'none';
   alternatives: EmailAlternative[];
   metadata: {
     domainPattern?: string;
@@ -191,9 +191,10 @@ export async function findEmail(options: FindEmailOptions): Promise<EmailFinderR
     email: string;
     confidence: number;
     isVerified: boolean;
-    verificationMethod: 'hunter' | 'smtp' | 'pattern_only';
+    verificationMethod: 'hunter' | 'millionverifier' | 'smtp' | 'pattern_only';
     hunterScore?: number;
     smtpResult?: SmtpVerifyResult;
+    millionVerifierResult?: MillionVerifierResult;
   } | null = null;
 
   const alternatives: EmailAlternative[] = [];
@@ -315,9 +316,11 @@ export async function findEmail(options: FindEmailOptions): Promise<EmailFinderR
     };
   }
 
-  // Step 4: SMTP verification of candidates
-  if (verifySmtp) {
-    sources.push('smtp_verification');
+  // Step 4: Email verification (MillionVerifier preferred, SMTP fallback)
+  const useMillionVerifier = getConfiguredServices().includes('millionverifier');
+
+  if (useMillionVerifier || verifySmtp) {
+    sources.push(useMillionVerifier ? 'millionverifier' : 'smtp_verification');
 
     for (const candidate of candidates) {
       // Skip if already found by Hunter with same email
@@ -330,45 +333,108 @@ export async function findEmail(options: FindEmailOptions): Promise<EmailFinderR
         continue;
       }
 
-      const smtpResult = await verifyEmailSmtp(candidate.email, {
-        timeout: options.timeout || 15000,
-        skipCatchAllCheck: domainCatchAll, // Already know it's catch-all
-      });
-
       const isPatternMatch = domainPattern?.pattern === candidate.pattern;
-      const smtpConfidence = calculateConfidence({
-        hunterFound: false,
-        smtpVerified: smtpResult.isValid,
-        smtpDeliverable: smtpResult.isDeliverable,
-        patternMatch: isPatternMatch,
-        patternConfidence: isPatternMatch ? domainPattern?.confidence : undefined,
-        domainCatchAll: smtpResult.isCatchAll || domainCatchAll,
-        hasMultipleSources: false,
-      });
+      let verifiedConfidence = 0;
+      let isVerified = false;
+      let verificationMethod: 'millionverifier' | 'smtp' = 'smtp';
+      let mvResult: MillionVerifierResult | null = null;
+      let smtpResult: SmtpVerifyResult | null = null;
 
-      if (smtpResult.isValid && smtpResult.isDeliverable) {
-        // Found a deliverable email via SMTP
-        if (!bestResult || smtpConfidence > bestResult.confidence) {
+      // Try MillionVerifier first (faster, more reliable, cheaper)
+      if (useMillionVerifier) {
+        mvResult = await millionVerifierVerify(candidate.email);
+
+        if (mvResult) {
+          verificationMethod = 'millionverifier';
+
+          if (mvResult.result === 'ok') {
+            // Valid email confirmed!
+            isVerified = true;
+            verifiedConfidence = calculateConfidence({
+              hunterFound: false,
+              smtpVerified: true,
+              smtpDeliverable: true,
+              patternMatch: isPatternMatch,
+              patternConfidence: isPatternMatch ? domainPattern?.confidence : undefined,
+              domainCatchAll: false,
+              hasMultipleSources: false,
+            });
+
+            // Reject role-based/generic emails
+            if (mvResult.role) {
+              warnings.push(`${candidate.email}: Role-based email (generic)`);
+              continue;
+            }
+          } else if (mvResult.result === 'catch_all') {
+            // Catch-all domain - accepts ALL emails, so our pattern WILL work
+            // This is actually good for cold email - the email will be delivered
+            domainCatchAll = true;
+            isVerified = true;
+            // Give catch-all emails a solid confidence score (50-65)
+            // They WILL be delivered, we just can't verify the specific mailbox
+            verifiedConfidence = isPatternMatch ? 65 : 50;
+            // Add note but still use the email
+            warnings.push(`${candidate.email}: Catch-all domain (will be delivered)`);
+          } else if (mvResult.result === 'invalid' || mvResult.result === 'disposable') {
+            // Invalid or disposable - skip this candidate
+            warnings.push(`${candidate.email}: ${mvResult.result} (${mvResult.subresult})`);
+            continue;
+          }
+          // For 'unknown' or 'error', fall through to try SMTP
+        }
+      }
+
+      // Fall back to SMTP if MillionVerifier didn't verify or isn't configured
+      if (!isVerified && verifySmtp && (!mvResult || mvResult.result === 'unknown' || mvResult.result === 'error')) {
+        smtpResult = await verifyEmailSmtp(candidate.email, {
+          timeout: options.timeout || 15000,
+          skipCatchAllCheck: domainCatchAll,
+        });
+
+        if (smtpResult.isValid) {
+          verificationMethod = 'smtp';
+          verifiedConfidence = calculateConfidence({
+            hunterFound: false,
+            smtpVerified: smtpResult.isValid,
+            smtpDeliverable: smtpResult.isDeliverable,
+            patternMatch: isPatternMatch,
+            patternConfidence: isPatternMatch ? domainPattern?.confidence : undefined,
+            domainCatchAll: smtpResult.isCatchAll || domainCatchAll,
+            hasMultipleSources: false,
+          });
+
+          if (smtpResult.isDeliverable) {
+            isVerified = true;
+          }
+
+          domainCatchAll = domainCatchAll || smtpResult.isCatchAll;
+        }
+      }
+
+      // Process verification result
+      if (isVerified && verifiedConfidence > 0) {
+        if (!bestResult || verifiedConfidence > bestResult.confidence) {
           bestResult = {
             email: candidate.email,
-            confidence: smtpConfidence,
+            confidence: verifiedConfidence,
             isVerified: true,
-            verificationMethod: 'smtp',
-            smtpResult,
+            verificationMethod,
+            smtpResult: smtpResult || undefined,
+            millionVerifierResult: mvResult || undefined,
           };
         } else {
           alternatives.push({
             email: candidate.email,
-            confidence: smtpConfidence,
-            reason: 'SMTP verified',
+            confidence: verifiedConfidence,
+            reason: `${verificationMethod === 'millionverifier' ? 'MillionVerifier' : 'SMTP'} verified`,
           });
         }
-      } else if (smtpResult.isValid && !smtpResult.isCatchAll) {
-        // Valid but not deliverable (might be greylisting or rate limiting)
+      } else if (verifiedConfidence > 0) {
+        // Valid but not fully verified (catch-all or uncertain)
         alternatives.push({
           email: candidate.email,
-          confidence: Math.max(smtpConfidence - 20, 20),
-          reason: 'SMTP valid but delivery uncertain',
+          confidence: Math.max(verifiedConfidence - 20, 20),
+          reason: domainCatchAll ? 'Catch-all domain' : 'Verification uncertain',
         });
       }
 

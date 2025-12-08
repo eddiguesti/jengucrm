@@ -8,7 +8,7 @@ export async function GET(request: NextRequest) {
 
   const { data, error } = await supabase
     .from('activities')
-    .select('*, prospects(name)')
+    .select('*, prospects(id, name, company)')
     .order('created_at', { ascending: false })
     .limit(limit);
 

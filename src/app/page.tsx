@@ -369,7 +369,8 @@ export default function DashboardPage() {
 
       if (statsRes.ok) {
         const statsData = await statsRes.json();
-        setStats(statsData);
+        // API returns {success: true, data: {...}} - extract the data
+        setStats(statsData.data || statsData);
       }
 
       if (prospectsRes.ok) {
@@ -432,7 +433,28 @@ export default function DashboardPage() {
         subtitle={`${prospects.length} prospects in pipeline`}
       />
 
-      <div className="flex-1 p-4 md:p-6 space-y-4 md:space-y-6 overflow-auto">
+      {/* Mobile Page Title - Premium Design */}
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+        className="md:hidden px-4 pt-3 pb-2"
+      >
+        <h1 className={cn(
+          "text-2xl font-bold tracking-tight",
+          isLight ? "text-zinc-900" : "text-white"
+        )}>
+          Command Center
+        </h1>
+        <p className={cn(
+          "text-sm font-medium mt-0.5",
+          isLight ? "text-zinc-500" : "text-white/50"
+        )}>
+          {prospects.length} prospects in pipeline
+        </p>
+      </motion.div>
+
+      <div className="flex-1 px-4 pb-4 md:p-6 space-y-4 md:space-y-6 overflow-auto">
         {/* Error State */}
         {error && (
           <Card className={cn(isLight ? "bg-red-50 border-red-200" : "bg-red-500/10 border-red-500/30")}>

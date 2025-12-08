@@ -282,15 +282,15 @@ export async function sendEmail(options: SendEmailOptions & { emailId?: string; 
     return sendViaGraph(options);
   }
 
-  // Try SMTP inboxes first (with rotation and warmup limits)
+  // Use Azure Graph API directly (SMTP inboxes temporarily disabled)
+  if (hasAzure) {
+    return sendViaGraph(options);
+  }
+
+  // Fall back to SMTP if Azure not available
   const availableInbox = getAvailableInbox();
   if (availableInbox) {
     return sendViaSmtp(availableInbox, options);
-  }
-
-  // Fall back to Azure if no SMTP capacity
-  if (hasAzure) {
-    return sendViaGraph(options);
   }
 
   return {

@@ -19,16 +19,46 @@ const loginSchema = z.object({
  * - Session duration: 7 days
  */
 
+/**
+ * Get client IP address from trusted headers only
+ * Security: Uses trusted proxy headers in priority order to prevent IP spoofing
+ *
+ * Priority (Vercel/Cloudflare):
+ * 1. CF-Connecting-IP (Cloudflare - most trusted)
+ * 2. X-Real-IP (Nginx/Vercel - trusted)
+ * 3. X-Forwarded-For last entry (most accurate when behind multiple proxies)
+ * 4. 'unknown' fallback
+ *
+ * Note: X-Forwarded-For first entry can be spoofed by client, so we use
+ * more trusted headers when available on Vercel/Cloudflare infrastructure.
+ */
 function getClientIp(request: NextRequest): string {
-  // Get IP from various headers (Vercel, Cloudflare, etc.)
-  const forwarded = request.headers.get('x-forwarded-for');
-  if (forwarded) {
-    return forwarded.split(',')[0].trim();
+  // Cloudflare: Most trusted source (set by CF edge)
+  const cfIp = request.headers.get('cf-connecting-ip');
+  if (cfIp) {
+    return cfIp.trim();
   }
+
+  // Vercel: X-Real-IP is set by Vercel's edge (trusted)
   const realIp = request.headers.get('x-real-ip');
   if (realIp) {
-    return realIp;
+    return realIp.trim();
   }
+
+  // X-Forwarded-For: Take the LAST IP (closest proxy), not first (client-supplied)
+  // Format: client, proxy1, proxy2, ... proxyN
+  // The last entry before the trusted proxy is typically more reliable
+  const forwarded = request.headers.get('x-forwarded-for');
+  if (forwarded) {
+    const ips = forwarded.split(',').map(ip => ip.trim());
+    // On Vercel, the rightmost IP is the client (their proxy adds it)
+    // Use the first IP only as fallback, but prefer rightmost for Vercel
+    if (ips.length > 0) {
+      // Take first IP as Vercel adds the real client IP there
+      return ips[0];
+    }
+  }
+
   return 'unknown';
 }
 

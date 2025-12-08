@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 import { getSmtpInboxes } from '@/lib/email';
+import { getGmailInboxes } from '@/lib/email/config';
 
 const AZURE_MAIL_FROM = process.env.AZURE_MAIL_FROM || 'edd@jengu.ai';
 
@@ -10,9 +11,40 @@ export async function GET() {
   try {
     // Get all configured inboxes (agents)
     const smtpInboxes = getSmtpInboxes();
-    const allAgents = [
+    const configuredAgents = [
       { email: AZURE_MAIL_FROM, name: 'Azure (Primary)' },
       ...smtpInboxes.map(i => ({ email: i.email, name: i.name })),
+    ];
+
+    // Get Gmail inboxes (mystery shopper only - exclude from sales agents)
+    const gmailInboxes = getGmailInboxes();
+    const mysteryShopperEmails = new Set(gmailInboxes.map(i => i.email.toLowerCase()));
+
+    // Also discover agents from OUTREACH emails only (not mystery_shopper)
+    const { data: sentEmails } = await supabase
+      .from('emails')
+      .select('from_email')
+      .eq('direction', 'outbound')
+      .eq('email_type', 'outreach') // Only sales emails, not mystery shopper
+      .not('from_email', 'is', null);
+
+    const discoveredEmails = new Set<string>();
+    for (const e of sentEmails || []) {
+      // Skip Gmail inboxes (mystery shopper only) and configured agents
+      if (e.from_email &&
+          !configuredAgents.some(a => a.email === e.from_email) &&
+          !mysteryShopperEmails.has(e.from_email.toLowerCase())) {
+        discoveredEmails.add(e.from_email);
+      }
+    }
+
+    // Combine configured + discovered agents (excluding mystery shopper Gmail)
+    const allAgents = [
+      ...configuredAgents,
+      ...Array.from(discoveredEmails).map(email => ({
+        email,
+        name: email.split('@')[0].replace(/\./g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+      })),
     ];
 
     const today = new Date();
@@ -87,9 +119,9 @@ export async function GET() {
         }
       }
 
-      // Meeting requests for this agent's prospects
+      // Meeting requests for this agent's prospects (only actual meeting requests)
       const meetingRequests = inbound.filter(e =>
-        e.email_type === 'meeting_request' || e.status === 'replied'
+        e.email_type === 'meeting_request'
       ).length;
 
       const replyRate = outbound.length > 0

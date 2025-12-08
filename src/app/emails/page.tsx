@@ -1,7 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Header } from '@/components/layout/header';
+import { MobilePageHeader } from '@/components/layout/mobile-page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -13,6 +15,8 @@ import {
   Mail,
   Sparkles,
   Loader2,
+  RefreshCw,
+  X,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -46,17 +50,24 @@ function getStatusBadge(status: string) {
   }
 }
 
-export default function EmailsPage() {
+function EmailsPageContent() {
   const [emails, setEmails] = useState<EmailWithProspect[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedEmail, setSelectedEmail] = useState<EmailWithProspect | null>(null);
   const [copied, setCopied] = useState(false);
   const [marking, setMarking] = useState(false);
+  const searchParams = useSearchParams();
+  const fromFilter = searchParams.get('from');
 
   const fetchEmails = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/emails');
+      const params = new URLSearchParams();
+      params.set('limit', '200');
+      if (fromFilter) {
+        params.set('from', fromFilter);
+      }
+      const response = await fetch(`/api/emails?${params.toString()}`);
       if (!response.ok) throw new Error('Failed to fetch');
       const data = await response.json();
       setEmails(data.emails || []);
@@ -73,7 +84,7 @@ export default function EmailsPage() {
   useEffect(() => {
     fetchEmails();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fromFilter]);
 
   const draftEmails = emails.filter((e) => e.status === 'draft');
   const sentEmails = emails.filter((e) => e.status !== 'draft');
@@ -104,18 +115,52 @@ export default function EmailsPage() {
     }
   };
 
+  const clearFilter = () => {
+    window.history.pushState({}, '', '/emails');
+    window.location.reload();
+  };
+
   return (
     <div className="flex flex-col h-full">
       <Header
         title="Emails"
-        subtitle={`${emails.length} emails generated`}
+        subtitle={fromFilter ? `Filtered by ${fromFilter}` : `${emails.length} emails generated`}
         action={{
           label: 'Refresh',
           onClick: fetchEmails,
         }}
       />
 
-      <div className="flex-1 p-4 md:p-6 overflow-hidden">
+      <MobilePageHeader
+        title="Emails"
+        subtitle={fromFilter ? `From: ${fromFilter.split('@')[0]}` : `${emails.length} emails`}
+        action={{
+          icon: <RefreshCw className="h-4 w-4" />,
+          label: 'Refresh',
+          onClick: fetchEmails,
+        }}
+      />
+
+      {/* Filter indicator */}
+      {fromFilter && (
+        <div className="px-4 md:px-6 py-2">
+          <div className="flex items-center gap-2 p-2 rounded-lg bg-blue-500/10 border border-blue-500/20">
+            <Mail className="h-4 w-4 text-blue-400" />
+            <span className="text-sm text-blue-400">Showing emails from: {fromFilter}</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={clearFilter}
+              className="ml-auto h-6 px-2 text-blue-400 hover:text-blue-300"
+            >
+              <X className="h-3 w-3 mr-1" />
+              Clear
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <div className="flex-1 px-4 pb-4 md:p-6 overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center h-full">
             <Loader2 className="h-8 w-8 animate-spin text-amber-500" />
@@ -298,5 +343,20 @@ export default function EmailsPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function EmailsPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex flex-col h-full">
+        <Header title="Emails" subtitle="Loading..." />
+        <div className="flex items-center justify-center h-full">
+          <Loader2 className="h-8 w-8 animate-spin text-amber-500" />
+        </div>
+      </div>
+    }>
+      <EmailsPageContent />
+    </Suspense>
   );
 }

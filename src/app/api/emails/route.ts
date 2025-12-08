@@ -7,6 +7,10 @@ import { logger } from '@/lib/logger';
 
 const emailsQuerySchema = z.object({
   limit: z.coerce.number().min(1).max(500).default(50),
+  direction: z.enum(['inbound', 'outbound']).optional(),
+  from: z.string().optional(),
+  to: z.string().optional(),
+  email_type: z.string().optional(),
 });
 
 export async function GET(request: NextRequest) {
@@ -15,11 +19,26 @@ export async function GET(request: NextRequest) {
   try {
     const params = parseSearchParams(new URL(request.url).searchParams, emailsQuerySchema);
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('emails')
-      .select('*, prospects(name, city, country)')
-      .order('created_at', { ascending: false })
-      .limit(params.limit);
+      .select('*, prospects(id, name, company, city, country, stage, tier)')
+      .order('created_at', { ascending: false });
+
+    // Apply filters
+    if (params.direction) {
+      query = query.eq('direction', params.direction);
+    }
+    if (params.from) {
+      query = query.eq('from_email', params.from);
+    }
+    if (params.to) {
+      query = query.eq('to_email', params.to);
+    }
+    if (params.email_type) {
+      query = query.eq('email_type', params.email_type);
+    }
+
+    const { data, error } = await query.limit(params.limit);
 
     if (error) {
       logger.error({ error }, 'Failed to fetch emails');

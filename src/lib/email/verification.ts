@@ -583,6 +583,7 @@ export async function recordSuccessfulSend(
 
 /**
  * Quick check if an email can be sent to (fast, cached check)
+ * Now includes MillionVerifier check to catch invalid/catch-all emails
  */
 export async function canSendTo(email: string): Promise<{ canSend: boolean; reason?: string }> {
   const normalizedEmail = email.toLowerCase().trim();
@@ -605,6 +606,38 @@ export async function canSendTo(email: string): Promise<{ canSend: boolean; reas
   // Check blacklisted domain
   if (await isDomainBlacklisted(normalizedEmail)) {
     return { canSend: false, reason: 'Domain blacklisted' };
+  }
+
+  // MillionVerifier check - verify email actually exists
+  try {
+    const { millionVerifierVerify } = await import('./finder/services');
+    const mvResult = await millionVerifierVerify(normalizedEmail);
+
+    if (mvResult) {
+      // Block invalid emails
+      if (mvResult.result === 'invalid') {
+        logger.info({ email: normalizedEmail, mvResult: mvResult.result, subresult: mvResult.subresult }, 'Email blocked by MillionVerifier (invalid)');
+        return { canSend: false, reason: `MillionVerifier: ${mvResult.subresult || 'invalid'}` };
+      }
+
+      // Block catch-all domains (high bounce risk)
+      if (mvResult.result === 'catch_all' || mvResult.subresult === 'catch_all') {
+        logger.info({ email: normalizedEmail, mvResult: mvResult.result }, 'Email blocked by MillionVerifier (catch-all domain)');
+        return { canSend: false, reason: 'Catch-all domain (high bounce risk)' };
+      }
+
+      // Block disposable emails detected by MV
+      if (mvResult.result === 'disposable') {
+        logger.info({ email: normalizedEmail }, 'Email blocked by MillionVerifier (disposable)');
+        return { canSend: false, reason: 'Disposable email' };
+      }
+
+      // Allow: ok, unknown (might be valid)
+      logger.debug({ email: normalizedEmail, mvResult: mvResult.result }, 'MillionVerifier passed');
+    }
+  } catch (error) {
+    // If MillionVerifier fails, log but allow sending (don't block on API errors)
+    logger.warn({ error, email: normalizedEmail }, 'MillionVerifier check failed, allowing send');
   }
 
   return { canSend: true };

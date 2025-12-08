@@ -2,12 +2,7 @@
  * Fix country data for Sales Navigator prospects based on their tags
  */
 
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  'https://bxcwlwglvcqujrdudxkw.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ4Y3dsd2dsdmNxdWpyZHVkeGt3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NDI4NTIwMiwiZXhwIjoyMDc5ODYxMjAyfQ.bK2ai2Hfhb-Mud3vSItTrE0uzcwY3rbiu8J3UuWiR48'
-);
+import { supabase } from './lib/supabase';
 
 // Map of tag values to proper country names
 const TAG_TO_COUNTRY: Record<string, string> = {

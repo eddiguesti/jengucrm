@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Header } from '@/components/layout/header';
+import { MobilePageHeader } from '@/components/layout/mobile-page-header';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -129,7 +130,12 @@ export default function AnalyticsPage() {
         subtitle="Performance metrics and campaign insights"
       />
 
-      <div className="flex-1 p-4 md:p-6 overflow-auto">
+      <MobilePageHeader
+        title="Analytics"
+        subtitle="Campaign insights"
+      />
+
+      <div className="flex-1 px-4 pb-4 md:p-6 overflow-auto">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList className="grid w-full max-w-md grid-cols-2 bg-zinc-900 border border-zinc-800">
             <TabsTrigger
