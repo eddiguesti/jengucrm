@@ -358,13 +358,13 @@ export async function GET(request: NextRequest) {
       logger.info({ count: stuckJobs.length }, 'Requeued stuck processing jobs');
     }
 
-    // Get pending jobs (process 50 at a time with parallel execution)
+    // Get pending jobs (process 5 at a time - reduced from 50 to avoid timeout)
     const { data: pendingJobs } = await supabase
       .from('sales_nav_enrichment_queue')
       .select('*')
       .eq('status', 'pending')
       .order('created_at', { ascending: true })
-      .limit(50);
+      .limit(5);
 
     if (!pendingJobs || pendingJobs.length === 0) {
       return success({ message: 'No pending jobs', processed: 0 });
@@ -379,8 +379,8 @@ export async function GET(request: NextRequest) {
       .update({ status: 'processing' })
       .in('id', jobIds);
 
-    // Process jobs in parallel with concurrency limit of 10
-    const CONCURRENCY = 10;
+    // Process jobs in parallel with concurrency limit of 3 (reduced to avoid timeout)
+    const CONCURRENCY = 3;
     const results: Array<{ company: string; email: string | null; method: string; confidence: number }> = [];
     let succeeded = 0;
     let failed = 0;
