@@ -358,13 +358,13 @@ export async function GET(request: NextRequest) {
       logger.info({ count: stuckJobs.length }, 'Requeued stuck processing jobs');
     }
 
-    // Get pending jobs (process 2 at a time - kept small to avoid Vercel timeout)
+    // Get pending jobs (process 1 at a time - each job can take 20-30s)
     const { data: pendingJobs } = await supabase
       .from('sales_nav_enrichment_queue')
       .select('*')
       .eq('status', 'pending')
       .order('created_at', { ascending: true })
-      .limit(2);
+      .limit(1);
 
     if (!pendingJobs || pendingJobs.length === 0) {
       return success({ message: 'No pending jobs', processed: 0 });
