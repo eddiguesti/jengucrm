@@ -236,6 +236,10 @@ export async function findHotelEmails(
   }
 
   try {
+    // Use AbortController for 25 second timeout (Vercel has 60s limit)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
+
     const response = await fetch('https://api.x.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -243,7 +247,7 @@ export async function findHotelEmails(
         Authorization: `Bearer ${config.ai.apiKey}`,
       },
       body: JSON.stringify({
-        model: 'grok-4-latest',
+        model: 'grok-3-fast',
         messages: [
           {
             role: 'system',
@@ -275,7 +279,10 @@ Only include emails you actually found. Do not guess.`,
         temperature: 0.1,
         search: { mode: 'auto' },
       }),
+      signal: controller.signal,
     });
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       return { contactEmails: [] };
