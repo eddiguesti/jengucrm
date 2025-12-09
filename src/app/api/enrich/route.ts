@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
-import { checkAndIncrement } from '@/lib/rate-limiter-db';
 import { logger } from '@/lib/logger';
 import {
   WebsiteData,
-  enrichWithGooglePlaces,
   scrapeWebsite,
   extractDomain,
   calculateScore,
@@ -23,18 +21,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'prospect_id required' }, { status: 400 });
     }
 
-    // Check rate limit for Google Places API (database-backed for serverless persistence)
-    const rateLimit = await checkAndIncrement('google_places');
-    if (!rateLimit.allowed) {
-      return NextResponse.json({
-        error: 'Daily Google Places API limit reached',
-        remaining: rateLimit.remaining,
-        limit: rateLimit.limit,
-        resetAt: rateLimit.resetAt.toISOString(),
-        message: 'Free tier limit reached. Try again tomorrow to stay within budget.',
-      }, { status: 429 });
-    }
-
     // Get prospect
     const { data: prospect, error: fetchError } = await supabase
       .from('prospects')
@@ -46,21 +32,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Prospect not found' }, { status: 404 });
     }
 
-    // Enrich with Google Places (with 15s timeout)
-    const enrichmentData = await Promise.race([
-      enrichWithGooglePlaces(prospect.name, prospect.city || '', prospect.country || ''),
-      new Promise<Awaited<ReturnType<typeof enrichWithGooglePlaces>>>((_, reject) =>
-        setTimeout(() => reject(new Error('Google Places timeout')), 15000)
-      ),
-    ]).catch(err => {
-      logger.warn({ error: err.message }, 'Google Places enrichment failed');
-      return null;
-    });
-
-    // Note: API usage already tracked by checkAndIncrement above
-
-    // Determine website URL
-    const websiteUrl = enrichmentData?.website || prospect.website;
+    // Use existing website from prospect
+    const websiteUrl = prospect.website;
 
     // OPTIMIZED: Parallelize website scrape and contact finder (both use same websiteUrl)
     let websiteData: WebsiteData = { emails: [], phones: [], socialLinks: {}, propertyInfo: {}, teamMembers: [] };
@@ -149,7 +122,6 @@ export async function POST(request: NextRequest) {
 
     // Update prospect with all scraped data
     const updateData: Record<string, unknown> = {
-      ...enrichmentData,
       stage: 'researching',
     };
 
@@ -228,7 +200,7 @@ export async function POST(request: NextRequest) {
 
     // Log activity with detailed scraped data summary
     const scrapedItems = [
-      enrichmentData?.website && 'Website',
+      websiteUrl && 'Website',
       email && `Email (${email.startsWith('info@') ? 'generated' : 'found'})`,
       phone && 'Phone',
       primaryContact && `Contact: ${primaryContact.name}`,
@@ -248,7 +220,7 @@ export async function POST(request: NextRequest) {
       supabase.from('activities').insert({
         prospect_id,
         type: 'note',
-        title: 'Enriched with Google Places + Deep Website Scrape',
+        title: 'Enriched with Website Scrape',
         description: `Found: ${scrapedItems.join(', ') || 'Basic info only'}. Scraped ${websiteData.teamMembers.length} team members, ${websiteData.emails.length} emails.`,
       }),
       supabase
@@ -284,12 +256,12 @@ export async function PUT(request: NextRequest) {
     const body = await request.json();
     const limit = body.limit || 10;
 
-    // Get prospects that need enrichment
+    // Get prospects that need enrichment (new stage, no email yet)
     const { data: prospects, error } = await supabase
       .from('prospects')
       .select('id')
       .eq('stage', 'new')
-      .is('google_place_id', null)
+      .is('email', null)
       .limit(limit);
 
     if (error) throw error;

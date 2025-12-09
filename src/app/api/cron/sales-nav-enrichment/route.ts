@@ -3,7 +3,6 @@ import { createServerClient } from '@/lib/supabase';
 import { success, errors } from '@/lib/api-response';
 import { logger } from '@/lib/logger';
 import { findEmail, type EmailFinderResult } from '@/lib/email/finder/engine';
-import { enrichWithGooglePlaces } from '@/lib/enrichment/google-places';
 import { scrapeWebsite, extractDomain } from '@/lib/enrichment/website-scraper';
 import { config } from '@/lib/config';
 
@@ -118,36 +117,7 @@ async function processEnrichmentJob(
     logger.debug({ hotel: job.company, website: websiteFound, domain }, 'Using existing website');
   }
 
-  // Strategy 1B: Try Google Places to find website
-  if (!websiteFound && prospect.country) {
-    try {
-      const placesData = await enrichWithGooglePlaces(
-        job.company || prospect.name,
-        prospect.city || '',
-        prospect.country
-      );
-
-      if (placesData.website) {
-        websiteFound = placesData.website;
-        domain = extractDomain(websiteFound);
-        logger.info({ hotel: job.company, website: websiteFound }, 'Found website via Google Places');
-
-        // Update prospect with found data
-        await supabase
-          .from('prospects')
-          .update({
-            website: websiteFound,
-            google_place_id: placesData.google_place_id,
-            full_address: placesData.full_address || prospect.full_address,
-          })
-          .eq('id', prospect.id);
-      }
-    } catch (e) {
-      logger.debug({ error: e }, 'Google Places lookup failed');
-    }
-  }
-
-  // Strategy 1C: DuckDuckGo search as fallback
+  // Strategy 1B: DuckDuckGo search to find website
   if (!websiteFound && prospect.country) {
     websiteFound = await searchForWebsite(job.company || prospect.name, prospect.country);
     if (websiteFound) {

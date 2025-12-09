@@ -1,5 +1,4 @@
 import { createServerClient } from '@/lib/supabase';
-import { enrichWithGooglePlaces } from './google-places';
 import { scrapeWebsite } from './website-scraper';
 import { calculateScore, getTier } from './scoring';
 import { WebsiteData, EnrichmentData } from './types';
@@ -184,16 +183,9 @@ export async function autoEnrichProspect(prospectId: string): Promise<{
     }
 
     // Skip if already enriched
-    if (prospect.google_place_id || prospect.stage !== 'new') {
+    if (prospect.stage !== 'new') {
       return { success: true, enriched: false };
     }
-
-    // Get Google Places data
-    const enrichmentData = await enrichWithGooglePlaces(
-      prospect.name,
-      prospect.city || '',
-      prospect.country || ''
-    );
 
     // Scrape website
     let websiteData: WebsiteData = {
@@ -204,7 +196,8 @@ export async function autoEnrichProspect(prospectId: string): Promise<{
       teamMembers: []
     };
 
-    const websiteUrl = enrichmentData.website || prospect.website;
+    const enrichmentData: EnrichmentData = {};
+    const websiteUrl = prospect.website;
     if (websiteUrl) {
       websiteData = await scrapeWebsite(websiteUrl);
     }
