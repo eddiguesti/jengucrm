@@ -212,7 +212,7 @@ async function processEnrichmentJob(
         verifySmtp: true,
         useHunter: true,
         maxCandidates: 5,
-        timeout: 15000,
+        timeout: 8000,
       });
 
       if (finderResult.email && finderResult.confidence >= 40) {
