@@ -148,7 +148,8 @@ function RepliesPageContent() {
       const response = await fetch(`/api/emails?${params.toString()}`);
       if (response.ok) {
         const data = await response.json();
-        setReplies(data.emails || []);
+        // Handle both { data: { emails } } and { emails } response formats
+        setReplies(data.data?.emails || data.emails || []);
       }
     } catch (error) {
       console.error('Failed to fetch replies:', error);

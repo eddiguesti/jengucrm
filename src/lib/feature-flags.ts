@@ -54,6 +54,14 @@ export const flags = {
    * Routes all AI calls through centralized gateway
    */
   USE_AI_GATEWAY: process.env.USE_AI_GATEWAY !== 'false',
+
+  /**
+   * Enhanced visibility features (Phase 2)
+   * These add read-only UI components for better system observability
+   */
+  SHOW_SYSTEM_HEALTH: process.env.SHOW_SYSTEM_HEALTH !== 'false',
+  SHOW_RESPONSE_TIMES: process.env.SHOW_RESPONSE_TIMES !== 'false',
+  SHOW_ENHANCED_FUNNEL: process.env.SHOW_ENHANCED_FUNNEL !== 'false',
 } as const;
 
 /**

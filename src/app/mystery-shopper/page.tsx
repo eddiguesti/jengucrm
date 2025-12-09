@@ -18,6 +18,8 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import Link from 'next/link';
+import { ResponseTimeCard } from '@/components/mystery-shopper/response-time-card';
+import { flags } from '@/lib/feature-flags';
 
 interface MysteryInquiry {
   id: string;
@@ -42,6 +44,13 @@ interface MysteryStats {
   gm_extracted: number;
 }
 
+interface ResponseTimeData {
+  avgMinutes: number;
+  fastest: number;
+  slowest: number;
+  totalReplies: number;
+}
+
 function getStatusBadge(status: string) {
   switch (status) {
     case 'sent':
@@ -58,6 +67,7 @@ function getStatusBadge(status: string) {
 export default function MysteryShopperPage() {
   const [inquiries, setInquiries] = useState<MysteryInquiry[]>([]);
   const [stats, setStats] = useState<MysteryStats>({ total_sent: 0, awaiting_reply: 0, replied: 0, gm_extracted: 0 });
+  const [responseTime, setResponseTime] = useState<ResponseTimeData | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedInquiry, setSelectedInquiry] = useState<MysteryInquiry | null>(null);
   const [sendingBatch, setSendingBatch] = useState(false);
@@ -66,13 +76,26 @@ export default function MysteryShopperPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/mystery-shopper');
-      if (!response.ok) throw new Error('Failed to fetch');
-      const data = await response.json();
-      setInquiries(data.inquiries || []);
-      setStats(data.stats || { total_sent: 0, awaiting_reply: 0, replied: 0, gm_extracted: 0 });
-      if (data.inquiries?.length > 0 && !selectedInquiry) {
-        setSelectedInquiry(data.inquiries[0]);
+      const [mysteryRes, statsRes] = await Promise.all([
+        fetch('/api/mystery-shopper'),
+        flags.SHOW_RESPONSE_TIMES ? fetch('/api/stats') : Promise.resolve(null),
+      ]);
+
+      if (mysteryRes.ok) {
+        const data = await mysteryRes.json();
+        setInquiries(data.inquiries || []);
+        setStats(data.stats || { total_sent: 0, awaiting_reply: 0, replied: 0, gm_extracted: 0 });
+        if (data.inquiries?.length > 0 && !selectedInquiry) {
+          setSelectedInquiry(data.inquiries[0]);
+        }
+      }
+
+      if (statsRes?.ok) {
+        const statsData = await statsRes.json();
+        const rtData = statsData.data?.responseTime || statsData.responseTime;
+        if (rtData) {
+          setResponseTime(rtData);
+        }
       }
     } catch (error) {
       console.error('Failed to fetch mystery shopper data:', error);
@@ -197,6 +220,13 @@ export default function MysteryShopperPage() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Response Time Analytics */}
+        {flags.SHOW_RESPONSE_TIMES && responseTime && (
+          <div className="mb-6">
+            <ResponseTimeCard responseTime={responseTime} />
+          </div>
+        )}
 
         {/* Action Buttons */}
         <div className="flex flex-wrap gap-3 mb-6">

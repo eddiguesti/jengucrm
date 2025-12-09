@@ -29,6 +29,8 @@ import {
   Sparkles,
   PieChart,
 } from 'lucide-react';
+import { EnhancedFunnelCard } from '@/components/analytics/enhanced-funnel-card';
+import { flags } from '@/lib/feature-flags';
 
 // ===== TYPES =====
 interface DetailedStats {
@@ -348,44 +350,57 @@ function StatsOverviewTab() {
 
       {/* Funnel + Lead Quality */}
       <div className="grid gap-4 sm:gap-6 lg:grid-cols-2">
-        {/* Conversion Funnel */}
-        <Card>
-          <CardHeader className="pb-2 sm:pb-3">
-            <CardTitle className="flex items-center gap-2 text-sm sm:text-base">
-              <BarChart3 className="h-3 w-3 sm:h-4 sm:w-4 text-purple-400" />
-              Conversion Funnel
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3 sm:space-y-4">
-            <div className="space-y-2 sm:space-y-3">
-              {[
-                { label: 'Prospects', value: stats.funnel.prospects, color: 'blue' },
-                { label: 'Contacted', value: stats.funnel.contacted, color: 'purple', rate: stats.funnel.contactRate },
-                { label: 'Engaged', value: stats.funnel.engaged, color: 'amber', rate: stats.funnel.engageRate },
-                { label: 'Meeting', value: stats.funnel.meeting, color: 'green', rate: stats.funnel.meetingRate },
-                { label: 'Closed', value: stats.funnel.closed, color: 'green', rate: stats.funnel.closeRate },
-              ].map((stage) => (
-                <div key={stage.label} className="flex items-center gap-2 sm:gap-3">
-                  <div className="w-16 sm:w-20 text-[10px] sm:text-xs text-muted-foreground">{stage.label}</div>
-                  <div className="flex-1">
-                    <ProgressBar
-                      value={stage.value}
-                      max={stats.funnel.prospects}
-                      label=""
-                      color={stage.color}
-                    />
+        {/* Conversion Funnel - Enhanced or Standard */}
+        {flags.SHOW_ENHANCED_FUNNEL ? (
+          <EnhancedFunnelCard
+            funnel={{
+              total: stats.funnel.prospects,
+              contacted: stats.funnel.contacted,
+              engaged: stats.funnel.engaged,
+              meeting: stats.funnel.meeting,
+              won: stats.funnel.closed,
+              lost: 0, // Not tracked in detailed stats
+            }}
+          />
+        ) : (
+          <Card>
+            <CardHeader className="pb-2 sm:pb-3">
+              <CardTitle className="flex items-center gap-2 text-sm sm:text-base">
+                <BarChart3 className="h-3 w-3 sm:h-4 sm:w-4 text-purple-400" />
+                Conversion Funnel
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 sm:space-y-4">
+              <div className="space-y-2 sm:space-y-3">
+                {[
+                  { label: 'Prospects', value: stats.funnel.prospects, color: 'blue' },
+                  { label: 'Contacted', value: stats.funnel.contacted, color: 'purple', rate: stats.funnel.contactRate },
+                  { label: 'Engaged', value: stats.funnel.engaged, color: 'amber', rate: stats.funnel.engageRate },
+                  { label: 'Meeting', value: stats.funnel.meeting, color: 'green', rate: stats.funnel.meetingRate },
+                  { label: 'Closed', value: stats.funnel.closed, color: 'green', rate: stats.funnel.closeRate },
+                ].map((stage) => (
+                  <div key={stage.label} className="flex items-center gap-2 sm:gap-3">
+                    <div className="w-16 sm:w-20 text-[10px] sm:text-xs text-muted-foreground">{stage.label}</div>
+                    <div className="flex-1">
+                      <ProgressBar
+                        value={stage.value}
+                        max={stats.funnel.prospects}
+                        label=""
+                        color={stage.color}
+                      />
+                    </div>
+                    <div className="w-14 sm:w-16 text-right">
+                      <span className="text-xs sm:text-sm font-medium">{stage.value}</span>
+                      {stage.rate && (
+                        <span className="text-[10px] sm:text-xs text-muted-foreground ml-1">({stage.rate}%)</span>
+                      )}
+                    </div>
                   </div>
-                  <div className="w-14 sm:w-16 text-right">
-                    <span className="text-xs sm:text-sm font-medium">{stage.value}</span>
-                    {stage.rate && (
-                      <span className="text-[10px] sm:text-xs text-muted-foreground ml-1">({stage.rate}%)</span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Lead Quality Distribution */}
         <Card>

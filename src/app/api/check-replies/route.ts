@@ -345,7 +345,7 @@ async function checkMicrosoftInbox(sinceDate: Date): Promise<EmailMessage[]> {
       .api(`/users/${AZURE_MAIL_FROM}/messages`)
       .filter(`receivedDateTime ge ${sinceDate.toISOString()}`)
       .select('id,subject,from,toRecipients,bodyPreview,body,receivedDateTime,internetMessageId,conversationId,internetMessageHeaders')
-      .top(100)
+      .top(500)  // Increased from 100 to catch more emails when inbox is busy
       .get();
 
     const emails: EmailMessage[] = [];
@@ -945,16 +945,81 @@ export async function POST(request: NextRequest) {
                 email_id: savedEmail?.id,
               });
 
-              // If they mentioned someone else to contact, extract that
-              if (aiAnalysis.recommendedAction === 'contact_alternate' && email.bodyPreview) {
-                // Try to extract alternate contact from the email
-                const emailMatch = email.bodyPreview.match(/[\w.-]+@[\w.-]+\.\w+/);
-                if (emailMatch && emailMatch[0] !== email.from) {
+              // If they mentioned someone else to contact, extract and CREATE NEW PROSPECT
+              if (email.bodyPreview || email.body) {
+                const emailBody = email.body || email.bodyPreview;
+                // Extract alternate email addresses (excluding the sender's email)
+                const emailMatches = emailBody.match(/[\w.-]+@[\w.-]+\.\w+/g) || [];
+                const alternateEmail = emailMatches.find(e =>
+                  e.toLowerCase() !== email.from.toLowerCase() &&
+                  !e.includes('noreply') &&
+                  !e.includes('no-reply')
+                );
+
+                if (alternateEmail) {
+                  // Try to extract the contact name (e.g., "contact Karen at karen@...")
+                  const nameMatch = emailBody.match(/(?:contact|reach|email)\s+(\w+)\s+(?:at|@)/i);
+                  const contactName = nameMatch ? nameMatch[1] : alternateEmail.split('@')[0];
+
+                  // Check if this prospect already exists
+                  const { data: existingProspect } = await supabase
+                    .from('prospects')
+                    .select('id')
+                    .eq('email', alternateEmail.toLowerCase())
+                    .limit(1)
+                    .single();
+
+                  if (!existingProspect) {
+                    // Get original prospect details to copy company info
+                    const { data: originalProspect } = await supabase
+                      .from('prospects')
+                      .select('name, company, city, country, website, property_type, source')
+                      .eq('id', prospect.id)
+                      .single();
+
+                    // CREATE NEW PROSPECT with alternate contact
+                    const { data: newProspect, error: createError } = await supabase
+                      .from('prospects')
+                      .insert({
+                        name: originalProspect?.name || prospect.name, // Keep same company name
+                        company: originalProspect?.company,
+                        email: alternateEmail.toLowerCase(),
+                        contact_name: contactName,
+                        city: originalProspect?.city,
+                        country: originalProspect?.country,
+                        website: originalProspect?.website,
+                        property_type: originalProspect?.property_type,
+                        source: 'delegation_referral',
+                        stage: 'new',
+                        tier: 'warm', // Warm because they were referred
+                        score: 50,
+                        notes: `Referred from delegation email. Original contact (${email.from}) no longer at company.`,
+                      })
+                      .select()
+                      .single();
+
+                    if (newProspect && !createError) {
+                      await supabase.from('activities').insert({
+                        prospect_id: newProspect.id,
+                        type: 'prospect_created',
+                        title: `New prospect created from delegation referral`,
+                        description: `${contactName} at ${alternateEmail} - referred when ${email.from} left the company`,
+                      });
+
+                      logger.info({
+                        originalProspect: prospect.name,
+                        newEmail: alternateEmail,
+                        newContactName: contactName,
+                      }, 'New prospect created from delegation email');
+                    }
+                  }
+
+                  // Log activity on original prospect
                   await supabase.from('activities').insert({
                     prospect_id: prospect.id,
                     type: 'contact_discovered',
-                    title: `Alternate contact found: ${emailMatch[0]}`,
-                    description: `Extracted from delegation email`,
+                    title: `Alternate contact found: ${contactName} (${alternateEmail})`,
+                    description: `New prospect created automatically. Original contact no longer at company.`,
                   });
                 }
               }

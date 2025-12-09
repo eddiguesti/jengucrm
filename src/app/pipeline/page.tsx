@@ -44,7 +44,8 @@ export default function PipelinePage() {
       if (!response.ok) throw new Error('Failed to fetch');
 
       const data = await response.json();
-      const prospects: Prospect[] = data.prospects || [];
+      // Handle both { data: { prospects } } and { prospects } response formats
+      const prospects: Prospect[] = data.data?.prospects || data.prospects || [];
 
       // Group by stage
       const grouped: Record<string, Prospect[]> = {};

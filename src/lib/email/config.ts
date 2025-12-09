@@ -117,7 +117,10 @@ export function getSmtpInboxes(): SmtpInbox[] {
     }
   }
 
-  return inboxes;
+  // Filter out any SMTP inboxes that duplicate the Azure mailbox
+  // (Azure mailbox is checked via Graph API, not IMAP - trying both causes auth errors)
+  const azureMailbox = AZURE_MAIL_FROM.toLowerCase();
+  return inboxes.filter(inbox => inbox.email.toLowerCase() !== azureMailbox);
 }
 
 export function isSmtpConfigured(): boolean {

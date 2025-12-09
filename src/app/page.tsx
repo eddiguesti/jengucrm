@@ -42,6 +42,8 @@ import { BatteryRing } from '@/components/ui/battery-indicator';
 import { calculateReadiness, getReadinessSummary, getTierInfo } from '@/lib/readiness';
 import { useTheme } from '@/contexts/ThemeContext';
 import { cn } from '@/lib/utils';
+import { SystemHealthCard } from '@/components/dashboard/system-health-card';
+import { flags } from '@/lib/feature-flags';
 
 interface Stats {
   total: number;
@@ -538,6 +540,14 @@ export default function DashboardPage() {
             )}
           </CardContent>
         </Card>
+
+        {/* System Health Card - Enhanced visibility */}
+        {flags.SHOW_SYSTEM_HEALTH && stats?.lastCronRun !== undefined && (
+          <SystemHealthCard
+            lastCronRun={stats.lastCronRun}
+            isLight={isLight}
+          />
+        )}
 
         {/* Automation Status */}
         <Card

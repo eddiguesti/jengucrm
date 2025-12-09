@@ -176,7 +176,9 @@ function fallbackChainCheck(name: string): ChainCheckResult {
     'extended stay', 'la quinta', 'days inn', 'super 8', 'ramada',
     'kimpton', 'aloft', 'moxy', 'w hotel', 'st. regis', 'le meridien',
     'trump international', 'mcr hotels', 'aimbridge', 'vail resorts',
-    'hospital', 'university', 'government', 'jll', 'cvent',
+    'virgin hotels', 'virgin limited', 'kempinski', 'rosewood', 'oetker',
+    'belmond', 'aman', 'six senses', 'montage', 'auberge', 'relais & chateaux',
+    'hospital', 'university', 'government', 'jll', 'cvent', 'tourist board',
   ];
 
   const isChain = chainPatterns.some(pattern => nameLower.includes(pattern));
