@@ -210,7 +210,7 @@ export async function POST(request: NextRequest) {
       .not('email', 'is', null)
       .gte('score', minScore)
       .order('score', { ascending: false })
-      .limit(maxEmails * 20); // Increased multiplier to account for filtered generic emails
+      .limit(maxEmails * 100); // Large multiplier: most prospects have generic emails that get filtered
 
     if (prospectsError) {
       logger.error({ error: prospectsError }, 'Prospects query failed');
