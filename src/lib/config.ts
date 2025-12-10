@@ -144,6 +144,15 @@ export const config = {
     get testEmail() { return getEnvOptional('TEST_EMAIL_ADDRESS'); },
   },
 
+  // Email controls
+  email: {
+    /**
+     * Emergency kill-switch: when `DISABLE_OUTGOING_EMAILS` is set to 'true',
+     * all outgoing email sending should be blocked by the application.
+     */
+    get disableOutgoing() { return getEnvOptional('DISABLE_OUTGOING_EMAILS') === 'true'; },
+  },
+
   // Rate Limits (free tier)
   rateLimits: {
     googlePlaces: getEnvNumber('RATE_LIMIT_GOOGLE_PLACES', 300),

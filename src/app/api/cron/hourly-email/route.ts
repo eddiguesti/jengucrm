@@ -1,6 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getWarmupDailyLimit, getWarmupStatus, isBusinessHours } from '@/lib/constants';
-import { createServerClient } from '@/lib/supabase';
+import { NextRequest, NextResponse } from "next/server";
+import {
+  getWarmupDailyLimit,
+  getWarmupStatus,
+  isBusinessHours,
+  EMAIL,
+} from "@/lib/constants";
+import { createServerClient } from "@/lib/supabase";
 
 /**
  * HUMAN-LIKE EMAIL CRON
@@ -19,29 +24,55 @@ import { createServerClient } from '@/lib/supabase';
  */
 
 export async function GET(request: NextRequest) {
-  const authHeader = request.headers.get('authorization');
+  const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
 
   // In production, verify the cron secret
   if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-    if (process.env.NODE_ENV === 'production') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (process.env.NODE_ENV === "production") {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
   }
 
   try {
+    // EMERGENCY STOP - Check if email sending is disabled
+    if (EMAIL.EMERGENCY_STOP) {
+      return NextResponse.json({
+        success: true,
+        message: "EMERGENCY STOP - All email sending disabled",
+        disabled: true,
+        emergency_stop: true,
+        executed_at: new Date().toISOString(),
+      });
+    }
+
     const warmupStatus = getWarmupStatus();
     const dailyLimit = getWarmupDailyLimit();
+
+    // EMAIL SENDING DISABLED - Return early without sending
+    if (dailyLimit === 0) {
+      return NextResponse.json({
+        success: true,
+        message: "Email sending disabled - daily limit set to 0",
+        disabled: true,
+        warmup: {
+          day: warmupStatus.day,
+          stage: warmupStatus.stage,
+          daily_limit: dailyLimit,
+        },
+        executed_at: new Date().toISOString(),
+      });
+    }
 
     // HUMAN-LIKE RANDOMNESS: Skip ~30% of calls to create natural gaps
     // This makes sending pattern look like: 5min, 10min, 5min, 15min, 5min...
     const skipChance = Math.random();
-    if (skipChance < 0.30) {
+    if (skipChance < 0.3) {
       return NextResponse.json({
         success: true,
-        message: 'Skipped this cycle (human-like randomness)',
+        message: "Skipped this cycle (human-like randomness)",
         skipped: true,
-        skip_reason: 'Random delay for natural pattern',
+        skip_reason: "Random delay for natural pattern",
         warmup: {
           day: warmupStatus.day,
           stage: warmupStatus.stage,
@@ -53,14 +84,14 @@ export async function GET(request: NextRequest) {
 
     const baseUrl = process.env.VERCEL_URL
       ? `https://${process.env.VERCEL_URL}`
-      : 'http://localhost:3000';
+      : "http://localhost:3000";
 
     // Send exactly 1 email
     const response = await fetch(`${baseUrl}/api/auto-email`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': cronSecret ? `Bearer ${cronSecret}` : '',
+        "Content-Type": "application/json",
+        Authorization: cronSecret ? `Bearer ${cronSecret}` : "",
       },
       body: JSON.stringify({
         max_emails: 1,
@@ -73,9 +104,10 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: result.data?.sent === 1
-        ? `Email sent to 1 prospect`
-        : result.data?.error || 'No email sent',
+      message:
+        result.data?.sent === 1
+          ? `Email sent to 1 prospect`
+          : result.data?.error || "No email sent",
       skipped: false,
       warmup: {
         day: warmupStatus.day,
@@ -88,10 +120,10 @@ export async function GET(request: NextRequest) {
       executed_at: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('Email cron error:', error);
+    console.error("Email cron error:", error);
     return NextResponse.json(
-      { error: 'Email cron failed', details: String(error) },
-      { status: 500 }
+      { error: "Email cron failed", details: String(error) },
+      { status: 500 },
     );
   }
 }

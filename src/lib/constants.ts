@@ -56,6 +56,8 @@ export const EMAIL = {
   STAGGER_DELAY_MAX: 90000,
   /** Minimum delay between emails (ms) */
   MIN_DELAY: 1000,
+  /** EMERGENCY STOP - Disable all email sending */
+  EMERGENCY_STOP: true,
 } as const;
 
 // ============================================
@@ -65,13 +67,15 @@ export const EMAIL = {
 // ============================================
 export const WARMUP_SCHEDULE = {
   /** Start date for warmup (ISO string, set when first email sent) */
-  START_DATE: '2025-12-06',
-  /** Warmup stages - 4 inboxes × 20/day each = 80/day total capacity */
+  START_DATE: "2025-12-06",
+  /** Warmup stages - 3 SMTP inboxes × 20/day + Azure = 80/day total capacity */
   STAGES: [
-    { maxDay: Infinity, limit: 80 }, // 80/day always (4 inboxes × 20)
+    { maxDay: Infinity, limit: 80 }, // 80/day max (3 SMTP + 1 Azure × 20 each)
   ],
-  /** Never exceed this regardless of warmup stage (4 inboxes × 20) */
+  /** Never exceed this regardless of warmup stage */
   ABSOLUTE_MAX: 80,
+  /** Per-inbox daily limit (enforced in inbox-tracker) */
+  PER_INBOX_LIMIT: 20,
 } as const;
 
 /**
@@ -79,7 +83,7 @@ export const WARMUP_SCHEDULE = {
  */
 function getDaysSinceWarmupStart(): number {
   // Parse start date as local date (YYYY-MM-DD at midnight local time)
-  const [year, month, day] = WARMUP_SCHEDULE.START_DATE.split('-').map(Number);
+  const [year, month, day] = WARMUP_SCHEDULE.START_DATE.split("-").map(Number);
   const startDate = new Date(year, month - 1, day);
   startDate.setHours(0, 0, 0, 0);
 
@@ -113,16 +117,20 @@ export function getWarmupDailyLimit(): number {
 /**
  * Get warmup status info for monitoring
  */
-export function getWarmupStatus(): { day: number; limit: number; stage: string } {
+export function getWarmupStatus(): {
+  day: number;
+  limit: number;
+  stage: string;
+} {
   const daysSinceStart = getDaysSinceWarmupStart();
   const limit = getWarmupDailyLimit();
 
-  let stage = 'Unknown';
-  if (daysSinceStart <= 3) stage = 'Initial (days 1-3)';
-  else if (daysSinceStart <= 7) stage = 'Early (days 4-7)';
-  else if (daysSinceStart <= 14) stage = 'Building (days 8-14)';
-  else if (daysSinceStart <= 21) stage = 'Growing (days 15-21)';
-  else stage = 'Mature (day 22+)';
+  let stage = "Unknown";
+  if (daysSinceStart <= 3) stage = "Initial (days 1-3)";
+  else if (daysSinceStart <= 7) stage = "Early (days 4-7)";
+  else if (daysSinceStart <= 14) stage = "Building (days 8-14)";
+  else if (daysSinceStart <= 21) stage = "Growing (days 15-21)";
+  else stage = "Mature (day 22+)";
 
   return { day: daysSinceStart, limit, stage };
 }
@@ -155,15 +163,53 @@ export const PAGINATION = {
 // IRRELEVANT JOB TITLES (for filtering)
 // ============================================
 export const IRRELEVANT_JOB_TITLES = [
-  'sous chef', 'chef', 'cook', 'kitchen', 'culinary',
-  'dishwasher', 'busboy', 'busser', 'server', 'waiter', 'waitress',
-  'bartender', 'barista', 'host', 'hostess', 'bellhop', 'bell staff',
-  'valet', 'parking', 'security', 'guard', 'cleaner', 'housekeeper',
-  'laundry', 'groundskeeper', 'maintenance', 'engineer', 'lifeguard',
-  'pool', 'spa therapist', 'massage', 'esthetician', 'nail tech',
-  'fitness', 'yoga', 'trainer', 'instructor', 'driver', 'shuttle',
-  'intern', 'trainee', 'apprentice', 'entry level', 'part time',
-  'seasonal', 'temporary', 'contract',
+  "sous chef",
+  "chef",
+  "cook",
+  "kitchen",
+  "culinary",
+  "dishwasher",
+  "busboy",
+  "busser",
+  "server",
+  "waiter",
+  "waitress",
+  "bartender",
+  "barista",
+  "host",
+  "hostess",
+  "bellhop",
+  "bell staff",
+  "valet",
+  "parking",
+  "security",
+  "guard",
+  "cleaner",
+  "housekeeper",
+  "laundry",
+  "groundskeeper",
+  "maintenance",
+  "engineer",
+  "lifeguard",
+  "pool",
+  "spa therapist",
+  "massage",
+  "esthetician",
+  "nail tech",
+  "fitness",
+  "yoga",
+  "trainer",
+  "instructor",
+  "driver",
+  "shuttle",
+  "intern",
+  "trainee",
+  "apprentice",
+  "entry level",
+  "part time",
+  "seasonal",
+  "temporary",
+  "contract",
 ] as const;
 
 // ============================================
@@ -185,13 +231,13 @@ export const GENERIC_CORPORATE_EMAILS = [
 export const GENERIC_EMAIL_PREFIXES = [
   // Core generic prefixes (allow for suffixes like .uk, -sales, _team)
   /^info[.\-_]?[^@]*@/i,
-  /^n?info[.\-_]?[^@]*@/i,                 // Catches typos like ninfo@
+  /^n?info[.\-_]?[^@]*@/i, // Catches typos like ninfo@
   /^contact[.\-_]?[^@]*@/i,
   /^reception[.\-_]?[^@]*@/i,
-  /^n?reception[.\-_]?[^@]*@/i,            // Catches typos like nreception@
+  /^n?reception[.\-_]?[^@]*@/i, // Catches typos like nreception@
   /^reservation[s]?[.\-_]?[^@]*@/i,
-  /^reserva(s|cione?s)?[.\-_]?[^@]*@/i,    // Spanish: reservas, reservacion, reservaciones
-  /^resa[.\-_]?[^@]*@/i,                   // French abbreviation for reservation
+  /^reserva(s|cione?s)?[.\-_]?[^@]*@/i, // Spanish: reservas, reservacion, reservaciones
+  /^resa[.\-_]?[^@]*@/i, // French abbreviation for reservation
   /^booking[s]?[.\-_]?[^@]*@/i,
   /^sales[.\-_]?[^@]*@/i,
   /^hello[.\-_]?[^@]*@/i,
@@ -207,65 +253,65 @@ export const GENERIC_EMAIL_PREFIXES = [
   /^team[.\-_]?[^@]*@/i,
   /^rsvp[.\-_]?[^@]*@/i,
   /^stay[.\-_]?[^@]*@/i,
-  /^events?[.\-_]?[^@]*@/i,                // Event inquiries
-  /^message[s]?[^@]*@/i,                   // Generic message inbox
-  /^la[\-\.]?poste[.\-_]?[^@]*@/i,         // French: the post/mail
-  /^correo[.\-_]?[^@]*@/i,                 // Spanish: mail
+  /^events?[.\-_]?[^@]*@/i, // Event inquiries
+  /^message[s]?[^@]*@/i, // Generic message inbox
+  /^la[\-\.]?poste[.\-_]?[^@]*@/i, // French: the post/mail
+  /^correo[.\-_]?[^@]*@/i, // Spanish: mail
   // Italian generics
-  /^ricevimento[.\-_]?[^@]*@/i,            // Italian: reception
-  /^prenotazioni[.\-_]?[^@]*@/i,           // Italian: reservations
-  /^risorseumane[.\-_]?[^@]*@/i,           // Italian: HR (human resources)
-  /^risorse[.\-_]?[^@]*@/i,                // Italian: resources
-  /^ufficio[.\-_]?[^@]*@/i,                // Italian: office
-  /^amministrazione[.\-_]?[^@]*@/i,        // Italian: administration
-  /^commerciale[.\-_]?[^@]*@/i,            // Italian: commercial/sales
-  /^segreteria[.\-_]?[^@]*@/i,             // Italian: secretary
+  /^ricevimento[.\-_]?[^@]*@/i, // Italian: reception
+  /^prenotazioni[.\-_]?[^@]*@/i, // Italian: reservations
+  /^risorseumane[.\-_]?[^@]*@/i, // Italian: HR (human resources)
+  /^risorse[.\-_]?[^@]*@/i, // Italian: resources
+  /^ufficio[.\-_]?[^@]*@/i, // Italian: office
+  /^amministrazione[.\-_]?[^@]*@/i, // Italian: administration
+  /^commerciale[.\-_]?[^@]*@/i, // Italian: commercial/sales
+  /^segreteria[.\-_]?[^@]*@/i, // Italian: secretary
   // Portuguese generics
-  /^geral[.\-_]?[^@]*@/i,                  // Portuguese: general
-  /^recepcao[.\-_]?[^@]*@/i,               // Portuguese: reception
-  /^contacto[.\-_]?[^@]*@/i,               // Portuguese: contact
+  /^geral[.\-_]?[^@]*@/i, // Portuguese: general
+  /^recepcao[.\-_]?[^@]*@/i, // Portuguese: reception
+  /^contacto[.\-_]?[^@]*@/i, // Portuguese: contact
   // German generics
-  /^zentrale[.\-_]?[^@]*@/i,               // German: central/main
-  /^empfang[.\-_]?[^@]*@/i,                // German: reception
-  /^reservierung(en)?[.\-_]?[^@]*@/i,      // German: reservations
-  /^buchung(en)?[.\-_]?[^@]*@/i,           // German: bookings
+  /^zentrale[.\-_]?[^@]*@/i, // German: central/main
+  /^empfang[.\-_]?[^@]*@/i, // German: reception
+  /^reservierung(en)?[.\-_]?[^@]*@/i, // German: reservations
+  /^buchung(en)?[.\-_]?[^@]*@/i, // German: bookings
   // French generics
-  /^accueil[.\-_]?[^@]*@/i,                // French: reception
-  /^cadeaux[.\-_]?[^@]*@/i,                // French: gifts
-  /^bienvenue[.\-_]?[^@]*@/i,              // French: welcome
-  /^bonjour[.\-_]?[^@]*@/i,                // French: hello
+  /^accueil[.\-_]?[^@]*@/i, // French: reception
+  /^cadeaux[.\-_]?[^@]*@/i, // French: gifts
+  /^bienvenue[.\-_]?[^@]*@/i, // French: welcome
+  /^bonjour[.\-_]?[^@]*@/i, // French: hello
   // Romanian generics
-  /^rezervari[.\-_]?[^@]*@/i,              // Romanian: reservations
-  /^receptie[.\-_]?[^@]*@/i,               // Romanian: reception
+  /^rezervari[.\-_]?[^@]*@/i, // Romanian: reservations
+  /^receptie[.\-_]?[^@]*@/i, // Romanian: reception
   // HR/recruitment (international)
-  /^curriculum[.\-_]?[^@]*@/i,             // CV/resume inbox
-  /^hr[.\-_]?[^@]*@/i,                     // Human resources
-  /^rh[.\-_]?[^@]*@/i,                     // Spanish/Portuguese: HR
-  /^recrutement[.\-_]?[^@]*@/i,            // French: recruitment
-  /^carriere[s]?[.\-_]?[^@]*@/i,           // French: careers
-  /^emploi[s]?[.\-_]?[^@]*@/i,             // French: jobs
-  /^lavoro[.\-_]?[^@]*@/i,                 // Italian: work/jobs
+  /^curriculum[.\-_]?[^@]*@/i, // CV/resume inbox
+  /^hr[.\-_]?[^@]*@/i, // Human resources
+  /^rh[.\-_]?[^@]*@/i, // Spanish/Portuguese: HR
+  /^recrutement[.\-_]?[^@]*@/i, // French: recruitment
+  /^carriere[s]?[.\-_]?[^@]*@/i, // French: careers
+  /^emploi[s]?[.\-_]?[^@]*@/i, // French: jobs
+  /^lavoro[.\-_]?[^@]*@/i, // Italian: work/jobs
   // Accessibility/special services
-  /^accessibility[.\-_]?[^@]*@/i,          // Accessibility inbox
-  /^spa[.\-_]?[^@]*@/i,                    // Spa services
-  /^restaurant[.\-_]?[^@]*@/i,             // Restaurant
-  /^restauration[.\-_]?[^@]*@/i,           // French: restaurant/catering
-  /^concierge[.\-_]?[^@]*@/i,              // Concierge
+  /^accessibility[.\-_]?[^@]*@/i, // Accessibility inbox
+  /^spa[.\-_]?[^@]*@/i, // Spa services
+  /^restaurant[.\-_]?[^@]*@/i, // Restaurant
+  /^restauration[.\-_]?[^@]*@/i, // French: restaurant/catering
+  /^concierge[.\-_]?[^@]*@/i, // Concierge
   // Multilingual greetings
   /^welcome[.\-_]?[^@]*@/i,
-  /^hola[.\-_]?[^@]*@/i,                   // Spanish: hello
-  /^ciao[.\-_]?[^@]*@/i,                   // Italian: hello
+  /^hola[.\-_]?[^@]*@/i, // Spanish: hello
+  /^ciao[.\-_]?[^@]*@/i, // Italian: hello
   // Property-type generics
   /^villas?[.\-_]?[^@]*@/i,
   /^rooms?[.\-_]?[^@]*@/i,
   /^suites?[.\-_]?[^@]*@/i,
   /^apartments?[.\-_]?[^@]*@/i,
   // Other common generics
-  /^comunicacion(es)?[.\-_]?[^@]*@/i,      // Spanish: communication
+  /^comunicacion(es)?[.\-_]?[^@]*@/i, // Spanish: communication
   /^general[.\-_]?[^@]*@/i,
   /^service[s]?[.\-_]?[^@]*@/i,
   // Hotel codes (e.g., H1234@accor.com)
-  /^[A-Z]\d{3,5}[\-_]?[^@]*@/i,            // Property codes like H1284@, H5628-re@
+  /^[A-Z]\d{3,5}[\-_]?[^@]*@/i, // Property codes like H1284@, H5628-re@
 ] as const;
 
 // ============================================
@@ -291,44 +337,163 @@ export const FAKE_EMAIL_PATTERNS = [
 // ============================================
 export const CHAIN_HOTEL_BRANDS = [
   // Marriott International
-  'marriott', 'sheraton', 'westin', 'w hotels', 'st. regis', 'st regis',
-  'ritz-carlton', 'ritz carlton', 'jw marriott', 'renaissance', 'courtyard',
-  'residence inn', 'fairfield', 'springhill', 'towneplace', 'aloft', 'element',
-  'ac hotels', 'moxy', 'autograph', 'tribute', 'le meridien', 'edition',
-  'luxury collection', 'four points',
+  "marriott",
+  "sheraton",
+  "westin",
+  "w hotels",
+  "st. regis",
+  "st regis",
+  "ritz-carlton",
+  "ritz carlton",
+  "jw marriott",
+  "renaissance",
+  "courtyard",
+  "residence inn",
+  "fairfield",
+  "springhill",
+  "towneplace",
+  "aloft",
+  "element",
+  "ac hotels",
+  "moxy",
+  "autograph",
+  "tribute",
+  "le meridien",
+  "edition",
+  "luxury collection",
+  "four points",
   // Hilton
-  'hilton', 'conrad', 'waldorf astoria', 'doubletree', 'embassy suites',
-  'hampton', 'homewood suites', 'home2 suites', 'hilton garden inn',
-  'tru by hilton', 'curio', 'canopy', 'tapestry', 'lxr', 'tempo', 'signia',
+  "hilton",
+  "conrad",
+  "waldorf astoria",
+  "doubletree",
+  "embassy suites",
+  "hampton",
+  "homewood suites",
+  "home2 suites",
+  "hilton garden inn",
+  "tru by hilton",
+  "curio",
+  "canopy",
+  "tapestry",
+  "lxr",
+  "tempo",
+  "signia",
   // Hyatt
-  'hyatt', 'grand hyatt', 'park hyatt', 'andaz', 'hyatt regency',
-  'hyatt place', 'hyatt house', 'thompson hotels', 'alila', 'miraval', 'caption',
+  "hyatt",
+  "grand hyatt",
+  "park hyatt",
+  "andaz",
+  "hyatt regency",
+  "hyatt place",
+  "hyatt house",
+  "thompson hotels",
+  "alila",
+  "miraval",
+  "caption",
   // IHG
-  'ihg', 'intercontinental', 'crowne plaza', 'holiday inn', 'holiday inn express',
-  'kimpton', 'hotel indigo', 'even hotels', 'staybridge', 'candlewood',
-  'regent hotels', 'six senses', 'vignette',
+  "ihg",
+  "intercontinental",
+  "crowne plaza",
+  "holiday inn",
+  "holiday inn express",
+  "kimpton",
+  "hotel indigo",
+  "even hotels",
+  "staybridge",
+  "candlewood",
+  "regent hotels",
+  "six senses",
+  "vignette",
   // Accor
-  'accor', 'sofitel', 'pullman', 'mgallery', 'novotel', 'mercure',
-  'ibis', 'ibis styles', 'ibis budget', 'fairmont', 'raffles', 'swissotel',
-  'banyan tree', 'movenpick', 'mantis', '25hours', 'sls hotels', 'delano', 'mondrian',
+  "accor",
+  "sofitel",
+  "pullman",
+  "mgallery",
+  "novotel",
+  "mercure",
+  "ibis",
+  "ibis styles",
+  "ibis budget",
+  "fairmont",
+  "raffles",
+  "swissotel",
+  "banyan tree",
+  "movenpick",
+  "mantis",
+  "25hours",
+  "sls hotels",
+  "delano",
+  "mondrian",
   // Wyndham
-  'wyndham', 'ramada', 'days inn', 'super 8', 'microtel', 'la quinta',
-  'baymont', 'wingate', 'hawthorn', 'tryp',
+  "wyndham",
+  "ramada",
+  "days inn",
+  "super 8",
+  "microtel",
+  "la quinta",
+  "baymont",
+  "wingate",
+  "hawthorn",
+  "tryp",
   // Best Western
-  'best western', 'best western plus', 'best western premier', 'vib', 'glo', 'aiden', 'sadie',
+  "best western",
+  "best western plus",
+  "best western premier",
+  "vib",
+  "glo",
+  "aiden",
+  "sadie",
   // Choice Hotels
-  'choice hotels', 'comfort inn', 'comfort suites', 'quality inn', 'sleep inn',
-  'clarion', 'econo lodge', 'rodeway inn', 'cambria', 'ascend',
+  "choice hotels",
+  "comfort inn",
+  "comfort suites",
+  "quality inn",
+  "sleep inn",
+  "clarion",
+  "econo lodge",
+  "rodeway inn",
+  "cambria",
+  "ascend",
   // Radisson
-  'radisson', 'radisson blu', 'radisson red', 'radisson collection',
-  'park inn by radisson', 'park plaza', 'country inn',
+  "radisson",
+  "radisson blu",
+  "radisson red",
+  "radisson collection",
+  "park inn by radisson",
+  "park plaza",
+  "country inn",
   // Luxury chains
-  'four seasons', 'mandarin oriental', 'peninsula', 'shangri-la',
-  'aman', 'one&only', 'belmond', 'rosewood', 'langham', 'kempinski', 'jumeirah',
+  "four seasons",
+  "mandarin oriental",
+  "peninsula",
+  "shangri-la",
+  "aman",
+  "one&only",
+  "belmond",
+  "rosewood",
+  "langham",
+  "kempinski",
+  "jumeirah",
   // Others
-  'loews', 'omni hotels', 'premier inn', 'travelodge', 'motel 6', 'red roof',
-  'drury', 'oyo', 'citizenm', 'hoxton', 'gleneagles', 'mama shelter',
-  'nh hotels', 'nh collection', 'anantara', 'avani', 'oaks', 'tivoli',
+  "loews",
+  "omni hotels",
+  "premier inn",
+  "travelodge",
+  "motel 6",
+  "red roof",
+  "drury",
+  "oyo",
+  "citizenm",
+  "hoxton",
+  "gleneagles",
+  "mama shelter",
+  "nh hotels",
+  "nh collection",
+  "anantara",
+  "avani",
+  "oaks",
+  "tivoli",
 ] as const;
 
 /**
@@ -337,66 +502,69 @@ export const CHAIN_HOTEL_BRANDS = [
 export function isChainHotel(companyName: string): boolean {
   if (!companyName) return false;
   const lower = companyName.toLowerCase();
-  return CHAIN_HOTEL_BRANDS.some(brand => lower.includes(brand));
+  return CHAIN_HOTEL_BRANDS.some((brand) => lower.includes(brand));
 }
 
 // ============================================
 // COUNTRY TIMEZONE MAPPING (for time-zone aware sending)
 // ============================================
-export const COUNTRY_TIMEZONES: Record<string, { timezone: string; utcOffset: number }> = {
+export const COUNTRY_TIMEZONES: Record<
+  string,
+  { timezone: string; utcOffset: number }
+> = {
   // Europe
-  'united kingdom': { timezone: 'Europe/London', utcOffset: 0 },
-  'uk': { timezone: 'Europe/London', utcOffset: 0 },
-  'france': { timezone: 'Europe/Paris', utcOffset: 1 },
-  'germany': { timezone: 'Europe/Berlin', utcOffset: 1 },
-  'italy': { timezone: 'Europe/Rome', utcOffset: 1 },
-  'spain': { timezone: 'Europe/Madrid', utcOffset: 1 },
-  'netherlands': { timezone: 'Europe/Amsterdam', utcOffset: 1 },
-  'belgium': { timezone: 'Europe/Brussels', utcOffset: 1 },
-  'switzerland': { timezone: 'Europe/Zurich', utcOffset: 1 },
-  'austria': { timezone: 'Europe/Vienna', utcOffset: 1 },
-  'portugal': { timezone: 'Europe/Lisbon', utcOffset: 0 },
-  'ireland': { timezone: 'Europe/Dublin', utcOffset: 0 },
-  'greece': { timezone: 'Europe/Athens', utcOffset: 2 },
-  'poland': { timezone: 'Europe/Warsaw', utcOffset: 1 },
-  'sweden': { timezone: 'Europe/Stockholm', utcOffset: 1 },
-  'norway': { timezone: 'Europe/Oslo', utcOffset: 1 },
-  'denmark': { timezone: 'Europe/Copenhagen', utcOffset: 1 },
-  'finland': { timezone: 'Europe/Helsinki', utcOffset: 2 },
-  'czech republic': { timezone: 'Europe/Prague', utcOffset: 1 },
-  'hungary': { timezone: 'Europe/Budapest', utcOffset: 1 },
-  'romania': { timezone: 'Europe/Bucharest', utcOffset: 2 },
-  'turkey': { timezone: 'Europe/Istanbul', utcOffset: 3 },
+  "united kingdom": { timezone: "Europe/London", utcOffset: 0 },
+  uk: { timezone: "Europe/London", utcOffset: 0 },
+  france: { timezone: "Europe/Paris", utcOffset: 1 },
+  germany: { timezone: "Europe/Berlin", utcOffset: 1 },
+  italy: { timezone: "Europe/Rome", utcOffset: 1 },
+  spain: { timezone: "Europe/Madrid", utcOffset: 1 },
+  netherlands: { timezone: "Europe/Amsterdam", utcOffset: 1 },
+  belgium: { timezone: "Europe/Brussels", utcOffset: 1 },
+  switzerland: { timezone: "Europe/Zurich", utcOffset: 1 },
+  austria: { timezone: "Europe/Vienna", utcOffset: 1 },
+  portugal: { timezone: "Europe/Lisbon", utcOffset: 0 },
+  ireland: { timezone: "Europe/Dublin", utcOffset: 0 },
+  greece: { timezone: "Europe/Athens", utcOffset: 2 },
+  poland: { timezone: "Europe/Warsaw", utcOffset: 1 },
+  sweden: { timezone: "Europe/Stockholm", utcOffset: 1 },
+  norway: { timezone: "Europe/Oslo", utcOffset: 1 },
+  denmark: { timezone: "Europe/Copenhagen", utcOffset: 1 },
+  finland: { timezone: "Europe/Helsinki", utcOffset: 2 },
+  "czech republic": { timezone: "Europe/Prague", utcOffset: 1 },
+  hungary: { timezone: "Europe/Budapest", utcOffset: 1 },
+  romania: { timezone: "Europe/Bucharest", utcOffset: 2 },
+  turkey: { timezone: "Europe/Istanbul", utcOffset: 3 },
   // Middle East
-  'united arab emirates': { timezone: 'Asia/Dubai', utcOffset: 4 },
-  'uae': { timezone: 'Asia/Dubai', utcOffset: 4 },
-  'dubai': { timezone: 'Asia/Dubai', utcOffset: 4 },
-  'saudi arabia': { timezone: 'Asia/Riyadh', utcOffset: 3 },
-  'qatar': { timezone: 'Asia/Qatar', utcOffset: 3 },
-  'israel': { timezone: 'Asia/Jerusalem', utcOffset: 2 },
+  "united arab emirates": { timezone: "Asia/Dubai", utcOffset: 4 },
+  uae: { timezone: "Asia/Dubai", utcOffset: 4 },
+  dubai: { timezone: "Asia/Dubai", utcOffset: 4 },
+  "saudi arabia": { timezone: "Asia/Riyadh", utcOffset: 3 },
+  qatar: { timezone: "Asia/Qatar", utcOffset: 3 },
+  israel: { timezone: "Asia/Jerusalem", utcOffset: 2 },
   // Asia Pacific
-  'singapore': { timezone: 'Asia/Singapore', utcOffset: 8 },
-  'hong kong': { timezone: 'Asia/Hong_Kong', utcOffset: 8 },
-  'japan': { timezone: 'Asia/Tokyo', utcOffset: 9 },
-  'south korea': { timezone: 'Asia/Seoul', utcOffset: 9 },
-  'china': { timezone: 'Asia/Shanghai', utcOffset: 8 },
-  'thailand': { timezone: 'Asia/Bangkok', utcOffset: 7 },
-  'malaysia': { timezone: 'Asia/Kuala_Lumpur', utcOffset: 8 },
-  'indonesia': { timezone: 'Asia/Jakarta', utcOffset: 7 },
-  'philippines': { timezone: 'Asia/Manila', utcOffset: 8 },
-  'india': { timezone: 'Asia/Kolkata', utcOffset: 5 },
-  'australia': { timezone: 'Australia/Sydney', utcOffset: 10 },
-  'new zealand': { timezone: 'Pacific/Auckland', utcOffset: 12 },
+  singapore: { timezone: "Asia/Singapore", utcOffset: 8 },
+  "hong kong": { timezone: "Asia/Hong_Kong", utcOffset: 8 },
+  japan: { timezone: "Asia/Tokyo", utcOffset: 9 },
+  "south korea": { timezone: "Asia/Seoul", utcOffset: 9 },
+  china: { timezone: "Asia/Shanghai", utcOffset: 8 },
+  thailand: { timezone: "Asia/Bangkok", utcOffset: 7 },
+  malaysia: { timezone: "Asia/Kuala_Lumpur", utcOffset: 8 },
+  indonesia: { timezone: "Asia/Jakarta", utcOffset: 7 },
+  philippines: { timezone: "Asia/Manila", utcOffset: 8 },
+  india: { timezone: "Asia/Kolkata", utcOffset: 5 },
+  australia: { timezone: "Australia/Sydney", utcOffset: 10 },
+  "new zealand": { timezone: "Pacific/Auckland", utcOffset: 12 },
   // Americas
-  'united states': { timezone: 'America/New_York', utcOffset: -5 },
-  'usa': { timezone: 'America/New_York', utcOffset: -5 },
-  'canada': { timezone: 'America/Toronto', utcOffset: -5 },
-  'mexico': { timezone: 'America/Mexico_City', utcOffset: -6 },
-  'brazil': { timezone: 'America/Sao_Paulo', utcOffset: -3 },
+  "united states": { timezone: "America/New_York", utcOffset: -5 },
+  usa: { timezone: "America/New_York", utcOffset: -5 },
+  canada: { timezone: "America/Toronto", utcOffset: -5 },
+  mexico: { timezone: "America/Mexico_City", utcOffset: -6 },
+  brazil: { timezone: "America/Sao_Paulo", utcOffset: -3 },
   // Africa
-  'south africa': { timezone: 'Africa/Johannesburg', utcOffset: 2 },
-  'egypt': { timezone: 'Africa/Cairo', utcOffset: 2 },
-  'morocco': { timezone: 'Africa/Casablanca', utcOffset: 0 },
+  "south africa": { timezone: "Africa/Johannesburg", utcOffset: 2 },
+  egypt: { timezone: "Africa/Cairo", utcOffset: 2 },
+  morocco: { timezone: "Africa/Casablanca", utcOffset: 0 },
 };
 
 /**
@@ -437,9 +605,11 @@ export function getLocalHour(country: string | null): number {
 // HTTP HEADERS
 // ============================================
 export const FETCH_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-  'Accept-Language': 'en-US,en;q=0.5',
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  Accept:
+    "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.5",
 } as const;
 
 // ============================================
@@ -447,11 +617,11 @@ export const FETCH_HEADERS = {
 // ============================================
 export const SESSION = {
   /** Cookie name for auth token */
-  COOKIE_NAME: 'auth_token',
+  COOKIE_NAME: "auth_token",
   /** Session duration in seconds (7 days instead of 30) */
   DURATION_SECONDS: 60 * 60 * 24 * 7,
   /** Secure session token value (better than 'authenticated') */
-  TOKEN_PREFIX: 'session_',
+  TOKEN_PREFIX: "session_",
 } as const;
 
 const constants = {

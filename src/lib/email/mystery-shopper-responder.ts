@@ -17,6 +17,7 @@ import nodemailer from 'nodemailer';
 import Anthropic from '@anthropic-ai/sdk';
 import { getGmailInboxes, type GmailInbox } from './config';
 import { logger } from '../logger';
+import globalConfig from '@/lib/config';
 
 interface MysteryShopperReply {
   hotelEmail: string;
@@ -287,6 +288,10 @@ export async function sendMysteryShopperResponse(
   inReplyTo?: string
 ): Promise<boolean> {
   try {
+    if (globalConfig.email.disableOutgoing) {
+      logger.warn({ to, from: inbox.email }, 'Outgoing emails disabled by DISABLE_OUTGOING_EMAILS (mystery-shopper-responder)');
+      return false;
+    }
     const transporter = nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 465,

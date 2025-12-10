@@ -283,10 +283,26 @@ export interface BounceInfo {
 
 /**
  * Validate email syntax using RFC 5322 pattern
+ * Also requires a valid TLD (at least 2 chars after the last dot)
  */
 function isValidSyntax(email: string): boolean {
   const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
-  return emailRegex.test(email) && email.length <= 254;
+  if (!emailRegex.test(email) || email.length > 254) {
+    return false;
+  }
+
+  // Require a valid TLD (domain must have at least one dot with 2+ chars after it)
+  const domain = email.split('@')[1];
+  if (!domain || !domain.includes('.')) {
+    return false; // No TLD (e.g., "n@chef.xaviermathieu" is invalid)
+  }
+
+  const tld = domain.split('.').pop();
+  if (!tld || tld.length < 2) {
+    return false; // TLD too short
+  }
+
+  return true;
 }
 
 /**
@@ -609,36 +625,47 @@ export async function canSendTo(email: string): Promise<{ canSend: boolean; reas
   }
 
   // MillionVerifier check - verify email actually exists
+  // CRITICAL: Block on failure to prevent bounces
   try {
     const { millionVerifierVerify } = await import('./finder/services');
     const mvResult = await millionVerifierVerify(normalizedEmail);
 
-    if (mvResult) {
-      // Block invalid emails
-      if (mvResult.result === 'invalid') {
-        logger.info({ email: normalizedEmail, mvResult: mvResult.result, subresult: mvResult.subresult }, 'Email blocked by MillionVerifier (invalid)');
-        return { canSend: false, reason: `MillionVerifier: ${mvResult.subresult || 'invalid'}` };
-      }
-
-      // Block catch-all domains (high bounce risk)
-      if (mvResult.result === 'catch_all' || mvResult.subresult === 'catch_all') {
-        logger.info({ email: normalizedEmail, mvResult: mvResult.result }, 'Email blocked by MillionVerifier (catch-all domain)');
-        return { canSend: false, reason: 'Catch-all domain (high bounce risk)' };
-      }
-
-      // Block disposable emails detected by MV
-      if (mvResult.result === 'disposable') {
-        logger.info({ email: normalizedEmail }, 'Email blocked by MillionVerifier (disposable)');
-        return { canSend: false, reason: 'Disposable email' };
-      }
-
-      // Allow: ok, unknown (might be valid)
-      logger.debug({ email: normalizedEmail, mvResult: mvResult.result }, 'MillionVerifier passed');
+    // If no result returned, BLOCK (don't allow unverified emails)
+    if (!mvResult) {
+      logger.warn({ email: normalizedEmail }, 'MillionVerifier returned no result - blocking email');
+      return { canSend: false, reason: 'Email verification failed (no result)' };
     }
-  } catch (error) {
-    // If MillionVerifier fails, log but allow sending (don't block on API errors)
-    logger.warn({ error, email: normalizedEmail }, 'MillionVerifier check failed, allowing send');
-  }
 
-  return { canSend: true };
+    // Block on API errors
+    if (mvResult.result === 'error') {
+      logger.warn({ email: normalizedEmail, subresult: mvResult.subresult }, 'MillionVerifier returned error - blocking email');
+      return { canSend: false, reason: `Email verification error: ${mvResult.subresult || 'unknown'}` };
+    }
+
+    // Block invalid emails
+    if (mvResult.result === 'invalid') {
+      logger.info({ email: normalizedEmail, mvResult: mvResult.result, subresult: mvResult.subresult }, 'Email blocked by MillionVerifier (invalid)');
+      return { canSend: false, reason: `MillionVerifier: ${mvResult.subresult || 'invalid'}` };
+    }
+
+    // Block catch-all domains (high bounce risk)
+    if (mvResult.result === 'catch_all' || mvResult.subresult === 'catch_all') {
+      logger.info({ email: normalizedEmail, mvResult: mvResult.result }, 'Email blocked by MillionVerifier (catch-all domain)');
+      return { canSend: false, reason: 'Catch-all domain (high bounce risk)' };
+    }
+
+    // Block disposable emails detected by MV
+    if (mvResult.result === 'disposable') {
+      logger.info({ email: normalizedEmail }, 'Email blocked by MillionVerifier (disposable)');
+      return { canSend: false, reason: 'Disposable email' };
+    }
+
+    // Only allow: ok, unknown (might be valid)
+    logger.debug({ email: normalizedEmail, mvResult: mvResult.result }, 'MillionVerifier passed');
+    return { canSend: true };
+  } catch (error) {
+    // CRITICAL: Block on API errors - better to miss a send than bounce
+    logger.error({ error, email: normalizedEmail }, 'MillionVerifier check threw exception - blocking email');
+    return { canSend: false, reason: 'Email verification service unavailable' };
+  }
 }

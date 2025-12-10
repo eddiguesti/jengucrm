@@ -31,6 +31,7 @@ import {
   recordBounce,
   recordSuccessfulSend,
 } from './verification';
+import globalConfig from '@/lib/config';
 
 /**
  * Check if an SMTP/Graph error is retryable (transient)
@@ -93,6 +94,18 @@ async function sendViaSmtp(
   options: SendEmailOptions & { emailId?: string }
 ): Promise<SendEmailResult> {
   const startTime = Date.now();
+
+  if (globalConfig.email.disableOutgoing) {
+    logger.warn({ inbox: inbox.email, to: options.to }, 'Outgoing emails disabled by DISABLE_OUTGOING_EMAILS');
+    return {
+      success: false,
+      error: 'Outgoing email disabled by DISABLE_OUTGOING_EMAILS',
+      deliveryTime: 0,
+      sentFrom: inbox.email,
+      blocked: true,
+      blockReason: 'disabled_by_env',
+    } as SendEmailResult;
+  }
 
   try {
     const transporter = nodemailer.createTransport({
@@ -165,6 +178,17 @@ async function sendViaSmtp(
  */
 async function sendViaGraph(options: SendEmailOptions & { emailId?: string }): Promise<SendEmailResult> {
   const startTime = Date.now();
+
+  if (globalConfig.email.disableOutgoing) {
+    logger.warn({ to: options.to }, 'Outgoing emails disabled by DISABLE_OUTGOING_EMAILS (Graph)');
+    return {
+      success: false,
+      error: 'Outgoing email disabled by DISABLE_OUTGOING_EMAILS',
+      deliveryTime: 0,
+      blocked: true,
+      blockReason: 'disabled_by_env',
+    } as SendEmailResult;
+  }
 
   try {
     const client = createGraphClient();
@@ -247,6 +271,17 @@ async function sendViaGraph(options: SendEmailOptions & { emailId?: string }): P
 export async function sendEmail(options: SendEmailOptions & { emailId?: string; skipValidation?: boolean }): Promise<SendEmailResult> {
   const hasAzure = isAzureConfigured();
 
+  if (globalConfig.email.disableOutgoing) {
+    logger.warn({ to: options.to }, 'Outgoing emails disabled by DISABLE_OUTGOING_EMAILS (sendEmail)');
+    return {
+      success: false,
+      error: 'Outgoing email disabled by DISABLE_OUTGOING_EMAILS',
+      deliveryTime: 0,
+      blocked: true,
+      blockReason: 'disabled_by_env',
+    } as SendEmailResult;
+  }
+
   // Validate recipient email first (unless skipped for replies/follow-ups)
   if (!options.skipValidation) {
     const validation = await canSendTo(options.to);
@@ -309,6 +344,17 @@ export async function sendMysteryShopperEmail(options: {
   body: string;
 }): Promise<SendEmailResult> {
   const startTime = Date.now();
+
+  if (globalConfig.email.disableOutgoing) {
+    logger.warn({ to: options.to }, 'Outgoing emails disabled by DISABLE_OUTGOING_EMAILS (mystery shopper)');
+    return {
+      success: false,
+      error: 'Outgoing email disabled by DISABLE_OUTGOING_EMAILS',
+      deliveryTime: 0,
+      blocked: true,
+      blockReason: 'disabled_by_env',
+    } as SendEmailResult;
+  }
 
   if (!isGmailConfigured()) {
     return {

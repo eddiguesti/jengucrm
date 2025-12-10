@@ -1,0 +1,28 @@
+{
+  "name": "jengu-cloudflare",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:prod": "wrangler deploy --env production",
+    "tail": "wrangler tail",
+    "db:migrate": "wrangler d1 execute jengu-crm --file=./migrations/001_schema.sql",
+    "db:seed": "wrangler d1 execute jengu-crm --file=./migrations/002_seed.sql",
+    "queues:create": "npm run queues:create:all",
+    "queues:create:all": "wrangler queues create prospect-queue && wrangler queues create enrichment-queue && wrangler queues create email-finder-queue && wrangler queues create ai-queue && wrangler queues create send-queue && wrangler queues create inbound-queue && wrangler queues create dead-letter-queue",
+    "kv:create": "wrangler kv:namespace create KV_CONFIG && wrangler kv:namespace create KV_CACHE",
+    "r2:create": "wrangler r2 bucket create jengu-storage",
+    "setup": "npm run queues:create && npm run kv:create && npm run r2:create && echo 'Now run: wrangler d1 create jengu-crm'",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "@cloudflare/workers-types": "^4.20241127.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "vitest": "^1.6.0",
+    "wrangler": "^3.91.0"
+  }
+}

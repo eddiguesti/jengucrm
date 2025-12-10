@@ -168,21 +168,13 @@ export async function GET(request: NextRequest) {
   };
   logger.info({ requestId, step: 5 }, 'Daily cron: Auto-emails skipped (handled by hourly cron)');
 
-  // 6. Send follow-ups
-  try {
-    logger.info({ requestId, step: 6 }, 'Daily cron: Sending follow-ups...');
-    const response = await fetch(`${baseUrl}/api/follow-up`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ max_follow_ups: 20 }),
-    });
-    const data = await response.json();
-    results.follow_ups = { success: response.ok, error: response.ok ? null : data.error, stats: data };
-    logger.info({ requestId, step: 6, success: response.ok, sent: data.sent || 0 }, 'Daily cron: Follow-ups complete');
-  } catch (err) {
-    results.follow_ups.error = String(err);
-    logger.error({ requestId, step: 6, error: err }, 'Daily cron: Follow-ups failed');
-  }
+// 6. Send follow-ups (DISABLED)
+  results.follow_ups = {
+    success: true,
+    error: null,
+    stats: { disabled: true, reason: 'Email sending disabled' }
+  };
+  logger.info({ requestId, step: 6 }, 'Daily cron: Follow-ups disabled - email sending disabled');
 
   // 7. Cleanup expired cache and old data
   try {

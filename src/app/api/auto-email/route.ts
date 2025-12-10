@@ -1,15 +1,33 @@
-import { NextRequest } from 'next/server';
-import { createServerClient } from '@/lib/supabase';
-import { sendEmail, isSmtpConfigured, getInboxStats, getTotalRemainingCapacity, getSmtpInboxes, syncInboxCountsFromDb, canSendTo } from '@/lib/email';
-import { getStrategy } from '@/lib/campaign-strategies';
-import { success, errors } from '@/lib/api-response';
-import { parseBody, autoEmailSchema, ValidationError } from '@/lib/validation';
-import { logger } from '@/lib/logger';
-import { config } from '@/lib/config';
-import { EMAIL, SCORING, FAKE_EMAIL_PATTERNS, GENERIC_CORPORATE_EMAILS, GENERIC_EMAIL_PREFIXES, getWarmupDailyLimit, getWarmupStatus, isBusinessHours, getLocalHour } from '@/lib/constants';
-import { aiGateway } from '@/lib/ai-gateway';
-import { flags } from '@/lib/feature-flags';
-import { CACHE_TTL } from '@/lib/cache';
+import { NextRequest } from "next/server";
+import { createServerClient } from "@/lib/supabase";
+import {
+  sendEmail,
+  isSmtpConfigured,
+  getInboxStats,
+  getTotalRemainingCapacity,
+  getSmtpInboxes,
+  syncInboxCountsFromDb,
+  canSendTo,
+} from "@/lib/email";
+import { getStrategy } from "@/lib/campaign-strategies";
+import { success, errors } from "@/lib/api-response";
+import { parseBody, autoEmailSchema, ValidationError } from "@/lib/validation";
+import { logger } from "@/lib/logger";
+import { config } from "@/lib/config";
+import {
+  EMAIL,
+  SCORING,
+  FAKE_EMAIL_PATTERNS,
+  GENERIC_CORPORATE_EMAILS,
+  GENERIC_EMAIL_PREFIXES,
+  getWarmupDailyLimit,
+  getWarmupStatus,
+  isBusinessHours,
+  getLocalHour,
+} from "@/lib/constants";
+import { aiGateway } from "@/lib/ai-gateway";
+import { flags } from "@/lib/feature-flags";
+import { CACHE_TTL } from "@/lib/cache";
 
 interface Campaign {
   id: string;
@@ -38,13 +56,13 @@ interface Prospect {
 
 async function generateEmail(
   prospect: Prospect,
-  campaign: Campaign
+  campaign: Campaign,
 ): Promise<{ subject: string; body: string } | null> {
   if (!aiGateway.isConfigured()) return null;
 
   const strategy = getStrategy(campaign.strategy_key);
   if (!strategy) {
-    logger.error({ strategyKey: campaign.strategy_key }, 'Unknown strategy');
+    logger.error({ strategyKey: campaign.strategy_key }, "Unknown strategy");
     return null;
   }
 
@@ -63,10 +81,13 @@ async function generateEmail(
     // Use AI Gateway with caching for similar prompts
     // Cache key includes strategy and location to avoid mixing responses
     const cacheKey = flags.AI_CACHING_ENABLED
-      ? `email:${campaign.strategy_key}:${prospect.city || 'unknown'}:${prospect.property_type || 'hotel'}`
+      ? `email:${campaign.strategy_key}:${prospect.city || "unknown"}:${prospect.property_type || "hotel"}`
       : undefined;
 
-    const result = await aiGateway.generateJSON<{ subject: string; body: string }>({
+    const result = await aiGateway.generateJSON<{
+      subject: string;
+      body: string;
+    }>({
       prompt,
       maxTokens: 500,
       // Don't cache personalized emails (each prospect is unique)
@@ -77,13 +98,19 @@ async function generateEmail(
     });
 
     if (!result.data) {
-      logger.warn({ prospect: prospect.name, raw: result.raw?.slice(0, 200) }, 'Failed to parse email JSON');
+      logger.warn(
+        { prospect: prospect.name, raw: result.raw?.slice(0, 200) },
+        "Failed to parse email JSON",
+      );
       return null;
     }
 
     return result.data;
   } catch (err) {
-    logger.error({ error: err, prospect: prospect.name }, 'Email generation failed');
+    logger.error(
+      { error: err, prospect: prospect.name },
+      "Email generation failed",
+    );
     return null;
   }
 }
@@ -92,15 +119,45 @@ export async function POST(request: NextRequest) {
   const supabase = createServerClient();
 
   try {
+    // EMERGENCY STOP - All email sending disabled
+    if (EMAIL.EMERGENCY_STOP) {
+      return success({
+        error: "EMERGENCY STOP - All email sending disabled",
+        disabled: true,
+        emergency_stop: true,
+        sent: 0,
+        attempted: 0,
+        warmup: getWarmupStatus(),
+      });
+    }
+
     const body = await parseBody(request, autoEmailSchema);
-    const { max_emails: requestedMax, min_score: minScore, stagger_delay: staggerDelay } = body;
+    const {
+      max_emails: requestedMax,
+      min_score: minScore,
+      stagger_delay: staggerDelay,
+    } = body;
 
     // Enforce warmup schedule limits
     const warmupStatus = getWarmupStatus();
     const warmupLimit = getWarmupDailyLimit();
 
+    // EMAIL SENDING DISABLED - Check if limit is 0
+    if (warmupLimit === 0) {
+      return success({
+        error: "Email sending disabled - daily limit set to 0",
+        sent: 0,
+        disabled: true,
+        warmup: {
+          day: warmupStatus.day,
+          stage: warmupStatus.stage,
+          daily_limit: warmupLimit,
+        },
+      });
+    }
+
     if (!isSmtpConfigured()) {
-      return success({ error: 'Email sending not configured', sent: 0 });
+      return success({ error: "Email sending not configured", sent: 0 });
     }
 
     // OPTIMIZED: Parallel fetch of all initial data
@@ -116,30 +173,31 @@ export async function POST(request: NextRequest) {
     ] = await Promise.all([
       // Query 1: Get today's emails by inbox (for inbox capacity tracking)
       supabase
-        .from('emails')
-        .select('from_email, campaign_id')
-        .eq('direction', 'outbound')
-        .eq('email_type', 'outreach')
-        .gte('sent_at', todayIso),
+        .from("emails")
+        .select("from_email, campaign_id")
+        .eq("direction", "outbound")
+        .eq("email_type", "outreach")
+        .gte("sent_at", todayIso),
       // Query 2: Get active campaigns
       supabase
-        .from('campaigns')
-        .select('id, name, strategy_key, active, daily_limit, emails_sent')
-        .eq('active', true),
+        .from("campaigns")
+        .select("id, name, strategy_key, active, daily_limit, emails_sent")
+        .eq("active", true),
       // Query 3: Get today's emails by campaign (could be combined with Query 1 but keeping separate for clarity)
       supabase
-        .from('emails')
-        .select('campaign_id')
-        .eq('direction', 'outbound')
-        .eq('email_type', 'outreach')
-        .gte('sent_at', todayIso),
+        .from("emails")
+        .select("campaign_id")
+        .eq("direction", "outbound")
+        .eq("email_type", "outreach")
+        .gte("sent_at", todayIso),
     ]);
 
     // Process inbox counts
     const sentTodayByInbox: Record<string, number> = {};
     for (const e of todaysEmails || []) {
       if (e.from_email) {
-        sentTodayByInbox[e.from_email] = (sentTodayByInbox[e.from_email] || 0) + 1;
+        sentTodayByInbox[e.from_email] =
+          (sentTodayByInbox[e.from_email] || 0) + 1;
       }
     }
     syncInboxCountsFromDb(sentTodayByInbox);
@@ -151,15 +209,18 @@ export async function POST(request: NextRequest) {
     // Use the minimum of requested max and remaining warmup capacity
     const maxEmails = Math.min(requestedMax, remainingWarmupCapacity);
 
-    logger.info({
-      warmupDay: warmupStatus.day,
-      warmupStage: warmupStatus.stage,
-      warmupLimit,
-      totalSentToday,
-      remainingCapacity: remainingWarmupCapacity,
-      requestedMax,
-      effectiveMax: maxEmails
-    }, 'Warmup limits applied');
+    logger.info(
+      {
+        warmupDay: warmupStatus.day,
+        warmupStage: warmupStatus.stage,
+        warmupLimit,
+        totalSentToday,
+        remainingCapacity: remainingWarmupCapacity,
+        requestedMax,
+        effectiveMax: maxEmails,
+      },
+      "Warmup limits applied",
+    );
 
     if (remainingWarmupCapacity <= 0) {
       return success({
@@ -171,25 +232,26 @@ export async function POST(request: NextRequest) {
     }
 
     if (!campaigns || campaigns.length === 0) {
-      return success({ error: 'No active campaigns found', sent: 0 });
+      return success({ error: "No active campaigns found", sent: 0 });
     }
 
     const sentTodayByCampaign: Record<string, number> = {};
     for (const e of campaignEmailsToday || []) {
       if (e.campaign_id) {
-        sentTodayByCampaign[e.campaign_id] = (sentTodayByCampaign[e.campaign_id] || 0) + 1;
+        sentTodayByCampaign[e.campaign_id] =
+          (sentTodayByCampaign[e.campaign_id] || 0) + 1;
       }
     }
 
-    const availableCampaigns = campaigns.filter(c =>
-      (sentTodayByCampaign[c.id] || 0) < c.daily_limit
+    const availableCampaigns = campaigns.filter(
+      (c) => (sentTodayByCampaign[c.id] || 0) < c.daily_limit,
     );
 
     if (availableCampaigns.length === 0) {
       return success({
-        error: 'All campaigns have hit their daily limit',
+        error: "All campaigns have hit their daily limit",
         sent: 0,
-        campaigns: campaigns.map(c => ({
+        campaigns: campaigns.map((c) => ({
           name: c.name,
           sent_today: sentTodayByCampaign[c.id] || 0,
           daily_limit: c.daily_limit,
@@ -203,56 +265,79 @@ export async function POST(request: NextRequest) {
         source, contact_name, score, tier`;
 
     const { data: prospects, error: prospectsError } = await supabase
-      .from('prospects')
+      .from("prospects")
       .select(baseSelect)
-      .in('stage', ['new', 'researching'])
-      .eq('archived', false)
-      .not('email', 'is', null)
-      .gte('score', minScore)
-      .order('score', { ascending: false })
+      .in("stage", ["new", "researching"])
+      .eq("archived", false)
+      .not("email", "is", null)
+      .gte("score", minScore)
+      .order("score", { ascending: false })
       .limit(Math.max(maxEmails * 100, 500)); // Min 500: top prospects often have generic emails
 
     if (prospectsError) {
-      logger.error({ error: prospectsError }, 'Prospects query failed');
-      return success({ message: 'Query failed', sent: 0, checked: 0 });
+      logger.error({ error: prospectsError }, "Prospects query failed");
+      return success({ message: "Query failed", sent: 0, checked: 0 });
     }
 
     if (!prospects || prospects.length === 0) {
-      return success({ message: 'No eligible prospects to email', sent: 0, checked: 0 });
+      return success({
+        message: "No eligible prospects to email",
+        sent: 0,
+        checked: 0,
+      });
     }
 
-    logger.info({ prospectCount: prospects.length, minScore, maxEmails }, 'Initial prospects fetched');
+    logger.info(
+      { prospectCount: prospects.length, minScore, maxEmails },
+      "Initial prospects fetched",
+    );
 
     // Filter already-emailed prospects
-    const prospectIds = prospects.map(p => p.id);
+    const prospectIds = prospects.map((p) => p.id);
     const { data: existingEmails } = await supabase
-      .from('emails')
-      .select('prospect_id')
-      .in('prospect_id', prospectIds)
-      .eq('direction', 'outbound');
+      .from("emails")
+      .select("prospect_id")
+      .in("prospect_id", prospectIds)
+      .eq("direction", "outbound");
 
-    const emailedIds = new Set((existingEmails || []).map(e => e.prospect_id));
+    const emailedIds = new Set(
+      (existingEmails || []).map((e) => e.prospect_id),
+    );
 
     // Check if timezone-aware sending is enabled
-    const timezoneAwareSending = process.env.TIMEZONE_AWARE_SENDING !== 'false';
+    const timezoneAwareSending = process.env.TIMEZONE_AWARE_SENDING !== "false";
 
-    const eligibleProspects = prospects.filter(p => {
+    const eligibleProspects = prospects.filter((p) => {
       if (emailedIds.has(p.id)) return false;
       if (!p.email) return false;
-      if (FAKE_EMAIL_PATTERNS.some(pattern => pattern.test(p.email!))) return false;
-      if (GENERIC_CORPORATE_EMAILS.some(pattern => pattern.test(p.email!))) return false;
+      if (FAKE_EMAIL_PATTERNS.some((pattern) => pattern.test(p.email!)))
+        return false;
+      if (GENERIC_CORPORATE_EMAILS.some((pattern) => pattern.test(p.email!)))
+        return false;
       // Skip generic email prefixes (info@, reception@, etc.) - we want personal emails
-      if (GENERIC_EMAIL_PREFIXES.some(pattern => pattern.test(p.email!))) return false;
+      if (GENERIC_EMAIL_PREFIXES.some((pattern) => pattern.test(p.email!)))
+        return false;
       // Timezone-aware sending: only email during their business hours (9am-5pm local)
       if (timezoneAwareSending && p.country && !isBusinessHours(p.country)) {
         const localHour = getLocalHour(p.country);
-        logger.debug({ prospect: p.name, country: p.country, localHour }, 'Skipped: outside business hours');
+        logger.debug(
+          { prospect: p.name, country: p.country, localHour },
+          "Skipped: outside business hours",
+        );
         return false;
       }
       return true;
     });
 
-    logger.info({ eligibleCount: eligibleProspects.length, sources: eligibleProspects.slice(0,5).map(p => ({ name: p.name, source: p.source, email: p.email })) }, 'After filtering');
+    logger.info(
+      {
+        eligibleCount: eligibleProspects.length,
+        sources: eligibleProspects
+          .slice(0, 5)
+          .map((p) => ({ name: p.name, source: p.source, email: p.email })),
+      },
+      "After filtering",
+    );
 
     const results = {
       sent: 0,
@@ -290,34 +375,49 @@ export async function POST(request: NextRequest) {
       const validation = await canSendTo(prospect.email);
       if (!validation.canSend) {
         results.blocked++;
-        results.blockedEmails.push({ email: prospect.email, reason: validation.reason || 'Unknown' });
-        logger.info({ email: prospect.email, reason: validation.reason }, 'Email blocked by validation');
+        results.blockedEmails.push({
+          email: prospect.email,
+          reason: validation.reason || "Unknown",
+        });
+        logger.info(
+          { email: prospect.email, reason: validation.reason },
+          "Email blocked by validation",
+        );
         continue;
       }
 
       // Match campaigns to prospect source:
       // - Sales Navigator prospects → cold strategies (cold_direct, cold_pattern_interrupt)
       // - Job board prospects → job board strategies (authority_scarcity, curiosity_value)
-      const coldStrategyKeys = ['cold_direct', 'cold_pattern_interrupt'];
-      const jobBoardStrategyKeys = ['authority_scarcity', 'curiosity_value'];
+      const coldStrategyKeys = ["cold_direct", "cold_pattern_interrupt"];
+      const jobBoardStrategyKeys = ["authority_scarcity", "curiosity_value"];
 
-      const isSalesNav = prospect.source === 'sales_navigator';
-      const relevantStrategyKeys = isSalesNav ? coldStrategyKeys : jobBoardStrategyKeys;
-      const relevantCampaigns = availableCampaigns.filter(c =>
-        relevantStrategyKeys.includes(c.strategy_key)
+      const isSalesNav = prospect.source === "sales_navigator";
+      const relevantStrategyKeys = isSalesNav
+        ? coldStrategyKeys
+        : jobBoardStrategyKeys;
+      const relevantCampaigns = availableCampaigns.filter((c) =>
+        relevantStrategyKeys.includes(c.strategy_key),
       );
 
       // If no matching campaigns for this prospect type, skip
       if (relevantCampaigns.length === 0) {
-        logger.warn({ prospect: prospect.name, source: prospect.source }, 'No matching campaigns for prospect source');
+        logger.warn(
+          { prospect: prospect.name, source: prospect.source },
+          "No matching campaigns for prospect source",
+        );
         results.skipped++;
         continue;
       }
 
-      const campaign = relevantCampaigns[campaignIndex % relevantCampaigns.length];
+      const campaign =
+        relevantCampaigns[campaignIndex % relevantCampaigns.length];
       campaignIndex++;
 
-      const email = await generateEmail(prospect as Prospect, campaign as Campaign);
+      const email = await generateEmail(
+        prospect as Prospect,
+        campaign as Campaign,
+      );
       if (!email) {
         results.failed++;
         results.errors.push(`Failed to generate email for ${prospect.name}`);
@@ -334,68 +434,82 @@ export async function POST(request: NextRequest) {
       if (!sendResult.success) {
         if (sendResult.blocked) {
           results.blocked++;
-          results.blockedEmails.push({ email: prospect.email, reason: sendResult.blockReason || 'Unknown' });
+          results.blockedEmails.push({
+            email: prospect.email,
+            reason: sendResult.blockReason || "Unknown",
+          });
         } else if (sendResult.bounceType) {
           results.bounced++;
-          results.errors.push(`Bounced (${sendResult.bounceType}): ${prospect.email}`);
+          results.errors.push(
+            `Bounced (${sendResult.bounceType}): ${prospect.email}`,
+          );
         } else {
           results.failed++;
-          results.errors.push(`Failed to send to ${prospect.email}: ${sendResult.error}`);
+          results.errors.push(
+            `Failed to send to ${prospect.email}: ${sendResult.error}`,
+          );
         }
         continue;
       }
 
-      const { data: savedEmail, error: emailSaveError } = await supabase.from('emails').insert({
-        prospect_id: prospect.id,
-        campaign_id: campaign.id,
-        subject: email.subject,
-        body: email.body,
-        to_email: prospect.email,
-        from_email: sendResult.sentFrom || config.azure.mailFrom,
-        message_id: sendResult.messageId,
-        email_type: 'outreach',
-        direction: 'outbound',
-        status: 'sent',
-        sent_at: new Date().toISOString(),
-        strategy_variant: campaign.strategy_key, // A/B test tracking
-      }).select().single();
+      const { data: savedEmail, error: emailSaveError } = await supabase
+        .from("emails")
+        .insert({
+          prospect_id: prospect.id,
+          campaign_id: campaign.id,
+          subject: email.subject,
+          body: email.body,
+          to_email: prospect.email,
+          from_email: sendResult.sentFrom || config.azure.mailFrom,
+          message_id: sendResult.messageId,
+          email_type: "outreach",
+          direction: "outbound",
+          status: "sent",
+          sent_at: new Date().toISOString(),
+          strategy_variant: campaign.strategy_key, // A/B test tracking
+        })
+        .select()
+        .single();
 
       if (emailSaveError) {
-        logger.error({ error: emailSaveError, prospect: prospect.email }, 'Failed to save email');
+        logger.error(
+          { error: emailSaveError, prospect: prospect.email },
+          "Failed to save email",
+        );
       }
 
       // Update campaign metrics atomically using raw SQL for accurate increment
       // This avoids race conditions by using SQL's emails_sent = emails_sent + 1
       try {
-        const { error: rpcError } = await supabase.rpc('increment_counter', {
-          table_name: 'campaigns',
-          column_name: 'emails_sent',
-          row_id: campaign.id
+        const { error: rpcError } = await supabase.rpc("increment_counter", {
+          table_name: "campaigns",
+          column_name: "emails_sent",
+          row_id: campaign.id,
         });
 
         if (rpcError) {
           // Fallback: fetch current value and update (less ideal but works)
           const { data: currentCampaign } = await supabase
-            .from('campaigns')
-            .select('emails_sent')
-            .eq('id', campaign.id)
+            .from("campaigns")
+            .select("emails_sent")
+            .eq("id", campaign.id)
             .single();
           await supabase
-            .from('campaigns')
+            .from("campaigns")
             .update({ emails_sent: (currentCampaign?.emails_sent || 0) + 1 })
-            .eq('id', campaign.id);
+            .eq("id", campaign.id);
         }
       } catch {
         // Same fallback for catch block
         const { data: currentCampaign } = await supabase
-          .from('campaigns')
-          .select('emails_sent')
-          .eq('id', campaign.id)
+          .from("campaigns")
+          .select("emails_sent")
+          .eq("id", campaign.id)
           .single();
         await supabase
-          .from('campaigns')
+          .from("campaigns")
           .update({ emails_sent: (currentCampaign?.emails_sent || 0) + 1 })
-          .eq('id', campaign.id);
+          .eq("id", campaign.id);
       }
 
       results.byCampaign[campaign.id].sent++;
@@ -404,7 +518,7 @@ export async function POST(request: NextRequest) {
       if (savedEmail) {
         activitiesToInsert.push({
           prospect_id: prospect.id,
-          type: 'email_sent',
+          type: "email_sent",
           title: `Auto-email sent to ${prospect.email}`,
           description: `Subject: ${email.subject}`,
           email_id: savedEmail.id,
@@ -412,31 +526,57 @@ export async function POST(request: NextRequest) {
       }
 
       results.sent++;
-      logger.info({ to: prospect.email, campaign: campaign.name }, 'Auto-email sent');
+      logger.info(
+        { to: prospect.email, campaign: campaign.name },
+        "Auto-email sent",
+      );
 
       if (staggerDelay) {
-        const delay = EMAIL.STAGGER_DELAY_MIN + Math.random() * (EMAIL.STAGGER_DELAY_MAX - EMAIL.STAGGER_DELAY_MIN);
-        await new Promise(resolve => setTimeout(resolve, delay));
+        const delay =
+          EMAIL.STAGGER_DELAY_MIN +
+          Math.random() * (EMAIL.STAGGER_DELAY_MAX - EMAIL.STAGGER_DELAY_MIN);
+        await new Promise((resolve) => setTimeout(resolve, delay));
       } else {
-        await new Promise(resolve => setTimeout(resolve, EMAIL.MIN_DELAY));
+        await new Promise((resolve) => setTimeout(resolve, EMAIL.MIN_DELAY));
       }
     }
 
     // Batch operations
     if (prospectIdsToUpdate.length > 0) {
       const { error: batchUpdateError } = await supabase
-        .from('prospects')
-        .update({ stage: 'contacted', last_contacted_at: new Date().toISOString() })
-        .in('id', prospectIdsToUpdate);
-      if (batchUpdateError) logger.error({ error: batchUpdateError }, 'Batch prospect update failed');
+        .from("prospects")
+        .update({
+          stage: "contacted",
+          last_contacted_at: new Date().toISOString(),
+        })
+        .in("id", prospectIdsToUpdate);
+      if (batchUpdateError)
+        logger.error(
+          { error: batchUpdateError },
+          "Batch prospect update failed",
+        );
     }
 
     if (activitiesToInsert.length > 0) {
-      const { error: batchInsertError } = await supabase.from('activities').insert(activitiesToInsert);
-      if (batchInsertError) logger.error({ error: batchInsertError }, 'Batch activity insert failed');
+      const { error: batchInsertError } = await supabase
+        .from("activities")
+        .insert(activitiesToInsert);
+      if (batchInsertError)
+        logger.error(
+          { error: batchInsertError },
+          "Batch activity insert failed",
+        );
     }
 
-    logger.info({ sent: results.sent, failed: results.failed, blocked: results.blocked, bounced: results.bounced }, 'Auto-email completed');
+    logger.info(
+      {
+        sent: results.sent,
+        failed: results.failed,
+        blocked: results.blocked,
+        bounced: results.bounced,
+      },
+      "Auto-email completed",
+    );
     return success({
       message: `Auto-email completed: ${results.sent} sent, ${results.failed} failed, ${results.blocked} blocked, ${results.bounced} bounced, ${results.skipped} skipped`,
       ...results,
@@ -451,8 +591,8 @@ export async function POST(request: NextRequest) {
     if (error instanceof ValidationError) {
       return errors.badRequest(error.message);
     }
-    logger.error({ error }, 'Auto-email failed');
-    return errors.internal('Auto-email failed', error);
+    logger.error({ error }, "Auto-email failed");
+    return errors.internal("Auto-email failed", error);
   }
 }
 
@@ -464,12 +604,29 @@ export async function GET() {
     const warmupStatus = getWarmupStatus();
 
     const [highResult, mediumResult, lowerResult] = await Promise.all([
-      supabase.from('prospects').select('*', { count: 'exact', head: true })
-        .in('stage', ['new', 'researching']).eq('archived', false).not('email', 'is', null).gte('score', SCORING.HOT_THRESHOLD),
-      supabase.from('prospects').select('*', { count: 'exact', head: true })
-        .in('stage', ['new', 'researching']).eq('archived', false).not('email', 'is', null).gte('score', SCORING.AUTO_EMAIL_MIN_SCORE).lt('score', SCORING.HOT_THRESHOLD),
-      supabase.from('prospects').select('*', { count: 'exact', head: true })
-        .in('stage', ['new', 'researching']).eq('archived', false).not('email', 'is', null).gte('score', 30).lt('score', SCORING.AUTO_EMAIL_MIN_SCORE),
+      supabase
+        .from("prospects")
+        .select("*", { count: "exact", head: true })
+        .in("stage", ["new", "researching"])
+        .eq("archived", false)
+        .not("email", "is", null)
+        .gte("score", SCORING.HOT_THRESHOLD),
+      supabase
+        .from("prospects")
+        .select("*", { count: "exact", head: true })
+        .in("stage", ["new", "researching"])
+        .eq("archived", false)
+        .not("email", "is", null)
+        .gte("score", SCORING.AUTO_EMAIL_MIN_SCORE)
+        .lt("score", SCORING.HOT_THRESHOLD),
+      supabase
+        .from("prospects")
+        .select("*", { count: "exact", head: true })
+        .in("stage", ["new", "researching"])
+        .eq("archived", false)
+        .not("email", "is", null)
+        .gte("score", 30)
+        .lt("score", SCORING.AUTO_EMAIL_MIN_SCORE),
     ]);
 
     const highPriority = highResult.count || 0;
@@ -478,8 +635,12 @@ export async function GET() {
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const { count: sentToday } = await supabase.from('emails').select('*', { count: 'exact', head: true })
-      .eq('direction', 'outbound').eq('email_type', 'outreach').gte('sent_at', today.toISOString());
+    const { count: sentToday } = await supabase
+      .from("emails")
+      .select("*", { count: "exact", head: true })
+      .eq("direction", "outbound")
+      .eq("email_type", "outreach")
+      .gte("sent_at", today.toISOString());
 
     const inboxStats = getInboxStats();
     const remainingCapacity = getTotalRemainingCapacity();
@@ -489,24 +650,35 @@ export async function GET() {
 
     return success({
       configured: isSmtpConfigured(),
-      eligible_prospects: { high_priority: highPriority, medium_priority: mediumPriority, lower_priority: lowerPriority, total: highPriority + mediumPriority + lowerPriority },
+      eligible_prospects: {
+        high_priority: highPriority,
+        medium_priority: mediumPriority,
+        lower_priority: lowerPriority,
+        total: highPriority + mediumPriority + lowerPriority,
+      },
       sent_today: sentToday || 0,
       sender: config.azure.mailFrom,
-      inboxes: { count: getSmtpInboxes().length, remaining_capacity: remainingCapacity, daily_limit: config.smtp.dailyLimit, details: inboxStats },
+      inboxes: {
+        count: getSmtpInboxes().length,
+        remaining_capacity: remainingCapacity,
+        daily_limit: config.smtp.dailyLimit,
+        details: inboxStats,
+      },
       warmup: {
         day: warmupStatus.day,
         stage: warmupStatus.stage,
         daily_limit: warmupStatus.limit,
         remaining: warmupRemaining,
       },
-      recommendation: warmupRemaining === 0
-        ? `Warmup limit reached (${warmupStatus.limit}/day on day ${warmupStatus.day})`
-        : (highPriority + mediumPriority + lowerPriority) < 20
-        ? 'Low on prospects!'
-        : `Ready to send (${warmupRemaining} remaining today)`,
+      recommendation:
+        warmupRemaining === 0
+          ? `Warmup limit reached (${warmupStatus.limit}/day on day ${warmupStatus.day})`
+          : highPriority + mediumPriority + lowerPriority < 20
+            ? "Low on prospects!"
+            : `Ready to send (${warmupRemaining} remaining today)`,
     });
   } catch (error) {
-    logger.error({ error }, 'Failed to get auto-email status');
-    return errors.internal('Failed to get auto-email status', error);
+    logger.error({ error }, "Failed to get auto-email status");
+    return errors.internal("Failed to get auto-email status", error);
   }
 }

@@ -15,35 +15,13 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const baseUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : 'http://localhost:3000';
-
   try {
-    console.log('[Follow-up Cron] Sending follow-ups...');
-
-    const response = await fetch(`${baseUrl}/api/follow-up`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ max_follow_ups: 20 }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error('[Follow-up Cron] Failed:', data.error);
-      return NextResponse.json({
-        success: false,
-        error: data.error,
-      }, { status: 500 });
-    }
-
-    console.log('[Follow-up Cron] Complete:', data.sent || 0, 'follow-ups sent');
+    console.log('[Follow-up Cron] Email sending disabled - skipping follow-ups...');
 
     return NextResponse.json({
       success: true,
-      message: `Sent ${data.sent || 0} follow-up emails`,
-      stats: data,
+      message: 'Follow-up emails disabled - email sending disabled',
+      disabled: true,
     });
   } catch (error) {
     console.error('[Follow-up Cron] Error:', error);

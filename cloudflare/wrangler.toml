@@ -1,0 +1,70 @@
+name = "jengu-crm"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ============================================
+# ENVIRONMENT VARIABLES (set via wrangler secret)
+# ============================================
+# Run these commands after first deploy:
+# wrangler secret put GROK_API_KEY
+# wrangler secret put ANTHROPIC_API_KEY
+# wrangler secret put AZURE_TENANT_ID
+# wrangler secret put AZURE_CLIENT_ID
+# wrangler secret put AZURE_CLIENT_SECRET
+# wrangler secret put AZURE_MAIL_FROM
+# wrangler secret put SMTP_INBOX_1
+# wrangler secret put SMTP_INBOX_2
+# wrangler secret put SMTP_INBOX_3
+# wrangler secret put SMTP_INBOX_4
+
+# ============================================
+# D1 DATABASE
+# ============================================
+[[d1_databases]]
+binding = "DB"
+database_name = "jengu-crm"
+database_id = "c97651e6-10a6-496f-9ca9-c599a954c535"
+
+# ============================================
+# KV NAMESPACES (Config & Cache)
+# ============================================
+[[kv_namespaces]]
+binding = "KV_CONFIG"
+id = "2e46e9da15dc4e8e9fae31e3df55c446"
+
+[[kv_namespaces]]
+binding = "KV_CACHE"
+id = "f16f5b6e2511482abb881e3212a9bca8"
+
+# ============================================
+# DURABLE OBJECTS
+# ============================================
+[durable_objects]
+bindings = [
+  { name = "WARMUP_COUNTER", class_name = "WarmupCounter" },
+  { name = "INBOX_STATE", class_name = "InboxState" },
+  { name = "RATE_LIMITER", class_name = "RateLimiter" },
+  { name = "PROSPECT_DEDUP", class_name = "ProspectDedup" },
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["WarmupCounter", "InboxState", "RateLimiter", "ProspectDedup"]
+
+# ============================================
+# CRON TRIGGERS
+# ============================================
+[triggers]
+crons = [
+  "*/5 8-18 * * 1-6",  # Every 5 min, 8am-6pm, Mon-Sat (email sending)
+  "0 7 * * *",         # 7am daily (pipeline: scrape, enrich)
+  "*/1 * * * *",       # Every minute (check replies)
+  "0 10 * * 1-5",      # 10am weekdays (follow-ups)
+]
+
+# ============================================
+# SMART PLACEMENT (run near data)
+# ============================================
+[placement]
+mode = "smart"
