@@ -99,6 +99,12 @@ async function sendInstantReply(
   analysis: ReplyAnalysis,
   replyFromInbox?: string // Which inbox to send the reply from (for thread continuity)
 ): Promise<{ success: boolean; error?: string }> {
+  // Auto-reply disabled - not good enough yet
+  if (process.env.AUTO_REPLY_ENABLED !== 'true') {
+    logger.info({ prospect: prospect.name }, 'Auto-reply disabled - skipping');
+    return { success: false, error: 'Auto-reply disabled' };
+  }
+
   if (!aiGateway.isConfigured()) {
     return { success: false, error: 'No AI API key configured' };
   }
