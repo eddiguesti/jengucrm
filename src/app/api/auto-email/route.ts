@@ -466,7 +466,7 @@ export async function POST(request: NextRequest) {
           direction: "outbound",
           status: "sent",
           sent_at: new Date().toISOString(),
-          strategy_variant: campaign.strategy_key, // A/B test tracking
+          campaign_strategy: campaign.strategy_key, // Use existing column for A/B tracking
         })
         .select()
         .single();
