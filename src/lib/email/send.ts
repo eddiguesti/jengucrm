@@ -21,7 +21,7 @@ import {
   isAzureConfigured,
   isGmailConfigured,
 } from './config';
-import { getAvailableInbox, incrementInboxSendCount } from './inbox-tracker';
+import { getAvailableInbox, incrementInboxSendCount, getInboxSendCount } from './inbox-tracker';
 import { formatEmailHtml, formatSimpleHtml } from './templates';
 import { logger } from '../logger';
 import { retry, retryable } from '../retry';
@@ -32,6 +32,7 @@ import {
   recordSuccessfulSend,
 } from './verification';
 import globalConfig from '@/lib/config';
+import { EMAIL, WARMUP_SCHEDULE } from '@/lib/constants';
 
 /**
  * Check if an SMTP/Graph error is retryable (transient)
@@ -232,10 +233,13 @@ async function sendViaGraph(options: SendEmailOptions & { emailId?: string }): P
     const deliveryTime = Date.now() - startTime;
     const messageId = `graph-${Date.now()}`;
 
+    // Track Azure send count (same as SMTP inboxes)
+    incrementInboxSendCount(AZURE_MAIL_FROM!);
+
     // Record successful send
     await recordSuccessfulSend(options.to, AZURE_MAIL_FROM!, options.emailId || null, messageId);
 
-    logger.info({ to: options.to, deliveryTime }, 'Email sent via Graph');
+    logger.info({ to: options.to, inbox: AZURE_MAIL_FROM, deliveryTime }, 'Email sent via Graph');
 
     return {
       success: true,
@@ -267,10 +271,25 @@ async function sendViaGraph(options: SendEmailOptions & { emailId?: string }): P
 
 /**
  * Send an email - validates recipient, uses SMTP rotation if available, falls back to Azure
+ *
+ * IMPORTANT: Respects both code-level EMERGENCY_STOP and env-level DISABLE_OUTGOING_EMAILS
  */
 export async function sendEmail(options: SendEmailOptions & { emailId?: string; skipValidation?: boolean }): Promise<SendEmailResult> {
   const hasAzure = isAzureConfigured();
 
+  // Check EMERGENCY_STOP constant (code-level kill switch)
+  if (EMAIL.EMERGENCY_STOP) {
+    logger.warn({ to: options.to }, 'EMERGENCY_STOP is enabled in constants.ts - all email sending blocked');
+    return {
+      success: false,
+      error: 'Email sending disabled by EMERGENCY_STOP',
+      deliveryTime: 0,
+      blocked: true,
+      blockReason: 'emergency_stop',
+    } as SendEmailResult;
+  }
+
+  // Check env-level kill switch
   if (globalConfig.email.disableOutgoing) {
     logger.warn({ to: options.to }, 'Outgoing emails disabled by DISABLE_OUTGOING_EMAILS (sendEmail)');
     return {
@@ -301,6 +320,19 @@ export async function sendEmail(options: SendEmailOptions & { emailId?: string; 
   if (options.forceInbox) {
     if (options.forceInbox.toLowerCase() === AZURE_MAIL_FROM?.toLowerCase()) {
       if (hasAzure) {
+        // Check Azure daily limit before forcing
+        const azureSent = getInboxSendCount(AZURE_MAIL_FROM!);
+        if (azureSent >= WARMUP_SCHEDULE.PER_INBOX_LIMIT) {
+          logger.warn({ inbox: AZURE_MAIL_FROM, sent: azureSent, limit: WARMUP_SCHEDULE.PER_INBOX_LIMIT },
+            'Forced Azure inbox at daily limit');
+          return {
+            success: false,
+            error: `Azure inbox at daily limit (${azureSent}/${WARMUP_SCHEDULE.PER_INBOX_LIMIT})`,
+            deliveryTime: 0,
+            blocked: true,
+            blockReason: 'daily_limit_reached',
+          } as SendEmailResult;
+        }
         return sendViaGraph(options);
       }
     }
@@ -312,20 +344,32 @@ export async function sendEmail(options: SendEmailOptions & { emailId?: string; 
     logger.warn({ forcedInbox: options.forceInbox }, 'Forced inbox not found, using default');
   }
 
-  // Force Azure if explicitly requested
+  // Force Azure if explicitly requested (but still respect limits)
   if (options.forceAzure && hasAzure) {
-    return sendViaGraph(options);
+    const azureSent = getInboxSendCount(AZURE_MAIL_FROM!);
+    if (azureSent >= WARMUP_SCHEDULE.PER_INBOX_LIMIT) {
+      logger.warn({ inbox: AZURE_MAIL_FROM, sent: azureSent, limit: WARMUP_SCHEDULE.PER_INBOX_LIMIT },
+        'Force Azure requested but at daily limit');
+    } else {
+      return sendViaGraph(options);
+    }
   }
 
-  // Use Azure Graph API directly (SMTP inboxes temporarily disabled)
+  // TRY SMTP ROTATION FIRST - distribute load across inboxes
+  const availableSmtpInbox = getAvailableInbox();
+  if (availableSmtpInbox) {
+    return sendViaSmtp(availableSmtpInbox, options);
+  }
+
+  // Fall back to Azure if SMTP inboxes exhausted
   if (hasAzure) {
-    return sendViaGraph(options);
-  }
-
-  // Fall back to SMTP if Azure not available
-  const availableInbox = getAvailableInbox();
-  if (availableInbox) {
-    return sendViaSmtp(availableInbox, options);
+    const azureSent = getInboxSendCount(AZURE_MAIL_FROM!);
+    if (azureSent < WARMUP_SCHEDULE.PER_INBOX_LIMIT) {
+      logger.info({ inbox: AZURE_MAIL_FROM, sent: azureSent }, 'SMTP inboxes exhausted, using Azure');
+      return sendViaGraph(options);
+    }
+    logger.warn({ inbox: AZURE_MAIL_FROM, sent: azureSent, limit: WARMUP_SCHEDULE.PER_INBOX_LIMIT },
+      'Azure also at daily limit');
   }
 
   return {
