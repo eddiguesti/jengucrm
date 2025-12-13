@@ -64,10 +64,14 @@ export async function GET(request: NextRequest) {
       const initial = await fetchProgress();
       sendEvent(initial);
 
-      // If not running initially, just return the initial state
+      // Grace period: If not running initially, wait a few seconds
+      // in case the enrichment job hasn't started yet (race condition)
+      let gracePeriodChecks = 0;
+      const MAX_GRACE_PERIOD = 5; // Wait up to 10 seconds (5 checks × 2s)
+
       if (!initial.isRunning) {
-        controller.close();
-        return;
+        // Don't close immediately - start polling in case job is starting
+        gracePeriodChecks = 1;
       }
 
       // Poll for updates while running
@@ -77,6 +81,14 @@ export async function GET(request: NextRequest) {
           sendEvent(progress);
 
           if (!progress.isRunning) {
+            // Still in grace period? Keep checking
+            if (gracePeriodChecks > 0 && gracePeriodChecks < MAX_GRACE_PERIOD) {
+              gracePeriodChecks++;
+              setTimeout(poll, POLL_INTERVAL);
+              return;
+            }
+
+            // Past grace period and still not running
             consecutiveIdle++;
             if (consecutiveIdle >= 3) {
               // Send final state and close
@@ -84,7 +96,9 @@ export async function GET(request: NextRequest) {
               return;
             }
           } else {
+            // Running - reset counters
             consecutiveIdle = 0;
+            gracePeriodChecks = 0;
           }
 
           // Continue polling if not at max idle
