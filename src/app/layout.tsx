@@ -5,6 +5,7 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/contexts/ThemeContext";
+import { CommandPaletteProvider } from "@/components/command-palette-provider";
 
 const sora = Sora({
   subsets: ["latin"],
@@ -39,18 +40,20 @@ export default function RootLayout({
     <html lang="en" className="dark">
       <body className={`${sora.className} antialiased`}>
         <ThemeProvider>
-          <div className="flex h-screen bg-background text-foreground transition-colors duration-300">
-            {/* Desktop sidebar - hidden on mobile */}
-            <div className="hidden md:block">
-              <Sidebar />
+          <CommandPaletteProvider>
+            <div className="flex h-screen bg-background text-foreground transition-colors duration-300">
+              {/* Desktop sidebar - hidden on mobile */}
+              <div className="hidden md:block">
+                <Sidebar />
+              </div>
+              {/* Mobile navigation */}
+              <MobileNav />
+              <main className="flex-1 overflow-auto pb-safe">
+                {children}
+              </main>
             </div>
-            {/* Mobile navigation */}
-            <MobileNav />
-            <main className="flex-1 overflow-auto pb-safe">
-              {children}
-            </main>
-          </div>
-          <Toaster />
+            <Toaster />
+          </CommandPaletteProvider>
         </ThemeProvider>
       </body>
     </html>

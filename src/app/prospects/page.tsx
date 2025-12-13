@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Header } from '@/components/layout/header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -64,6 +64,7 @@ import {
   getReadinessSummary,
   type ReadinessTier,
 } from '@/lib/readiness';
+import { ProspectDrawer, useProspectDrawer } from '@/components/prospect-drawer';
 
 // View mode type
 type ViewMode = 'table' | 'cards' | 'grouped';
@@ -231,19 +232,42 @@ export default function ProspectsPage() {
   const { theme } = useTheme();
   const isLight = theme === 'light';
 
-  const fetchProspects = async (page: number = currentPage) => {
+  // Drawer state - uses URL ?selected=id
+  const { selectedProspect, openDrawer, closeDrawer } = useProspectDrawer(prospects);
+
+  const fetchProspects = useCallback(async (
+    page: number = 1,
+    filters?: {
+      tier?: ProspectTier | null;
+      search?: string;
+      smartView?: SmartView;
+      source?: SourceFilter;
+      emailStatus?: EmailStatusFilter;
+      contactStatus?: ContactStatusFilter;
+    }
+  ) => {
+    // Use passed filters or fall back to current state
+    const currentFilters = {
+      tier: filters?.tier ?? tierFilter,
+      search: filters?.search ?? searchQuery,
+      smartView: filters?.smartView ?? smartView,
+      source: filters?.source ?? sourceFilter,
+      emailStatus: filters?.emailStatus ?? emailStatusFilter,
+      contactStatus: filters?.contactStatus ?? contactStatusFilter,
+    };
+
     setLoading(true);
     setError(null);
     try {
       const params = new URLSearchParams();
       params.set('limit', String(pageSize));
       params.set('offset', String((page - 1) * pageSize));
-      if (tierFilter) params.set('tier', tierFilter);
-      if (searchQuery) params.set('search', searchQuery);
-      if (smartView !== 'all') params.set('smart_view', smartView);
-      if (sourceFilter !== 'all') params.set('source', sourceFilter);
-      if (emailStatusFilter !== 'all') params.set('email_status', emailStatusFilter);
-      if (contactStatusFilter !== 'all') params.set('contact_status', contactStatusFilter);
+      if (currentFilters.tier) params.set('tier', currentFilters.tier);
+      if (currentFilters.search) params.set('search', currentFilters.search);
+      if (currentFilters.smartView !== 'all') params.set('smart_view', currentFilters.smartView);
+      if (currentFilters.source !== 'all') params.set('source', currentFilters.source);
+      if (currentFilters.emailStatus !== 'all') params.set('email_status', currentFilters.emailStatus);
+      if (currentFilters.contactStatus !== 'all') params.set('contact_status', currentFilters.contactStatus);
 
       const response = await fetch(`/api/prospects?${params.toString()}`);
       if (!response.ok) throw new Error('Failed to fetch prospects');
@@ -256,7 +280,7 @@ export default function ProspectsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [tierFilter, searchQuery, smartView, sourceFilter, emailStatusFilter, contactStatusFilter]);
 
   // Clear other filters when smart view is selected
   const handleSmartViewChange = (view: SmartView) => {
@@ -281,27 +305,34 @@ export default function ProspectsPage() {
     if (filterType === 'contact') setContactStatusFilter(value as ContactStatusFilter);
   };
 
-  useEffect(() => {
-    setCurrentPage(1); // Reset to page 1 when filters change
-    fetchProspects(1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tierFilter, smartView, sourceFilter, emailStatusFilter, contactStatusFilter]);
+  // Track if we should skip the next page fetch (when filter change resets to page 1)
+  const skipNextPageFetch = useRef(false);
 
-  // Fetch when page changes
+  // Fetch when filters change - reset to page 1
   useEffect(() => {
+    skipNextPageFetch.current = true; // Skip the page effect that will fire
+    setCurrentPage(1);
+    fetchProspects(1);
+  }, [tierFilter, smartView, sourceFilter, emailStatusFilter, contactStatusFilter, fetchProspects]);
+
+  // Fetch when page changes (for pagination navigation)
+  useEffect(() => {
+    if (skipNextPageFetch.current) {
+      skipNextPageFetch.current = false;
+      return;
+    }
     fetchProspects(currentPage);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage]);
+  }, [currentPage, fetchProspects]);
 
   // Debounced search
   useEffect(() => {
     const timer = setTimeout(() => {
+      skipNextPageFetch.current = true;
       setCurrentPage(1);
       fetchProspects(1);
     }, 300);
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery]);
+  }, [searchQuery, fetchProspects]);
 
   // Pagination helpers
   const totalPages = Math.ceil(totalProspects / pageSize);
@@ -1034,11 +1065,16 @@ export default function ProspectsPage() {
                         initial={{ opacity: 0, x: -10 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: index * 0.02 }}
+                        onClick={() => openDrawer(prospect.id)}
                         className={cn(
-                          "group",
-                          isLight
-                            ? "border-[#efe7dc] hover:bg-slate-50"
-                            : "border-zinc-800 hover:bg-zinc-800/50"
+                          "group cursor-pointer",
+                          selectedProspect?.id === prospect.id
+                            ? isLight
+                              ? "border-[#efe7dc] bg-violet-50"
+                              : "border-zinc-800 bg-violet-500/10"
+                            : isLight
+                              ? "border-[#efe7dc] hover:bg-slate-50"
+                              : "border-zinc-800 hover:bg-zinc-800/50"
                         )}
                       >
                         <TableCell className="py-2">
@@ -1264,6 +1300,15 @@ export default function ProspectsPage() {
         open={showAddDialog}
         onOpenChange={setShowAddDialog}
         onSuccess={fetchProspects}
+      />
+
+      {/* Prospect Detail Drawer */}
+      <ProspectDrawer
+        prospect={selectedProspect}
+        prospects={filteredProspects}
+        onClose={closeDrawer}
+        onNavigate={openDrawer}
+        onAction={handleProspectAction}
       />
     </div>
   );
