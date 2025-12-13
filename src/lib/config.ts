@@ -32,6 +32,12 @@ export const config = {
 
   // AI Services
   ai: {
+    get xaiApiKey() {
+      return getEnvOptional('XAI_API_KEY');
+    },
+    get anthropicApiKey() {
+      return getEnvOptional('ANTHROPIC_API_KEY');
+    },
     get apiKey() {
       return getEnvOptional('XAI_API_KEY') || getEnvOptional('ANTHROPIC_API_KEY');
     },

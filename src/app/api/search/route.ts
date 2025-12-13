@@ -21,18 +21,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Missing query parameter' }, { status: 400 });
   }
 
-  // Simple auth - allow Cloudflare workers and authenticated requests
+  // Optional auth (recommended): set `VERCEL_SEARCH_SECRET` on Vercel and Cloudflare
   // This endpoint is for internal use only (Cloudflare worker → Vercel)
   const authHeader = request.headers.get('authorization');
-  const userAgent = (request.headers.get('user-agent') || '').toLowerCase();
-  const expectedSecret = process.env.CRON_SECRET;
+  const expectedSecret = process.env.VERCEL_SEARCH_SECRET;
 
-  const hasValidAuth = expectedSecret && authHeader === `Bearer ${expectedSecret}`;
-  const isCloudflareWorker = userAgent.includes('cloudflare');
-
-  // Allow authenticated requests or Cloudflare workers
-  // No auth required - this is a search proxy, rate limited by DDG anyway
-  // Could add IP-based rate limiting later if abused
+  if (expectedSecret && authHeader !== `Bearer ${expectedSecret}`) {
+    return NextResponse.json({ error: 'Unauthorized', results: [] }, { status: 401 });
+  }
 
   try {
     const results = await searchDuckDuckGo(query);
@@ -99,6 +95,13 @@ async function searchDuckDuckGo(query: string): Promise<SearchResult[]> {
 // Also support POST for flexibility
 export async function POST(request: NextRequest) {
   try {
+    const authHeader = request.headers.get('authorization');
+    const expectedSecret = process.env.VERCEL_SEARCH_SECRET;
+
+    if (expectedSecret && authHeader !== `Bearer ${expectedSecret}`) {
+      return NextResponse.json({ error: 'Unauthorized', results: [] }, { status: 401 });
+    }
+
     const body = await request.json();
     const query = body.query || body.q;
 
@@ -108,7 +111,7 @@ export async function POST(request: NextRequest) {
 
     const results = await searchDuckDuckGo(query);
     return NextResponse.json({ results, query });
-  } catch (error) {
+  } catch (_error) {
     return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
   }
 }

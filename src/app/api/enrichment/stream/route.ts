@@ -16,6 +16,8 @@ interface EnrichmentProgress {
   processed: number;
   total: number;
   found: number;
+  websitesFound: number;
+  emailsFound: number;
   startedAt: string | null;
   lastUpdatedAt: string | null;
 }
@@ -40,6 +42,8 @@ async function fetchProgress(): Promise<EnrichmentProgress> {
     processed: 0,
     total: 0,
     found: 0,
+    websitesFound: 0,
+    emailsFound: 0,
     startedAt: null,
     lastUpdatedAt: null,
   };

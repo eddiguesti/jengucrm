@@ -39,3 +39,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Large local data/cache folders that can slow IDE indexing / Codex snapshot
+# Add known heavy cache directories here to avoid snapshotting thousands of files
+# Example reported by Codex: projects/Data/projects/Data/uniprot_cache_string
+projects/Data/**
+projects/**/uniprot_cache_string/
+projects/**/mobidb_cache_string/
+**/*_cache_string/

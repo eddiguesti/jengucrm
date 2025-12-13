@@ -178,6 +178,75 @@ Write the email now. JSON only, no other text.
 `;
 
 /**
+ * Strategy E: Simple & Personalized
+ * Uses a fixed template with subtle personalization from website data.
+ */
+const simplePersonalizedPrompt: PromptGenerator = (prospect) => {
+  // Build personalization hints from prospect data
+  const personalization: string[] = [];
+
+  if (prospect.starRating && prospect.starRating >= 4) {
+    personalization.push(`HIGH-END: ${prospect.starRating}-star property`);
+  }
+  if (prospect.chainAffiliation) {
+    personalization.push(`CHAIN: Part of ${prospect.chainAffiliation}`);
+  }
+  if (prospect.estimatedRooms && prospect.estimatedRooms > 100) {
+    personalization.push(`SIZE: ${prospect.estimatedRooms}+ rooms`);
+  }
+  if (prospect.googleRating && prospect.googleRating >= 4.5) {
+    personalization.push(`REPUTATION: ${prospect.googleRating} on Google`);
+  }
+
+  const personalizationContext = personalization.length > 0
+    ? `\nPERSONALIZATION (use ONE subtly):\n${personalization.join('\n')}\n`
+    : '';
+
+  const firstName = prospect.contactName?.split(' ')[0] || null;
+
+  return `Write a cold email using this EXACT template with subtle personalization.
+
+PROSPECT:
+${buildContext(prospect)}
+${personalizationContext}
+TEMPLATE TO FOLLOW:
+
+SUBJECT: 2-4 words, lowercase. Examples:
+${firstName ? `- "quick question, ${firstName}?"` : '- "quick question?"'}
+- "weird ask"
+- "right person?"
+
+GREETING: ${firstName ? `"Hey ${firstName},"` : '"Hey,"'}
+
+PARAGRAPH 1 (use exactly):
+"This might be a weird one - not even sure if you're the right person. If not, would you mind forwarding to whoever handles operations? Would genuinely appreciate it."
+
+PARAGRAPH 2 (personalize slightly):
+"We implement different types of AI systems for hotels - stuff that genuinely saves time and money without feeling robotic. Most hotels are surprised what's actually possible now."
+${personalization.length > 0 ? `Add subtle personalization like "for properties like yours" or "especially for ${prospect.propertyType || 'hotels'} handling serious volume"` : ''}
+
+PARAGRAPH 3 (use exactly):
+"Would love a quick chat to see if you'd be a good fit for us. Totally fine if it's not for you - just let me know either way?"
+
+SIGN-OFF: "Edd"
+
+RULES:
+- 70-90 words total
+- Sound human, NOT salesy
+- Include the forward request
+- End with Edd signature
+
+OUTPUT FORMAT (JSON only):
+{
+  "subject": "your subject line",
+  "body": "full email including Edd signature"
+}
+
+Write the email now. JSON only, no other text.
+`;
+};
+
+/**
  * Export campaign prompts
  */
 export const CAMPAIGN_PROMPTS: Record<CampaignStrategy, PromptGenerator> = {
@@ -185,24 +254,16 @@ export const CAMPAIGN_PROMPTS: Record<CampaignStrategy, PromptGenerator> = {
   curiosity_value: curiosityValuePrompt,
   cold_direct: coldDirectPrompt,
   cold_pattern_interrupt: coldPatternInterruptPrompt,
+  simple_personalized: simplePersonalizedPrompt,
 };
 
 /**
  * Get strategy for a prospect based on lead source
  */
-export function getStrategyForProspect(prospect: Prospect): CampaignStrategy {
-  // Job board leads: use authority or curiosity (A/B test)
-  if (prospect.leadSource === 'job_posting' || prospect.leadSource === 'review_mining') {
-    return Math.random() < 0.5 ? 'authority_scarcity' : 'curiosity_value';
-  }
-
-  // Sales Navigator leads: use cold strategies (A/B test)
-  if (prospect.leadSource === 'sales_navigator') {
-    return Math.random() < 0.5 ? 'cold_direct' : 'cold_pattern_interrupt';
-  }
-
-  // Default: authority_scarcity
-  return 'authority_scarcity';
+export function getStrategyForProspect(_prospect: Prospect): CampaignStrategy {
+  // Default: use simple_personalized for all new prospects
+  // This is the recommended strategy for first emails
+  return 'simple_personalized';
 }
 
 /**
@@ -232,5 +293,10 @@ export const STRATEGY_METADATA: Record<CampaignStrategy, {
     name: 'Cold: Pattern Interrupt',
     description: 'Self-aware, honest opener',
     psychology: ['Self-Awareness', 'Honesty', 'Easy Out'],
+  },
+  simple_personalized: {
+    name: 'Simple & Personalized',
+    description: 'Fixed template with website personalization',
+    psychology: ['Vulnerability', 'Forward Request', 'Qualifying CTA'],
   },
 };

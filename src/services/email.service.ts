@@ -51,12 +51,19 @@ export class EmailService {
         city: prospect.city,
         country: prospect.country,
         propertyType: prospect.property_type,
+        contactName: prospect.contact_name,
         jobTitle: prospect.source_job_title,
         jobPainPoints: prospect.job_pain_points || undefined,
         painSignals: prospect.pain_signals?.map((ps) => ({
           keyword: ps.keyword_matched,
           snippet: ps.review_snippet,
         })),
+        // Website scraper data for personalization
+        starRating: prospect.star_rating,
+        chainAffiliation: prospect.chain_affiliation,
+        estimatedRooms: prospect.estimated_rooms,
+        googleRating: prospect.google_rating,
+        googleReviewCount: prospect.google_review_count,
       };
 
       const prompt = strategy.generatePrompt(prospectContext);
@@ -92,6 +99,7 @@ export class EmailService {
     const supabase = createServerClient();
 
     const baseSelect = `id, name, email, city, country, property_type,
+      contact_name, star_rating, chain_affiliation, estimated_rooms,
       google_rating, google_review_count, source_job_title,
       source_job_description, job_pain_points,
       score, tier, pain_signals(keyword_matched, review_snippet)`;

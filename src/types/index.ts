@@ -300,3 +300,380 @@ export const PREMIUM_LOCATIONS = [
   'Maldives', 'French Polynesia', 'Seychelles', 'Bora Bora',
   'Tahiti', 'Moorea', 'Saint-Barthélemy'
 ];
+
+// =====================================================
+// OUTREACH SYSTEM TYPES (SmartLead-style)
+// =====================================================
+
+export type MailboxStatus = 'active' | 'warming' | 'paused' | 'error';
+
+export interface Mailbox {
+  id: string;
+  email: string;
+  display_name: string | null;
+
+  // SMTP Config
+  smtp_host: string;
+  smtp_port: number;
+  smtp_user: string;
+  smtp_pass: string;
+  smtp_secure: boolean;
+
+  // IMAP Config
+  imap_host: string | null;
+  imap_port: number;
+  imap_user: string | null;
+  imap_pass: string | null;
+  imap_secure: boolean;
+
+  // Warmup
+  warmup_enabled: boolean;
+  warmup_start_date: string;
+  warmup_stage: number;
+  warmup_target_per_day: number;
+  daily_limit: number;
+
+  // Daily Counters
+  sent_today: number;
+  bounces_today: number;
+  last_reset_date: string;
+
+  // Lifetime Stats
+  total_sent: number;
+  total_bounces: number;
+  total_replies: number;
+  total_opens: number;
+
+  // Health
+  health_score: number;
+  bounce_rate: number;
+  reply_rate: number;
+  open_rate: number;
+
+  // Status
+  status: MailboxStatus;
+  last_error: string | null;
+  last_error_at: string | null;
+  last_used_at: string | null;
+
+  // Verification
+  smtp_verified: boolean;
+  smtp_verified_at: string | null;
+  imap_verified: boolean;
+  imap_verified_at: string | null;
+
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MailboxDailyStats {
+  id: string;
+  mailbox_id: string;
+  date: string;
+  sent: number;
+  bounces: number;
+  opens: number;
+  replies: number;
+  bounce_rate: number;
+  open_rate: number;
+  reply_rate: number;
+  created_at: string;
+}
+
+export type CampaignLeadStatus = 'active' | 'paused' | 'completed' | 'replied' | 'bounced' | 'unsubscribed';
+
+export interface CampaignSequence {
+  id: string;
+  campaign_id: string;
+  step_number: number;
+  delay_days: number;
+  delay_hours: number;
+
+  // A/B Testing
+  variant_a_subject: string;
+  variant_a_body: string;
+  variant_b_subject: string | null;
+  variant_b_body: string | null;
+  variant_split: number;
+
+  // AI Generation
+  use_ai_generation: boolean;
+  ai_prompt_context: string | null;
+
+  // Metrics
+  sent_count: number;
+  variant_a_sent: number;
+  variant_b_sent: number;
+  open_count: number;
+  variant_a_opens: number;
+  variant_b_opens: number;
+  reply_count: number;
+  variant_a_replies: number;
+  variant_b_replies: number;
+  bounce_count: number;
+
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CampaignLead {
+  id: string;
+  campaign_id: string;
+  prospect_id: string;
+  mailbox_id: string | null;
+
+  // Progress
+  current_step: number;
+  status: CampaignLeadStatus;
+  assigned_variant: 'A' | 'B' | null;
+
+  // Timing
+  last_email_at: string | null;
+  next_email_at: string | null;
+
+  // Results
+  emails_sent: number;
+  emails_opened: number;
+  has_replied: boolean;
+  replied_at: string | null;
+
+  // Metadata
+  added_by: 'manual' | 'import' | 'automation' | null;
+  notes: string | null;
+
+  created_at: string;
+  updated_at: string;
+
+  // Joined data
+  prospect?: Prospect;
+  mailbox?: Mailbox;
+}
+
+export type InboxItemType = 'reply' | 'auto_reply' | 'bounce' | 'unsubscribe' | 'meeting_request' | 'positive' | 'negative' | 'other';
+export type InboxSentiment = 'positive' | 'neutral' | 'negative';
+
+export interface InboxItem {
+  id: string;
+  mailbox_id: string;
+  prospect_id: string | null;
+  campaign_id: string | null;
+
+  // Email Identifiers
+  message_id: string;
+  in_reply_to: string | null;
+  thread_id: string | null;
+  references_ids: string[] | null;
+
+  // Sender/Recipient
+  from_email: string;
+  from_name: string | null;
+  to_email: string;
+  to_name: string | null;
+
+  // Content
+  subject: string | null;
+  body_text: string | null;
+  body_html: string | null;
+  snippet: string | null;
+  attachments: { filename: string; size: number; contentType: string }[];
+
+  // Classification
+  direction: 'inbound' | 'outbound';
+  email_type: InboxItemType | null;
+
+  // Status
+  is_read: boolean;
+  is_starred: boolean;
+  is_archived: boolean;
+  is_spam: boolean;
+
+  // AI Analysis
+  sentiment: InboxSentiment | null;
+  intent: string | null;
+  ai_summary: string | null;
+  priority: number;
+
+  // Timestamps
+  received_at: string;
+  read_at: string | null;
+  replied_at: string | null;
+  created_at: string;
+  updated_at: string;
+
+  // Joined data
+  prospect?: Prospect;
+  mailbox?: Mailbox;
+  campaign?: Campaign;
+}
+
+// Basic Campaign interface
+export interface Campaign {
+  id: string;
+  name: string;
+  description: string | null;
+  strategy_key: string;
+  active: boolean;
+  send_days: string[];
+  send_time_start: number;
+  send_time_end: number;
+  daily_limit: number;
+  emails_sent: number;
+  emails_opened: number;
+  replies_received: number;
+  meetings_booked: number;
+  open_rate: number;
+  reply_rate: number;
+  meeting_rate: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type OutboxStatus = 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled';
+
+export interface OutboxItem {
+  id: string;
+  mailbox_id: string;
+  prospect_id: string;
+  campaign_id: string | null;
+  campaign_lead_id: string | null;
+  sequence_step: number | null;
+
+  // Content
+  to_email: string;
+  to_name: string | null;
+  subject: string;
+  body_text: string | null;
+  body_html: string | null;
+
+  // Variant
+  variant: 'A' | 'B' | null;
+
+  // Scheduling
+  scheduled_for: string | null;
+  status: OutboxStatus;
+
+  // Result
+  message_id: string | null;
+  sent_at: string | null;
+  error_message: string | null;
+  retry_count: number;
+
+  // Tracking
+  opened_at: string | null;
+  clicked_at: string | null;
+  replied_at: string | null;
+
+  created_at: string;
+  updated_at: string;
+}
+
+// Extended Campaign type for sequence campaigns
+export interface SequenceCampaign {
+  id: string;
+  name: string;
+  description: string | null;
+  strategy_key: string;
+  type: 'legacy' | 'sequence';
+  active: boolean;
+
+  // Scheduling
+  send_days: string[];
+  send_time_start: number;
+  send_time_end: number;
+  daily_limit: number;
+  timezone: string;
+
+  // Sequence
+  sequence_count: number;
+  default_mailbox_id: string | null;
+  ab_testing_enabled: boolean;
+
+  // Lead Counts
+  leads_count: number;
+  active_leads: number;
+  completed_leads: number;
+
+  // Metrics
+  emails_sent: number;
+  emails_opened: number;
+  replies_received: number;
+  meetings_booked: number;
+  open_rate: number;
+  reply_rate: number;
+  meeting_rate: number;
+
+  created_at: string;
+  updated_at: string;
+
+  // Joined data
+  sequences?: CampaignSequence[];
+  default_mailbox?: Mailbox;
+}
+
+// Input types for creating/updating
+export interface CreateMailboxInput {
+  email: string;
+  display_name?: string;
+  smtp_host: string;
+  smtp_port?: number;
+  smtp_user: string;
+  smtp_pass: string;
+  smtp_secure?: boolean;
+  imap_host?: string;
+  imap_port?: number;
+  imap_user?: string;
+  imap_pass?: string;
+  imap_secure?: boolean;
+  warmup_enabled?: boolean;
+  warmup_target_per_day?: number;
+}
+
+export interface CreateSequenceInput {
+  campaign_id: string;
+  step_number: number;
+  delay_days?: number;
+  delay_hours?: number;
+  variant_a_subject: string;
+  variant_a_body: string;
+  variant_b_subject?: string;
+  variant_b_body?: string;
+  variant_split?: number;
+  use_ai_generation?: boolean;
+  ai_prompt_context?: string;
+}
+
+export interface CreateCampaignLeadInput {
+  campaign_id: string;
+  prospect_id: string;
+  mailbox_id?: string;
+  added_by?: 'manual' | 'import' | 'automation';
+}
+
+// Analytics types
+export interface OutreachAnalytics {
+  totalMailboxes: number;
+  activeMailboxes: number;
+  totalCampaigns: number;
+  activeCampaigns: number;
+  totalLeads: number;
+  activeLeads: number;
+
+  // Email metrics
+  totalSent: number;
+  totalOpens: number;
+  totalReplies: number;
+  totalBounces: number;
+
+  // Rates
+  overallOpenRate: number;
+  overallReplyRate: number;
+  overallBounceRate: number;
+
+  // Inbox
+  unreadCount: number;
+  priorityCount: number;
+
+  // Warmup
+  warmingMailboxes: number;
+  averageHealthScore: number;
+}

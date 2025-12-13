@@ -133,10 +133,10 @@ export class ProspectDedup implements DurableObject {
   }
 
   private async handleCheck(request: Request): Promise<Response> {
-    const { name, city, source } = await request.json<{
+    const { name, city } = await request.json<{
       name: string;
       city: string;
-      source: string;
+      source?: string;
     }>();
 
     const hash = this.createHash(name, city);

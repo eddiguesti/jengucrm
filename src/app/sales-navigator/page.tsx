@@ -66,7 +66,7 @@ interface EnrichmentJob {
   prospect_id: string;
   prospect_name: string;
   company: string;
-  status: 'pending' | 'finding_email' | 'verifying' | 'researching' | 'ready' | 'failed';
+  status: 'pending' | 'finding_website' | 'finding_email' | 'verifying' | 'researching' | 'ready' | 'failed';
   email_found: string | null;
   email_verified: boolean;
   research_done: boolean;
@@ -138,11 +138,44 @@ function ImportTab() {
   const [fileName, setFileName] = useState<string | null>(null);
 
   const parseCSV = (text: string): SalesNavProspect[] => {
-    const lines = text.split('\n').filter(line => line.trim());
+    const lines = text.split(/\r?\n/).filter(line => line.trim());
     if (lines.length < 2) return [];
 
+    const parseLine = (line: string): string[] => {
+      const values: string[] = [];
+      let current = '';
+      let inQuotes = false;
+
+      for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+
+        if (char === '"') {
+          // Handle escaped quotes ("")
+          if (inQuotes && line[i + 1] === '"') {
+            current += '"';
+            i++;
+            continue;
+          }
+
+          inQuotes = !inQuotes;
+          continue;
+        }
+
+        if (char === ',' && !inQuotes) {
+          values.push(current.trim());
+          current = '';
+          continue;
+        }
+
+        current += char;
+      }
+
+      values.push(current.trim());
+      return values.map(v => v.replace(/^\uFEFF/, '').replace(/^"|"$/g, '').trim());
+    };
+
     // Parse header
-    const header = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+    const header = parseLine(lines[0]).map(h => h.trim().replace(/^"|"$/g, ''));
 
     // Find column indices
     const cols = {
@@ -159,29 +192,17 @@ function ImportTab() {
     const prospects: SalesNavProspect[] = [];
 
     for (let i = 1; i < lines.length; i++) {
-      const line = lines[i];
-      // Parse CSV with quoted fields
-      const values: string[] = [];
-      let current = '';
-      let inQuotes = false;
+      const values = parseLine(lines[i]);
 
-      for (let j = 0; j < line.length; j++) {
-        const char = line[j];
-        if (char === '"') {
-          inQuotes = !inQuotes;
-        } else if (char === ',' && !inQuotes) {
-          values.push(current.trim());
-          current = '';
-        } else {
-          current += char;
-        }
-      }
-      values.push(current.trim());
-
-      const getValue = (idx: number) => idx >= 0 && idx < values.length ? values[idx].replace(/^"|"$/g, '') : '';
+      const getValue = (idx: number) => (idx >= 0 && idx < values.length ? values[idx] : '');
 
       const email = getValue(cols.email);
       const emailStatus = getValue(cols.emailStatus);
+      const emailLooksValid = email.includes('@') && email.includes('.');
+      const status = emailStatus.toLowerCase();
+      const shouldUseEmail =
+        emailLooksValid &&
+        (status.includes('found') || status.includes('verified') || status.includes('available') || status === '');
 
       prospects.push({
         profileUrl: getValue(cols.profileUrl),
@@ -189,7 +210,7 @@ function ImportTab() {
         firstname: getValue(cols.firstname),
         lastname: getValue(cols.lastname),
         company: getValue(cols.company),
-        email: email && emailStatus.toLowerCase().includes('found') ? email : null,
+        email: shouldUseEmail ? email : null,
         emailStatus: emailStatus,
         jobTitle: getValue(cols.jobTitle),
       });
@@ -549,7 +570,7 @@ function EnrichmentTab() {
       const res = await fetch('/api/sales-navigator/enrichment', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'start' }),
+        body: JSON.stringify({ action: 'start', limit: 10, includeResearch: false }),
       });
       const data = await res.json();
       if (data.success) {
@@ -565,7 +586,7 @@ function EnrichmentTab() {
   };
 
   const pendingCount = jobs.filter(j => j.status === 'pending').length;
-  const processingCount = jobs.filter(j => ['finding_email', 'verifying', 'researching'].includes(j.status)).length;
+  const processingCount = jobs.filter(j => ['finding_website', 'finding_email', 'verifying', 'researching'].includes(j.status)).length;
   const readyCount = jobs.filter(j => j.status === 'ready').length;
   const failedCount = jobs.filter(j => j.status === 'failed').length;
 
@@ -589,23 +610,31 @@ function EnrichmentTab() {
                   </p>
                 </div>
               </div>
-              <Button
-                onClick={startEnrichment}
-                disabled={processing || pendingCount === 0}
-                className="bg-amber-600 hover:bg-amber-700"
-              >
-                {processing ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-4 w-4 mr-2" />
-                    Start Enrichment
-                  </>
-                )}
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button asChild variant="outline" className="border-zinc-700">
+                  <a href="/api/sales-navigator/export?onlyWithEmail=true">
+                    <FileSpreadsheet className="h-4 w-4 mr-2" />
+                    Download CSV
+                  </a>
+                </Button>
+                <Button
+                  onClick={startEnrichment}
+                  disabled={processing || pendingCount === 0}
+                  className="bg-amber-600 hover:bg-amber-700"
+                >
+                  {processing ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="h-4 w-4 mr-2" />
+                      Start Enrichment
+                    </>
+                  )}
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -644,11 +673,19 @@ function EnrichmentTab() {
                       ) : (
                         <Loader2 className="h-5 w-5 text-amber-500 animate-spin flex-shrink-0" />
                       )}
-                      <div className="min-w-0">
-                        <p className="font-medium text-white truncate">{job.prospect_name}</p>
-                        <p className="text-xs text-zinc-400 truncate">{job.company}</p>
-                      </div>
-                    </div>
+	                      <div className="min-w-0">
+	                        <p className="font-medium text-white truncate">{job.prospect_name}</p>
+	                        <p className="text-xs text-zinc-400 truncate">{job.company}</p>
+	                        {job.error && (
+	                          <p
+	                            className={`text-xs truncate ${job.status === 'failed' ? 'text-red-400' : 'text-amber-400'}`}
+	                            title={job.error}
+	                          >
+	                            {job.error}
+	                          </p>
+	                        )}
+	                      </div>
+	                    </div>
                     <div className="flex items-center gap-2">
                       {job.email_found && (
                         <Badge className={job.email_verified ? 'bg-emerald-600/20 text-emerald-400' : 'bg-amber-600/20 text-amber-400'}>
@@ -728,24 +765,24 @@ function EnrichmentTab() {
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-zinc-400">
             <div className="flex items-start gap-2">
+              <Search className="h-4 w-4 text-blue-500 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="font-medium text-white">Find Website</p>
+                <p className="text-xs">DuckDuckGo + Brave + Grok selection</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-2">
               <Mail className="h-4 w-4 text-amber-500 mt-0.5 flex-shrink-0" />
               <div>
                 <p className="font-medium text-white">Find Email</p>
-                <p className="text-xs">Pattern matching + Hunter.io</p>
+                <p className="text-xs">Scrape official site, then Grok fallback</p>
               </div>
             </div>
             <div className="flex items-start gap-2">
               <CheckCircle className="h-4 w-4 text-emerald-500 mt-0.5 flex-shrink-0" />
               <div>
                 <p className="font-medium text-white">Verify Email</p>
-                <p className="text-xs">MX check + deliverability</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-2">
-              <Search className="h-4 w-4 text-blue-500 mt-0.5 flex-shrink-0" />
-              <div>
-                <p className="font-medium text-white">AI Research</p>
-                <p className="text-xs">Grok researches the company</p>
+                <p className="text-xs">MillionVerifier (or MX fallback)</p>
               </div>
             </div>
           </CardContent>

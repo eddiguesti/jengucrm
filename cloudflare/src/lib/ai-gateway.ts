@@ -20,12 +20,22 @@ interface AIProvider {
 export async function generateEmail(
   prospect: Prospect,
   strategy: CampaignStrategy,
+  isFollowUp: boolean,
   env: Env
 ): Promise<GeneratedEmail> {
   const startTime = Date.now();
 
-  // Build the prompt
-  const prompt = CAMPAIGN_PROMPTS[strategy](prospect);
+  // Build the prompt (add follow-up context if needed)
+  let prompt = CAMPAIGN_PROMPTS[strategy](prospect);
+
+  if (isFollowUp) {
+    prompt += `\n\nIMPORTANT: This is a FOLLOW-UP email. The prospect has already received an initial outreach.
+- Be brief (50-70 words max)
+- Reference that you reached out before
+- Don't repeat the full pitch
+- Create gentle urgency
+- Use a softer CTA like "just checking if this landed?" or "worth a quick look?"`;
+  }
 
   // Get rate limiter DO
   const rateLimiter = env.RATE_LIMITER.get(
@@ -75,12 +85,8 @@ export async function generateEmail(
         body: JSON.stringify({ provider: provider.name, tokens: 1500 }),
       }));
 
-      // Track analytics
-      await env.ANALYTICS.writeDataPoint({
-        blobs: [provider.name, strategy, 'success'],
-        doubles: [Date.now() - startTime],
-        indexes: ['ai_generation'],
-      });
+      // Log success
+      console.log(`AI generation success: provider=${provider.name}, strategy=${strategy}, latency=${Date.now() - startTime}ms`);
 
       return {
         subject: parsed.subject,
@@ -104,12 +110,8 @@ export async function generateEmail(
     }
   }
 
-  // All providers failed - track failure
-  await env.ANALYTICS.writeDataPoint({
-    blobs: ['all', strategy, 'failure'],
-    doubles: [Date.now() - startTime],
-    indexes: ['ai_generation'],
-  });
+  // All providers failed - log failure
+  console.error(`AI generation failed: all providers exhausted, strategy=${strategy}, latency=${Date.now() - startTime}ms`);
 
   throw lastError || new Error('All AI providers failed');
 }
@@ -180,6 +182,13 @@ Respond in JSON format:
 }
 
 /**
+ * Generate text with Grok (exported for reply handler)
+ */
+export async function generateTextWithGrok(prompt: string, env: Env): Promise<string> {
+  return generateWithGrok(prompt, env);
+}
+
+/**
  * Grok API (x.ai)
  */
 async function generateWithGrok(prompt: string, env: Env): Promise<string> {
@@ -213,6 +222,10 @@ async function generateWithGrok(prompt: string, env: Env): Promise<string> {
  * Claude API (Anthropic)
  */
 async function generateWithClaude(prompt: string, env: Env): Promise<string> {
+  if (!env.ANTHROPIC_API_KEY) {
+    throw new Error('Anthropic API key not configured');
+  }
+
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {

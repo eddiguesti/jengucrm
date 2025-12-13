@@ -18,13 +18,15 @@ interface Notification {
   created_at: string;
 }
 
+interface HeaderAction {
+  label: string;
+  onClick: () => void;
+}
+
 interface HeaderProps {
   title: string;
   subtitle?: string;
-  action?: {
-    label: string;
-    onClick: () => void;
-  };
+  action?: HeaderAction | React.ReactNode;
 }
 
 export function Header({ title, subtitle, action }: HeaderProps) {
@@ -362,18 +364,24 @@ export function Header({ title, subtitle, action }: HeaderProps) {
 
         {/* Action Button - Apple blue style */}
         {action && (
-          <Button
-            onClick={action.onClick}
-            className={cn(
-              "h-8 text-xs font-medium px-3 rounded-lg shadow-lg macos-transition active-glow",
-              isLight
-                ? "bg-sky-500 hover:bg-sky-600 text-white shadow-sky-500/25"
-                : "bg-blue-500 hover:bg-blue-600 text-white shadow-blue-500/25"
-            )}
-          >
-            <Plus className="h-3.5 w-3.5 mr-1.5" />
-            {action.label}
-          </Button>
+          // Check if action is a React element or an object with label/onClick
+          typeof action === 'object' && 'label' in action && 'onClick' in action ? (
+            <Button
+              onClick={(action as HeaderAction).onClick}
+              className={cn(
+                "h-8 text-xs font-medium px-3 rounded-lg shadow-lg macos-transition active-glow",
+                isLight
+                  ? "bg-sky-500 hover:bg-sky-600 text-white shadow-sky-500/25"
+                  : "bg-blue-500 hover:bg-blue-600 text-white shadow-blue-500/25"
+              )}
+            >
+              <Plus className="h-3.5 w-3.5 mr-1.5" />
+              {(action as HeaderAction).label}
+            </Button>
+          ) : (
+            // Render as React element directly
+            action
+          )
         )}
       </div>
     </header>

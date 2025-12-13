@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
@@ -15,79 +15,97 @@ import {
 import {
   LayoutDashboard,
   Users,
-  Mail,
   Kanban,
   Settings,
   Zap,
-  BarChart3,
   Inbox,
-  Database,
-  UserSearch,
-  Linkedin,
   Menu,
   ChevronRight,
   Moon,
   Sun,
   Sparkles,
-  MessageSquare,
-  Bell,
-  Activity,
+  Target,
+  TrendingUp,
+  Search,
+  Mail,
 } from 'lucide-react';
 
-const navigation = [
-  { name: 'Dashboard', href: '/', icon: LayoutDashboard, color: 'from-blue-500 to-cyan-500' },
-  { name: 'Prospects', href: '/prospects', icon: Users, color: 'from-violet-500 to-purple-500' },
-  { name: 'Pipeline', href: '/pipeline', icon: Kanban, color: 'from-amber-500 to-orange-500' },
-  { name: 'Emails', href: '/emails', icon: Mail, color: 'from-emerald-500 to-teal-500' },
-  { name: 'Replies', href: '/replies', icon: MessageSquare, color: 'from-amber-500 to-yellow-500' },
-  { name: 'Notifications', href: '/notifications', icon: Bell, color: 'from-red-500 to-rose-500' },
-  { name: 'Activity', href: '/activity', icon: Activity, color: 'from-green-500 to-emerald-500' },
-  { name: 'Mystery Shopper', href: '/mystery-shopper', icon: UserSearch, color: 'from-pink-500 to-rose-500' },
-  { name: 'Sales Navigator', href: '/sales-navigator', icon: Linkedin, color: 'from-blue-600 to-blue-500' },
-  { name: 'Lead Sources', href: '/lead-sources', icon: Database, color: 'from-indigo-500 to-violet-500' },
-  { name: 'Analytics', href: '/analytics', icon: BarChart3, color: 'from-cyan-500 to-blue-500' },
-  { name: 'Agents', href: '/agents', icon: Inbox, color: 'from-fuchsia-500 to-pink-500' },
-  { name: 'Settings', href: '/settings', icon: Settings, color: 'from-slate-500 to-zinc-500' },
+// ===========================================
+// SIMPLIFIED NAVIGATION - Matches sidebar.tsx
+// ===========================================
+
+// TODAY - Your daily focus
+const todayNavigation = [
+  { name: 'Command Center', href: '/', icon: LayoutDashboard, color: 'from-sky-500 to-blue-500' },
 ];
 
-// Bottom tab bar items (most used)
+// PROSPECTS - Your data
+const prospectsNavigation = [
+  { name: 'All Prospects', href: '/prospects', icon: Users, color: 'from-emerald-500 to-green-500' },
+  { name: 'Pipeline', href: '/pipeline', icon: Kanban, color: 'from-emerald-500 to-green-500' },
+  { name: 'Find New', href: '/find-new', icon: Search, color: 'from-emerald-500 to-green-500' },
+];
+
+// OUTREACH - Your communications
+const outreachNavigation = [
+  { name: 'Inbox', href: '/outreach/inbox', icon: Inbox, color: 'from-violet-500 to-purple-500' },
+  { name: 'Campaigns', href: '/outreach/campaigns', icon: Target, color: 'from-violet-500 to-purple-500' },
+  { name: 'Performance', href: '/outreach/analytics', icon: TrendingUp, color: 'from-violet-500 to-purple-500' },
+];
+
+// All sections for the slide-out menu
+const navSections = [
+  { title: 'Today', items: todayNavigation },
+  { title: 'Prospects', items: prospectsNavigation },
+  { title: 'Outreach', items: outreachNavigation },
+];
+
+// Bottom tab bar items (most used - 4 items)
 const bottomTabs = [
   { name: 'Home', href: '/', icon: LayoutDashboard },
   { name: 'Prospects', href: '/prospects', icon: Users },
+  { name: 'Inbox', href: '/outreach/inbox', icon: Inbox },
   { name: 'Pipeline', href: '/pipeline', icon: Kanban },
-  { name: 'Emails', href: '/emails', icon: Mail },
 ];
 
 export function MobileNav() {
   const [isOpen, setIsOpen] = useState(false);
-  const isMountedRef = useRef(false);
-  const [renderKey, setRenderKey] = useState(0);
   const pathname = usePathname();
   const { theme, toggleTheme } = useTheme();
   const isLight = theme === 'light';
 
-  // Use callback to schedule state update after effect completes
-  const scheduleMount = useCallback(() => {
-    if (!isMountedRef.current) {
-      isMountedRef.current = true;
-      // Schedule the re-render outside of the effect
-      queueMicrotask(() => setRenderKey(k => k + 1));
-    }
-  }, []);
-
-  useEffect(() => {
-    scheduleMount();
-  }, [scheduleMount]);
-
-  const mounted = isMountedRef.current;
+  // Avoid hydration mismatches without setState-in-effect.
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  );
 
   // Don't render on login page
   if (pathname === '/login') return null;
 
+  // Helper to check if route is active
+  const isRouteActive = (href: string) => {
+    if (href === '/') return pathname === '/';
+    // Handle /find-new matching legacy routes
+    if (href === '/find-new') {
+      return pathname === '/find-new' ||
+        pathname.startsWith('/sales-navigator') ||
+        pathname.startsWith('/enrichment') ||
+        pathname.startsWith('/mystery-shopper') ||
+        pathname.startsWith('/lead-sources');
+    }
+    // Handle /outreach/inbox matching legacy routes
+    if (href === '/outreach/inbox') {
+      return pathname === '/outreach/inbox' ||
+        pathname === '/emails' ||
+        pathname === '/replies';
+    }
+    return pathname === href || pathname.startsWith(href + '/');
+  };
+
   // Find active tab index for pill animation
-  const activeTabIndex = bottomTabs.findIndex(
-    tab => pathname === tab.href || (tab.href !== '/' && pathname.startsWith(tab.href))
-  );
+  const activeTabIndex = bottomTabs.findIndex(tab => isRouteActive(tab.href));
 
   return (
     <>
@@ -219,8 +237,7 @@ export function MobileNav() {
           )}
 
           {bottomTabs.map((tab, index) => {
-            const isActive = pathname === tab.href ||
-              (tab.href !== '/' && pathname.startsWith(tab.href));
+            const isActive = isRouteActive(tab.href);
 
             return (
               <Link
@@ -338,99 +355,168 @@ export function MobileNav() {
             isLight ? "bg-zinc-200/80" : "bg-white/[0.06]"
           )} />
 
-          {/* Navigation List */}
+          {/* Navigation List - Organized by Sections */}
           <nav className="flex-1 overflow-y-auto py-3 px-3">
-            <div className="space-y-0.5">
-              {navigation.map((item, index) => {
-                const isActive = pathname === item.href ||
-                  (item.href !== '/' && pathname.startsWith(item.href));
+            {navSections.map((section, sectionIndex) => (
+              <div key={section.title} className={cn(sectionIndex > 0 && "mt-4")}>
+                {/* Section Header */}
+                <div className={cn(
+                  "px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider",
+                  isLight ? "text-zinc-400" : "text-white/30"
+                )}>
+                  {section.title}
+                </div>
+                <div className="space-y-0.5">
+                  {section.items.map((item, index) => {
+                    const isActive = isRouteActive(item.href);
 
-                return (
-                  <motion.div
-                    key={item.name}
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: index * 0.03, duration: 0.2 }}
-                  >
-                    <Link
-                      href={item.href}
-                      onClick={() => setIsOpen(false)}
-                      className={cn(
-                        "flex items-center justify-between rounded-2xl px-3 py-3",
-                        "active:scale-[0.98] transition-all duration-150",
-                        isActive
-                          ? isLight
-                            ? "bg-gradient-to-r from-blue-50 to-indigo-50/50 shadow-sm"
-                            : "bg-gradient-to-r from-white/[0.08] to-white/[0.04]"
-                          : isLight
-                            ? "active:bg-zinc-100"
-                            : "active:bg-white/[0.04]"
-                      )}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div
+                    return (
+                      <motion.div
+                        key={item.name}
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: (sectionIndex * section.items.length + index) * 0.02, duration: 0.2 }}
+                      >
+                        <Link
+                          href={item.href}
+                          onClick={() => setIsOpen(false)}
                           className={cn(
-                            "flex h-10 w-10 items-center justify-center rounded-xl transition-all",
+                            "flex items-center justify-between rounded-2xl px-3 py-2.5",
+                            "active:scale-[0.98] transition-all duration-150",
                             isActive
-                              ? `bg-gradient-to-br ${item.color} shadow-lg`
-                              : isLight
-                                ? "bg-zinc-100"
-                                : "bg-white/[0.06]"
-                          )}
-                          style={{
-                            boxShadow: isActive
                               ? isLight
-                                ? '0 4px 12px -2px rgba(59, 130, 246, 0.25)'
-                                : '0 4px 12px -2px rgba(59, 130, 246, 0.3)'
-                              : 'none'
-                          }}
-                        >
-                          <item.icon
-                            className={cn(
-                              "h-[18px] w-[18px] transition-colors",
-                              isActive
-                                ? "text-white"
-                                : isLight
-                                  ? "text-zinc-500"
-                                  : "text-white/50"
-                            )}
-                          />
-                        </div>
-                        <span
-                          className={cn(
-                            "text-[15px] font-medium",
-                            isActive
-                              ? isLight ? "text-zinc-900" : "text-white"
-                              : isLight ? "text-zinc-600" : "text-white/70"
+                                ? "bg-gradient-to-r from-blue-50 to-indigo-50/50 shadow-sm"
+                                : "bg-gradient-to-r from-white/[0.08] to-white/[0.04]"
+                              : isLight
+                                ? "active:bg-zinc-100"
+                                : "active:bg-white/[0.04]"
                           )}
                         >
-                          {item.name}
-                        </span>
-                      </div>
-                      {isActive && (
-                        <motion.div
-                          initial={{ scale: 0 }}
-                          animate={{ scale: 1 }}
-                          className={cn(
-                            "flex h-6 w-6 items-center justify-center rounded-full",
-                            isLight ? "bg-blue-500" : "bg-blue-500"
+                          <div className="flex items-center gap-3">
+                            <div
+                              className={cn(
+                                "flex h-9 w-9 items-center justify-center rounded-xl transition-all",
+                                isActive
+                                  ? `bg-gradient-to-br ${item.color} shadow-lg`
+                                  : isLight
+                                    ? "bg-zinc-100"
+                                    : "bg-white/[0.06]"
+                              )}
+                              style={{
+                                boxShadow: isActive
+                                  ? isLight
+                                    ? '0 4px 12px -2px rgba(59, 130, 246, 0.25)'
+                                    : '0 4px 12px -2px rgba(59, 130, 246, 0.3)'
+                                  : 'none'
+                              }}
+                            >
+                              <item.icon
+                                className={cn(
+                                  "h-4 w-4 transition-colors",
+                                  isActive
+                                    ? "text-white"
+                                    : isLight
+                                      ? "text-zinc-500"
+                                      : "text-white/50"
+                                )}
+                              />
+                            </div>
+                            <span
+                              className={cn(
+                                "text-[14px] font-medium",
+                                isActive
+                                  ? isLight ? "text-zinc-900" : "text-white"
+                                  : isLight ? "text-zinc-600" : "text-white/70"
+                              )}
+                            >
+                              {item.name}
+                            </span>
+                          </div>
+                          {isActive && (
+                            <motion.div
+                              initial={{ scale: 0 }}
+                              animate={{ scale: 1 }}
+                              className={cn(
+                                "flex h-6 w-6 items-center justify-center rounded-full",
+                                isLight ? "bg-blue-500" : "bg-blue-500"
+                              )}
+                            >
+                              <Sparkles className="h-3 w-3 text-white" />
+                            </motion.div>
                           )}
-                        >
-                          <Sparkles className="h-3 w-3 text-white" />
-                        </motion.div>
+                          {!isActive && (
+                            <ChevronRight
+                              className={cn(
+                                "h-4 w-4",
+                                isLight ? "text-zinc-300" : "text-white/20"
+                              )}
+                            />
+                          )}
+                        </Link>
+                      </motion.div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+
+            {/* Settings at the bottom of nav */}
+            <div className="mt-6 pt-4 border-t border-zinc-200/50 dark:border-white/[0.06]">
+              <Link
+                href="/settings"
+                onClick={() => setIsOpen(false)}
+                className={cn(
+                  "flex items-center justify-between rounded-2xl px-3 py-2.5",
+                  "active:scale-[0.98] transition-all duration-150",
+                  isRouteActive('/settings')
+                    ? isLight
+                      ? "bg-gradient-to-r from-slate-50 to-zinc-50/50 shadow-sm"
+                      : "bg-gradient-to-r from-white/[0.08] to-white/[0.04]"
+                    : isLight
+                      ? "active:bg-zinc-100"
+                      : "active:bg-white/[0.04]"
+                )}
+              >
+                <div className="flex items-center gap-3">
+                  <div
+                    className={cn(
+                      "flex h-9 w-9 items-center justify-center rounded-xl transition-all",
+                      isRouteActive('/settings')
+                        ? "bg-gradient-to-br from-slate-500 to-zinc-500 shadow-lg"
+                        : isLight
+                          ? "bg-zinc-100"
+                          : "bg-white/[0.06]"
+                    )}
+                  >
+                    <Settings
+                      className={cn(
+                        "h-4 w-4 transition-colors",
+                        isRouteActive('/settings')
+                          ? "text-white"
+                          : isLight
+                            ? "text-zinc-500"
+                            : "text-white/50"
                       )}
-                      {!isActive && (
-                        <ChevronRight
-                          className={cn(
-                            "h-4 w-4",
-                            isLight ? "text-zinc-300" : "text-white/20"
-                          )}
-                        />
-                      )}
-                    </Link>
-                  </motion.div>
-                );
-              })}
+                    />
+                  </div>
+                  <span
+                    className={cn(
+                      "text-[14px] font-medium",
+                      isRouteActive('/settings')
+                        ? isLight ? "text-zinc-900" : "text-white"
+                        : isLight ? "text-zinc-600" : "text-white/70"
+                    )}
+                  >
+                    Settings
+                  </span>
+                </div>
+                <ChevronRight
+                  className={cn(
+                    "h-4 w-4",
+                    isLight ? "text-zinc-300" : "text-white/20"
+                  )}
+                />
+              </Link>
             </div>
           </nav>
 
@@ -460,7 +546,7 @@ export function MobileNav() {
                     : "from-blue-400 to-purple-500 shadow-purple-500/20"
                 )}
               >
-                J
+                E
               </div>
               <div className="flex-1 min-w-0">
                 <p
@@ -469,7 +555,7 @@ export function MobileNav() {
                     isLight ? "text-zinc-900" : "text-white"
                   )}
                 >
-                  Jengu Team
+                  Edd
                 </p>
                 <div className="flex items-center gap-1.5">
                   <div className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
@@ -479,7 +565,7 @@ export function MobileNav() {
                       isLight ? "text-emerald-600" : "text-emerald-400"
                     )}
                   >
-                    Premium Plan
+                    edd@jengu.ai
                   </p>
                 </div>
               </div>

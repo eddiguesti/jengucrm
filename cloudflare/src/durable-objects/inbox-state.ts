@@ -8,7 +8,7 @@
  * based on performance, and circuit breaker pattern.
  */
 
-import { InboxConfig, InboxStatus } from '../types';
+import { InboxConfig } from '../types';
 
 interface InboxHealth {
   config: InboxConfig;

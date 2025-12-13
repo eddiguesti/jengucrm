@@ -5,3 +5,4 @@ export { ProgressIndicator } from './ProgressIndicator';
 export { AlertBanner, buildAlerts } from './AlertBanner';
 export { ActivityFeed } from './ActivityFeed';
 export { EmptyState } from './EmptyState';
+export { EnrichmentModal } from './EnrichmentModal';

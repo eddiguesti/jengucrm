@@ -8,10 +8,14 @@ const FETCH_HEADERS = {
 
 async function fetchPage(url: string): Promise<string | null> {
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
     const response = await fetch(url, {
       headers: FETCH_HEADERS,
       redirect: 'follow',
-    });
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeout));
     if (!response.ok) return null;
     return await response.text();
   } catch {

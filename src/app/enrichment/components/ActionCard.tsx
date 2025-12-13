@@ -3,12 +3,11 @@
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Button } from '@/components/ui/button';
-import { Sparkles, Loader2, ChevronDown, Globe, Mail } from 'lucide-react';
-import { useState } from 'react';
+import { Sparkles, Loader2 } from 'lucide-react';
 
 interface ActionCardProps {
   needsEnrichment: number;
-  onStartEnrichment: (type: 'auto' | 'websites' | 'emails') => void;
+  onStartEnrichment: () => void;
   isRunning: boolean;
   disabled?: boolean;
 }
@@ -21,7 +20,6 @@ export function ActionCard({
 }: ActionCardProps) {
   const { theme } = useTheme();
   const isLight = theme === 'light';
-  const [showAdvanced, setShowAdvanced] = useState(false);
 
   return (
     <div
@@ -49,7 +47,7 @@ export function ActionCard({
 
         <div className="flex-shrink-0">
           <Button
-            onClick={() => onStartEnrichment('auto')}
+            onClick={onStartEnrichment}
             disabled={disabled || isRunning || needsEnrichment === 0}
             size="lg"
             className={cn(
@@ -72,45 +70,6 @@ export function ActionCard({
             )}
           </Button>
         </div>
-      </div>
-
-      {/* Advanced options (collapsible) */}
-      <div className="mt-4">
-        <button
-          onClick={() => setShowAdvanced(!showAdvanced)}
-          className={cn(
-            'flex items-center gap-1 text-xs font-medium transition-colors',
-            isLight ? 'text-slate-500 hover:text-slate-700' : 'text-zinc-500 hover:text-zinc-300'
-          )}
-        >
-          <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', showAdvanced && 'rotate-180')} />
-          Advanced options
-        </button>
-
-        {showAdvanced && (
-          <div className="mt-3 flex gap-2">
-            <Button
-              onClick={() => onStartEnrichment('websites')}
-              disabled={disabled || isRunning}
-              variant="outline"
-              size="sm"
-              className="h-8"
-            >
-              <Globe className="h-4 w-4 mr-1.5" />
-              Websites Only
-            </Button>
-            <Button
-              onClick={() => onStartEnrichment('emails')}
-              disabled={disabled || isRunning}
-              variant="outline"
-              size="sm"
-              className="h-8"
-            >
-              <Mail className="h-4 w-4 mr-1.5" />
-              Emails Only
-            </Button>
-          </div>
-        )}
       </div>
     </div>
   );

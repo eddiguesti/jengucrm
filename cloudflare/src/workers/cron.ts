@@ -4,99 +4,155 @@
  *
  * Triggers:
  * - Every 5 min, 8am-6pm Mon-Sat: Email sending window
- * - 7am daily: Daily pipeline
- * - Every minute: Check replies
+ * - 7am daily: Daily pipeline (reset counters)
+ * - Every minute: Check replies (DISABLED - no Azure)
  * - 10am Mon-Fri: Follow-ups
+ * - Every 5 min, 6-7am and 7pm-11pm: Enrichment (find websites/emails)
+ *
+ * NOTE: Azure/jengu.ai is disabled - only SMTP inboxes are used
  */
 
 import { Env, Prospect, CampaignStrategy } from '../types';
 import { generateEmail } from '../lib/ai-gateway';
-import { sendEmail, getAvailableInbox } from '../lib/email-sender';
+import { sendEmail, getAvailableInbox, recordSend } from '../lib/email-sender';
+import { resetDailyCounters } from '../lib/supabase';
+import { handleEnrich } from './enrich';
+import { loggers } from '../lib/logger';
+import * as DataIntegrity from '../lib/data-integrity';
+import * as DataSync from '../lib/data-sync';
+import * as Alerting from '../lib/alerting';
+import * as EmailSafety from '../lib/email-safety';
+import * as BounceHandler from '../lib/bounce-handler';
 
-export async function handleCron(
-  event: ScheduledEvent,
-  env: Env,
-  ctx: ExecutionContext
-): Promise<void> {
-  const scheduledTime = new Date(event.scheduledTime);
-  const hour = scheduledTime.getUTCHours();
-  const minute = scheduledTime.getUTCMinutes();
-  const day = scheduledTime.getUTCDay(); // 0 = Sunday
+const logger = loggers.cron;
 
-  console.log(`CRON triggered at ${scheduledTime.toISOString()} (hour=${hour}, minute=${minute}, day=${day})`);
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      controller.signal.addEventListener('abort', () => reject(new Error('timeout')))
+    ),
+  ]).finally(() => clearTimeout(timeout));
+}
+
+async function triggerSalesNavigatorEnrichment(env: Env): Promise<void> {
+  const baseUrl = (env.VERCEL_APP_URL || '').trim().replace(/\/+$/, '');
+  if (!baseUrl) {
+    console.log('Sales Nav enrichment: VERCEL_APP_URL not set, skipping');
+    return;
+  }
+
+  const secret = env.VERCEL_CRON_SECRET;
+  if (!secret) {
+    console.log('Sales Nav enrichment: VERCEL_CRON_SECRET not set, skipping');
+    return;
+  }
+
+  const url = `${baseUrl}/api/cron/sales-nav-enrichment`;
 
   try {
-    // ==================
-    // EVERY MINUTE: Check replies
-    // ==================
-    await checkInboxForReplies(env);
+    const res = await withTimeout(
+      fetch(url, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${secret}`,
+          'User-Agent': 'jengu-crm-worker/cron',
+          Accept: 'application/json',
+        },
+      }),
+      20000
+    );
 
-    // ==================
-    // BUSINESS HOURS: Email sending (8am-6pm Mon-Sat)
-    // ==================
-    const isBusinessHours = hour >= 8 && hour < 18;
-    const isWeekday = day >= 1 && day <= 6; // Mon-Sat
-
-    if (isBusinessHours && isWeekday) {
-      // Random 30% skip for human-like sending pattern
-      if (Math.random() > 0.3) {
-        console.log('Triggering email send cycle');
-        await sendEmailBatch(env);
-      } else {
-        console.log('Random skip for human-like pattern');
-      }
+    const text = await res.text().catch(() => '');
+    if (!res.ok) {
+      console.log(`Sales Nav enrichment trigger failed: HTTP ${res.status} ${text.slice(0, 300)}`);
+      return;
     }
 
-    // ==================
-    // 7AM DAILY: Master pipeline
-    // ==================
-    if (hour === 7 && minute === 0) {
-      console.log('Running daily pipeline');
-
-      // Reset daily counters
-      const warmupCounter = env.WARMUP_COUNTER.get(
-        env.WARMUP_COUNTER.idFromName('global')
-      );
-      await warmupCounter.fetch(new Request('http://do/daily-reset', { method: 'POST' }));
-
-      // Clean up old dedup entries
-      const prospectDedup = env.PROSPECT_DEDUP.get(
-        env.PROSPECT_DEDUP.idFromName('global')
-      );
-      await prospectDedup.fetch(new Request('http://do/cleanup', { method: 'POST' }));
-    }
-
-    // ==================
-    // 10AM MON-FRI: Follow-ups
-    // ==================
-    if (hour === 10 && minute === 0 && day >= 1 && day <= 5) {
-      console.log('Triggering follow-up emails');
-      await sendFollowUps(env);
-    }
-
-    // ==================
-    // 6AM SUNDAY: Weekly maintenance
-    // ==================
-    if (hour === 6 && minute === 0 && day === 0) {
-      console.log('Running weekly maintenance');
-      await runWeeklyMaintenance(env);
-    }
-
+    console.log(`Sales Nav enrichment triggered OK: ${text.slice(0, 300)}`);
   } catch (error) {
-    console.error('CRON error:', error);
+    console.log(`Sales Nav enrichment trigger error: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
 
-    // Alert via webhook if configured
-    if (env.ALERT_WEBHOOK_URL) {
-      await fetch(env.ALERT_WEBHOOK_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'cron_error',
-          error: String(error),
-          time: scheduledTime.toISOString(),
-        }),
-      }).catch(() => {}); // Don't fail on alert failure
+export async function handleCron(
+  _event: ScheduledEvent,
+  env: Env,
+  _ctx: ExecutionContext
+): Promise<void> {
+  const hour = new Date().getUTCHours();
+  const minute = new Date().getUTCMinutes();
+  const dayOfWeek = new Date().getUTCDay(); // 0 = Sunday, 6 = Saturday
+
+  logger.info('CRON triggered', { hour, minute, dayOfWeek });
+
+  try {
+    // Route based on cron schedule pattern
+    // Pattern: "*/5 8-18 * * 1-6" - Every 5 min, 8am-6pm, Mon-Sat
+    if (minute % 5 === 0 && hour >= 8 && hour <= 18 && dayOfWeek >= 1 && dayOfWeek <= 6) {
+      // 30% random skip for human-like sending pattern
+      if (Math.random() < 0.3) {
+        logger.info('Random skip for human-like pattern');
+        return;
+      }
+
+      await sendEmailBatch(env);
+      return;
     }
+
+    // Pattern: "0 7 * * *" - 7am daily
+    if (hour === 7 && minute === 0) {
+      await runDailyPipeline(env);
+      return;
+    }
+
+    // Pattern: "0 10 * * 1-5" - 10am weekdays
+    if (hour === 10 && minute === 0 && dayOfWeek >= 1 && dayOfWeek <= 5) {
+      await sendFollowUps(env);
+      return;
+    }
+
+    // Enrichment: Off-hours only (6-7am and 7pm-11pm) to not conflict with email sending
+    // Pattern: "*/5 6,19-23 * * *"
+    const isEnrichmentHour = hour === 6 || (hour >= 19 && hour <= 23);
+    if (minute % 5 === 0 && isEnrichmentHour) {
+      logger.info('Running enrichment batch');
+      await runEnrichmentBatch(env);
+      return;
+    }
+
+    // Sales Navigator enrichment (Supabase-backed, runs on Vercel/Next.js)
+    // Pattern in wrangler.toml: "2-59/10 * * * *"
+    // Picked to avoid overlapping the */5 email sending/enrichment minutes.
+    if (minute % 10 === 2) {
+      logger.info('Triggering Sales Navigator enrichment (Vercel)');
+      await triggerSalesNavigatorEnrichment(env);
+      return;
+    }
+
+    // Integrity checks and data sync - runs at 3am daily
+    if (hour === 3 && minute === 0) {
+      logger.info('Running daily integrity checks and sync');
+      await runIntegrityAndSync(env);
+      return;
+    }
+
+    // Pattern: "*/1 * * * *" - Every minute
+    // Send pending reply notifications to edd@jengu.ai
+    await sendPendingNotifications(env);
+  } catch (error) {
+    logger.error('CRON job failed', error, { hour, minute, dayOfWeek });
+
+    // Send alert on critical cron failures
+    await Alerting.alertOnError(error, 'system_error', 'CRON Job Failed', env, {
+      hour,
+      minute,
+      dayOfWeek,
+    });
+
+    throw error;
   }
 }
 
@@ -169,45 +225,82 @@ async function sendEmailBatch(env: Env): Promise<void> {
 }
 
 /**
+ * Daily pipeline - reset counters, cleanup
+ */
+async function runDailyPipeline(env: Env): Promise<void> {
+  console.log('Running daily pipeline...');
+
+  // Reset warmup counters for new day (Durable Object)
+  const warmupCounter = env.WARMUP_COUNTER.get(
+    env.WARMUP_COUNTER.idFromName('global')
+  );
+
+  await warmupCounter.fetch(new Request('http://do/daily-reset', { method: 'POST' }));
+
+  // Reset daily counters in Supabase
+  await resetDailyCounters(env);
+
+  // Weekly maintenance on Sundays
+  const dayOfWeek = new Date().getUTCDay();
+  if (dayOfWeek === 0) {
+    await runWeeklyMaintenance(env);
+  }
+
+  console.log('Daily pipeline complete');
+}
+
+/**
  * Process a prospect and send email
+ * NOTE: Only uses SMTP inboxes (Azure disabled)
  */
 async function processAndSendEmail(
   prospect: Prospect,
   env: Env,
   isFollowUp: boolean
 ): Promise<void> {
-  // Check warmup allowance
+  // SAFETY CHECK 1: Check emergency stop first
+  if (await EmailSafety.isEmergencyStopActive(env)) {
+    logger.warn('Emergency stop active - skipping email send', {
+      prospectId: prospect.id,
+    });
+    return;
+  }
+
+  // SAFETY CHECK 2: Check if email is blocked (hard bounce, complaint, etc.)
+  const blockCheck = await BounceHandler.isEmailBlocked(prospect.contactEmail!, env);
+  if (blockCheck.blocked) {
+    logger.warn('Email blocked - skipping send', {
+      prospectId: prospect.id,
+      email: prospect.contactEmail,
+      reason: blockCheck.reason,
+    });
+    return;
+  }
+
+  // Get available SMTP inbox
+  const inbox = await getAvailableInbox(env);
+
+  if (!inbox) {
+    console.log('No healthy SMTP inbox available');
+    await Alerting.alertAllInboxesUnhealthy(env);
+    return;
+  }
+
+  // Check warmup allowance for this inbox
   const warmupCounter = env.WARMUP_COUNTER.get(
     env.WARMUP_COUNTER.idFromName('global')
   );
 
   const checkResponse = await warmupCounter.fetch(
-    new Request('http://do/check', { method: 'POST' })
+    new Request('http://do/can-send', {
+      method: 'POST',
+      body: JSON.stringify({ inboxId: inbox.id }),
+    })
   );
   const checkResult = await checkResponse.json<{ allowed: boolean; reason?: string }>();
 
   if (!checkResult.allowed) {
-    console.log(`Warmup limit reached: ${checkResult.reason}`);
-    return;
-  }
-
-  // Get available inbox
-  const inboxState = env.INBOX_STATE.get(
-    env.INBOX_STATE.idFromName('pool')
-  );
-
-  const inboxResponse = await inboxState.fetch(
-    new Request('http://do/get-available')
-  );
-  const inbox = await inboxResponse.json<{
-    id: string;
-    email: string;
-    displayName: string;
-    provider: 'azure' | 'smtp';
-  } | null>();
-
-  if (!inbox) {
-    console.log('No healthy inbox available');
+    console.log(`Warmup limit reached for ${inbox.email}: ${checkResult.reason}`);
     return;
   }
 
@@ -215,14 +308,79 @@ async function processAndSendEmail(
   const strategy = getStrategyForSource(prospect.leadSource) as CampaignStrategy;
 
   // Generate email using AI
-  const generated = await generateEmail(prospect, strategy, isFollowUp, env);
-
-  if (!generated) {
-    console.error('Failed to generate email');
+  let generated;
+  try {
+    generated = await generateEmail(prospect, strategy, isFollowUp, env);
+  } catch (error) {
+    console.error(`Failed to generate email for ${prospect.contactEmail}:`, error);
     return;
   }
 
-  // Send email
+  if (!generated) {
+    console.error('Failed to generate email - empty response');
+    return;
+  }
+
+  // SAFETY CHECK 2: Run all safety checks before sending
+  const safetyResult = await EmailSafety.runSafetyChecks(
+    prospect,
+    { subject: generated.subject, body: generated.body },
+    env
+  );
+
+  if (!safetyResult.safe) {
+    const failedChecks = safetyResult.checks
+      .filter(c => !c.passed)
+      .map(c => c.name);
+
+    logger.warn('Safety checks failed - email blocked', {
+      prospectId: prospect.id,
+      prospectEmail: prospect.contactEmail,
+      blockedBy: safetyResult.blockedBy,
+      failedChecks,
+      safetyScore: safetyResult.score,
+    });
+
+    // Log the blocked send for audit trail
+    await EmailSafety.logSendAttempt({
+      prospectId: prospect.id,
+      subject: generated.subject,
+      sent: false,
+      reason: `Safety check failed: ${safetyResult.blockedBy}`,
+      safetyScore: safetyResult.score,
+      failedChecks,
+      blockedBy: safetyResult.blockedBy,
+    }, env);
+
+    return;
+  }
+
+  // SAFETY CHECK 3: Preflight content validation
+  const preflight = EmailSafety.preflightCheck({
+    subject: generated.subject,
+    body: generated.body,
+  });
+
+  if (!preflight.passable) {
+    logger.warn('Preflight check failed - email blocked', {
+      prospectId: prospect.id,
+      issues: preflight.issues,
+      score: preflight.score,
+    });
+
+    await EmailSafety.logSendAttempt({
+      prospectId: prospect.id,
+      subject: generated.subject,
+      sent: false,
+      reason: `Preflight failed: ${preflight.issues[0]}`,
+      safetyScore: preflight.score,
+      failedChecks: preflight.issues,
+    }, env);
+
+    return;
+  }
+
+  // All safety checks passed - send email via SMTP
   const result = await sendEmail({
     to: prospect.contactEmail!,
     subject: generated.subject,
@@ -233,24 +391,32 @@ async function processAndSendEmail(
     env,
   });
 
+  // Get inbox state for recording
+  const inboxState = env.INBOX_STATE.get(
+    env.INBOX_STATE.idFromName('pool')
+  );
+
   if (result.success) {
-    // Record send in warmup counter
+    // Record send in warmup counter (Durable Object)
     await warmupCounter.fetch(
-      new Request('http://do/record', {
+      new Request('http://do/increment', {
         method: 'POST',
         body: JSON.stringify({ inboxId: inbox.id }),
       })
     );
 
-    // Record success in inbox state
+    // Record success in inbox state (Durable Object)
     await inboxState.fetch(
-      new Request('http://do/record-success', {
+      new Request('http://do/mark-success', {
         method: 'POST',
-        body: JSON.stringify({ inboxId: inbox.id }),
+        body: JSON.stringify({ inboxId: inbox.id, latencyMs: result.latencyMs }),
       })
     );
 
-    // Update database
+    // Record send in Supabase (if mailbox ID is a UUID from Supabase)
+    await recordSend(inbox.id, env);
+
+    // Update D1 database
     const emailId = crypto.randomUUID();
     await env.DB.prepare(`
       INSERT INTO emails (
@@ -276,17 +442,72 @@ async function processAndSendEmail(
       WHERE id = ?
     `).bind(prospect.id).run();
 
-    console.log(`Email sent to ${prospect.contactEmail}`);
+    // Log successful send
+    await EmailSafety.logSendAttempt({
+      prospectId: prospect.id,
+      subject: generated.subject,
+      sent: true,
+      safetyScore: safetyResult.score,
+      failedChecks: [],
+    }, env);
+
+    logger.info('Email sent successfully', {
+      prospectId: prospect.id,
+      prospectEmail: prospect.contactEmail,
+      inbox: inbox.email,
+      safetyScore: safetyResult.score,
+    });
   } else {
     // Record failure
     await inboxState.fetch(
-      new Request('http://do/record-failure', {
+      new Request('http://do/mark-failure', {
         method: 'POST',
         body: JSON.stringify({ inboxId: inbox.id, error: result.error }),
       })
     );
 
-    console.error(`Failed to send email: ${result.error}`);
+    console.error(`✗ Failed to send email to ${prospect.contactEmail}: ${result.error}`);
+
+    // Classify the error and record bounce
+    const bounceType = BounceHandler.classifySMTPError(
+      result.error || 'Unknown error'
+    );
+
+    if (bounceType !== 'unknown') {
+      const reason = BounceHandler.getBounceReason(bounceType, result.error || '');
+
+      // Record the bounce
+      await BounceHandler.recordBounce({
+        email: prospect.contactEmail!,
+        type: bounceType,
+        reason,
+        originalMessageId: result.messageId,
+      }, env);
+
+      // Handle soft bounces with retry logic
+      if (bounceType === 'soft') {
+        const retryResult = await BounceHandler.handleSoftBounce(
+          prospect.id,
+          prospect.contactEmail!,
+          env
+        );
+        logger.info('Soft bounce handling', {
+          prospectId: prospect.id,
+          email: prospect.contactEmail,
+          shouldRetry: retryResult.shouldRetry,
+          retryCount: retryResult.retryCount,
+          reason: retryResult.reason,
+        });
+      }
+    }
+
+    // Alert on email sending failure
+    await Alerting.alertEmailSendingFailure(
+      prospect.contactEmail!,
+      result.error || 'Unknown error',
+      inbox.id,
+      env
+    );
   }
 }
 
@@ -330,153 +551,25 @@ async function sendFollowUps(env: Env): Promise<void> {
 }
 
 /**
- * Check inbox for new replies
+ * Run enrichment batch - finds websites and emails for prospects
+ * Called during off-hours to not conflict with email sending
  */
-async function checkInboxForReplies(env: Env): Promise<void> {
+async function runEnrichmentBatch(env: Env): Promise<void> {
   try {
-    // Get OAuth token for Azure
-    const tokenResponse = await fetch(
-      `https://login.microsoftonline.com/${env.AZURE_TENANT_ID}/oauth2/v2.0/token`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          client_id: env.AZURE_CLIENT_ID,
-          client_secret: env.AZURE_CLIENT_SECRET,
-          scope: 'https://graph.microsoft.com/.default',
-          grant_type: 'client_credentials',
-        }),
-      }
-    );
-
-    if (!tokenResponse.ok) {
-      console.error('Azure auth failed');
-      return;
-    }
-
-    const { access_token } = await tokenResponse.json<{ access_token: string }>();
-
-    // Fetch unread emails
-    const response = await fetch(
-      `https://graph.microsoft.com/v1.0/users/${env.AZURE_MAIL_FROM}/mailFolders/inbox/messages?$filter=isRead eq false&$top=20&$select=id,from,subject,body,receivedDateTime,internetMessageId`,
-      {
-        headers: { Authorization: `Bearer ${access_token}` },
-      }
-    );
-
-    if (!response.ok) {
-      console.error('Failed to fetch emails');
-      return;
-    }
-
-    const data = await response.json<{
-      value: Array<{
-        id: string;
-        from: { emailAddress: { address: string } };
-        subject: string;
-        body: { content: string };
-        receivedDateTime: string;
-        internetMessageId: string;
-      }>;
-    }>();
-
-    console.log(`Found ${data.value.length} unread emails`);
-
-    for (const item of data.value) {
-      // Skip our own emails
-      if (item.from.emailAddress.address === env.AZURE_MAIL_FROM) continue;
-
-      await processInboundEmail({
-        messageId: item.internetMessageId,
-        from: item.from.emailAddress.address,
-        to: env.AZURE_MAIL_FROM,
-        subject: item.subject,
-        body: stripHtml(item.body.content),
-        receivedAt: item.receivedDateTime,
-      }, env);
-
-      // Mark as read
-      await fetch(
-        `https://graph.microsoft.com/v1.0/users/${env.AZURE_MAIL_FROM}/messages/${item.id}`,
-        {
-          method: 'PATCH',
-          headers: {
-            Authorization: `Bearer ${access_token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ isRead: true }),
-        }
-      );
-    }
-  } catch (error) {
-    console.error('Reply check error:', error);
-  }
-}
-
-/**
- * Process an inbound email
- */
-async function processInboundEmail(
-  email: { messageId: string; from: string; to: string; subject: string; body: string; receivedAt: string },
-  env: Env
-): Promise<void> {
-  // Check if already processed
-  const existing = await env.DB.prepare(
-    `SELECT id FROM emails WHERE message_id = ?`
-  ).bind(email.messageId).first();
-
-  if (existing) return;
-
-  // Find matching prospect
-  const prospect = await env.DB.prepare(
-    `SELECT id, name, stage FROM prospects WHERE contact_email = ?`
-  ).bind(email.from).first<{ id: string; name: string; stage: string }>();
-
-  const emailId = crypto.randomUUID();
-
-  if (!prospect) {
-    // Store as orphan
-    await env.DB.prepare(`
-      INSERT INTO emails (
-        id, subject, body, to_email, from_email, message_id,
-        direction, email_type, status, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 'inbound', 'reply', 'orphan', datetime('now'))
-    `).bind(emailId, email.subject, email.body, email.to, email.from, email.messageId).run();
-    return;
-  }
-
-  // Store reply
-  await env.DB.prepare(`
-    INSERT INTO emails (
-      id, prospect_id, subject, body, to_email, from_email, message_id,
-      direction, email_type, status, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'inbound', 'reply', 'received', datetime('now'))
-  `).bind(emailId, prospect.id, email.subject, email.body, email.to, email.from, email.messageId).run();
-
-  // Update prospect
-  await env.DB.prepare(`
-    UPDATE prospects
-    SET stage = 'engaged', last_replied_at = datetime('now'), updated_at = datetime('now')
-    WHERE id = ?
-  `).bind(prospect.id).run();
-
-  console.log(`Reply received from ${email.from}`);
-
-  // Alert if webhook configured
-  if (env.ALERT_WEBHOOK_URL) {
-    await fetch(env.ALERT_WEBHOOK_URL, {
+    // Create a mock request to trigger enrichment
+    const request = new Request('https://internal/enrich/auto', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        type: 'reply_received',
-        prospect: prospect.name,
-        prospectId: prospect.id,
-        subject: email.subject,
-        from: email.from,
-      }),
-    }).catch(() => {});
+    });
+    const response = await handleEnrich(request, env);
+    const result = await response.json();
+    console.log('Enrichment batch result:', JSON.stringify(result));
+  } catch (error) {
+    console.error('Enrichment batch failed:', error);
   }
 }
+
+// NOTE: checkInboxForReplies and processInboundEmail are DISABLED
+// Azure/jengu.ai is not being used - replies handled via webhook at /webhook/email/inbound
 
 /**
  * Weekly maintenance tasks
@@ -532,31 +625,217 @@ function rowToProspect(row: Record<string, unknown>): Prospect {
     emailBounced: Boolean(row.email_bounced),
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
+    // Website scraper data for personalization
+    starRating: row.star_rating as number | null,
+    chainAffiliation: row.chain_affiliation as string | null,
+    estimatedRooms: row.estimated_rooms as number | null,
+    googleRating: row.google_rating as number | null,
+    googleReviewCount: row.google_review_count as number | null,
   };
 }
 
 /**
  * Get email strategy based on lead source
+ * Default: simple_personalized for all new prospects
  */
-function getStrategyForSource(source: string): string {
-  if (source === 'sales_navigator') {
-    return Math.random() < 0.5 ? 'cold_direct' : 'cold_pattern_interrupt';
-  }
-  return Math.random() < 0.5 ? 'authority_scarcity' : 'curiosity_value';
+function getStrategyForSource(_source: string): string {
+  // Use simple_personalized for all prospects - fixed template with website personalization
+  return 'simple_personalized';
 }
 
 /**
- * Strip HTML tags
+ * Run integrity checks and data sync
+ * Scheduled to run at 3am daily
  */
-function stripHtml(html: string): string {
-  return html
-    .replace(/<[^>]*>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/\s+/g, ' ')
-    .trim();
+async function runIntegrityAndSync(env: Env): Promise<void> {
+  logger.info('Starting integrity checks and sync');
+  const startTime = Date.now();
+
+  try {
+    // Step 1: Run integrity checks
+    logger.info('Running integrity checks...');
+    const integrityResult = await DataIntegrity.runIntegrityChecks(env);
+    logger.info('Integrity checks complete', {
+      success: integrityResult.success,
+      issueCount: integrityResult.issues.length,
+      orphanedEmails: integrityResult.stats.orphanedEmails,
+      duplicateProspects: integrityResult.stats.duplicateProspects,
+      invalidStates: integrityResult.stats.invalidStates,
+      durationMs: integrityResult.durationMs,
+    });
+
+    // Send alert if integrity issues found
+    if (integrityResult.issues.length > 0) {
+      const criticalCount = integrityResult.issues.filter(
+        i => i.severity === 'critical' || i.severity === 'error'
+      ).length;
+
+      await Alerting.alertIntegrityIssue(
+        integrityResult.issues.length,
+        criticalCount,
+        `Found ${integrityResult.issues.length} data integrity issues (${criticalCount} critical). ` +
+        `Orphaned emails: ${integrityResult.stats.orphanedEmails}, ` +
+        `Duplicate prospects: ${integrityResult.stats.duplicateProspects}, ` +
+        `Invalid states: ${integrityResult.stats.invalidStates}`,
+        env
+      );
+    }
+
+    // Step 2: Auto-fix issues where possible
+    if (integrityResult.issues.length > 0) {
+      logger.info('Auto-fixing issues...');
+      const fixResult = await DataIntegrity.autoFixIssues(env);
+      logger.info('Auto-fix complete', {
+        fixed: fixResult.fixed,
+        skipped: fixResult.skipped,
+      });
+    }
+
+    // Step 3: Sync data between D1 and Supabase
+    logger.info('Running data sync...');
+    const syncResult = await DataSync.runFullSync(env);
+    logger.info('Data sync complete', {
+      prospects: {
+        processed: syncResult.prospects.recordsProcessed,
+        failed: syncResult.prospects.recordsFailed,
+      },
+      campaigns: {
+        processed: syncResult.campaigns.recordsProcessed,
+        failed: syncResult.campaigns.recordsFailed,
+      },
+      emails: {
+        processed: syncResult.emails.recordsProcessed,
+        failed: syncResult.emails.recordsFailed,
+      },
+    });
+
+    // Alert if sync had failures
+    const totalSyncFailures =
+      syncResult.prospects.recordsFailed +
+      syncResult.campaigns.recordsFailed +
+      syncResult.emails.recordsFailed;
+
+    if (totalSyncFailures > 0) {
+      await Alerting.alertWarning(
+        'database_error',
+        'Data Sync Partial Failure',
+        `Sync completed with ${totalSyncFailures} failed records`,
+        env,
+        {
+          prospectsFailed: syncResult.prospects.recordsFailed,
+          campaignsFailed: syncResult.campaigns.recordsFailed,
+          emailsFailed: syncResult.emails.recordsFailed,
+        }
+      );
+    }
+
+    // Step 4: Clean up old resolved issues (older than 30 days)
+    const cleanedUp = await DataIntegrity.cleanupOldIssues(env, 30);
+    if (cleanedUp > 0) {
+      logger.info('Cleaned up old issues', { count: cleanedUp });
+    }
+
+    const totalDurationMs = Date.now() - startTime;
+    logger.info('Integrity and sync complete', {
+      totalDurationMs,
+      success: integrityResult.success && syncResult.prospects.success && syncResult.emails.success,
+    });
+
+  } catch (error) {
+    logger.error('Integrity and sync failed', error);
+    await Alerting.alertOnError(error, 'database_error', 'Integrity/Sync Failed', env);
+    throw error;
+  }
+}
+
+/**
+ * Send pending reply notifications to edd@jengu.ai
+ */
+async function sendPendingNotifications(env: Env): Promise<void> {
+  // Get pending notifications (max 5 per minute)
+  const result = await env.DB.prepare(`
+    SELECT id, type, recipient, subject, body, prospect_id, reply_id
+    FROM notifications
+    WHERE sent = 0
+    ORDER BY created_at ASC
+    LIMIT 5
+  `).all<{
+    id: string;
+    type: string;
+    recipient: string;
+    subject: string;
+    body: string;
+    prospect_id: string | null;
+    reply_id: string | null;
+  }>();
+
+  const notifications = result.results || [];
+
+  if (notifications.length === 0) {
+    return;
+  }
+
+  logger.info(`Sending ${notifications.length} pending notification(s)`);
+
+  if (!env.RESEND_API_KEY) {
+    logger.warn('RESEND_API_KEY not configured, skipping notifications');
+    return;
+  }
+
+  for (const notification of notifications) {
+    try {
+      // Send via Resend
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${env.RESEND_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: 'Jengu CRM <notifications@updates.jengu.ai>',
+          to: [notification.recipient],
+          subject: notification.subject,
+          text: notification.body,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Resend error: ${response.status} - ${error}`);
+      }
+
+      // Mark as sent
+      await env.DB.prepare(`
+        UPDATE notifications
+        SET sent = 1, sent_at = datetime('now')
+        WHERE id = ?
+      `).bind(notification.id).run();
+
+      logger.info('Notification sent', {
+        id: notification.id,
+        type: notification.type,
+        recipient: notification.recipient,
+      });
+
+      // Small delay between notifications
+      await sleep(1000);
+
+    } catch (error) {
+      // Mark error but don't fail the entire batch
+      await env.DB.prepare(`
+        UPDATE notifications
+        SET error = ?
+        WHERE id = ?
+      `).bind(
+        error instanceof Error ? error.message : 'Unknown error',
+        notification.id
+      ).run();
+
+      logger.error('Failed to send notification', error, {
+        id: notification.id,
+      });
+    }
+  }
 }
 
 /**

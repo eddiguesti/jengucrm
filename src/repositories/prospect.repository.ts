@@ -27,6 +27,10 @@ export interface Prospect {
   archive_reason: string | null;
   google_rating: number | null;
   google_review_count: number | null;
+  // Website scraper data for personalization
+  star_rating: number | null;
+  chain_affiliation: string | null;
+  estimated_rooms: number | null;
   source_job_title: string | null;
   source_job_description: string | null;
   job_pain_points: {

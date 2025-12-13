@@ -6,17 +6,29 @@ compatibility_flags = ["nodejs_compat"]
 # ============================================
 # ENVIRONMENT VARIABLES (set via wrangler secret)
 # ============================================
-# Run these commands after first deploy:
-# wrangler secret put GROK_API_KEY
-# wrangler secret put ANTHROPIC_API_KEY
-# wrangler secret put AZURE_TENANT_ID
-# wrangler secret put AZURE_CLIENT_ID
-# wrangler secret put AZURE_CLIENT_SECRET
-# wrangler secret put AZURE_MAIL_FROM
-# wrangler secret put SMTP_INBOX_1
-# wrangler secret put SMTP_INBOX_2
-# wrangler secret put SMTP_INBOX_3
-# wrangler secret put SMTP_INBOX_4
+# REQUIRED - Run these after first deploy:
+#   wrangler secret put GROK_API_KEY        # x.ai API key for Grok (email generation + website finder)
+#
+# SUPABASE (for mailboxes table - managed via UI at /outreach/mailboxes):
+#   wrangler secret put SUPABASE_URL              # e.g., https://xxx.supabase.co
+#   wrangler secret put SUPABASE_SERVICE_ROLE_KEY # Service role key (not anon key!)
+#
+# LEGACY (fallback if Supabase not configured):
+#   wrangler secret put SMTP_INBOX_1        # format: email|password|host|port|displayName
+#   wrangler secret put SMTP_INBOX_2
+#   wrangler secret put SMTP_INBOX_3
+#
+# ENRICHMENT (for finding websites and emails):
+#   wrangler secret put MILLIONVERIFIER_API_KEY  # For email pattern verification
+#
+# OPTIONAL:
+#   wrangler secret put ANTHROPIC_API_KEY   # AI fallback
+#   wrangler secret put RESEND_API_KEY      # For Resend sending (pro setup)
+#   wrangler secret put ALERT_WEBHOOK_URL   # Slack/Discord alerts
+#
+# NOTE: Mailboxes are now managed via the Supabase 'mailboxes' table.
+#       The UI at /outreach/mailboxes lets you add/edit/remove mailboxes.
+#       SMTP_INBOX_* env vars are only used as fallback if Supabase is not set up.
 
 # ============================================
 # D1 DATABASE
@@ -55,16 +67,40 @@ new_sqlite_classes = ["WarmupCounter", "InboxState", "RateLimiter", "ProspectDed
 # ============================================
 # CRON TRIGGERS
 # ============================================
+# Note: Reply checking is handled by Cloudflare Email Routing (real-time)
 [triggers]
 crons = [
   "*/5 8-18 * * 1-6",  # Every 5 min, 8am-6pm, Mon-Sat (email sending)
-  "0 7 * * *",         # 7am daily (pipeline: scrape, enrich)
-  "*/1 * * * *",       # Every minute (check replies)
+  "0 7 * * *",         # 7am daily (pipeline: reset counters, cleanup)
   "0 10 * * 1-5",      # 10am weekdays (follow-ups)
+  "*/5 6,19-23 * * *", # Every 5 min, 6am + 7pm-11pm (enrichment: find websites/emails)
+  "2-59/10 * * * *",   # Every 10 min at :02/:12/... (trigger Sales Navigator enrichment on Vercel)
 ]
+
+# ============================================
+# EMAIL ROUTING (Inbound Email Handling)
+# ============================================
+# Enable this after setting up Email Routing in Cloudflare dashboard:
+# 1. Go to your domain > Email > Email Routing
+# 2. Create a catch-all rule pointing to this worker
+# The email() handler in src/index.ts will process inbound emails
+#
+# Alternatively, forward specific addresses:
+# [[email_routing]]
+# enabled = true
 
 # ============================================
 # SMART PLACEMENT (run near data)
 # ============================================
 [placement]
 mode = "smart"
+
+[vars]
+# Vercel DDG search proxy (recommended)
+# This lets the worker search DuckDuckGo via Vercel IPs (Cloudflare IPs often get blocked).
+# Example: https://your-vercel-app.vercel.app/api/search
+VERCEL_SEARCH_URL = ""
+
+# Vercel/Next.js app base URL (for cron-triggering Supabase-backed jobs)
+# Example: https://your-vercel-app.vercel.app
+VERCEL_APP_URL = ""

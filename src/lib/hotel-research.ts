@@ -225,13 +225,14 @@ ${RESEARCH_PROMPT}`,
 export async function findHotelEmails(
   hotelName: string,
   website?: string,
-  location?: string
+  location?: string,
+  contact?: { name?: string; title?: string }
 ): Promise<{
   generalEmail?: string;
   reservationsEmail?: string;
   contactEmails: Array<{ email: string; name?: string; title?: string }>;
 }> {
-  if (!config.ai.apiKey) {
+  if (!config.ai.xaiApiKey) {
     return { contactEmails: [] };
   }
 
@@ -244,25 +245,27 @@ export async function findHotelEmails(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.ai.apiKey}`,
+        Authorization: `Bearer ${config.ai.xaiApiKey}`,
       },
       body: JSON.stringify({
         model: 'grok-3-mini',
         messages: [
           {
             role: 'system',
-            content: `You find email addresses for hotels. Search the web for contact information. Only return emails you actually find - never guess or fabricate emails.`,
+            content: `You find email addresses for hotels and their decision makers. Search the web for contact information. Only return emails you actually find - never guess or fabricate emails.`,
           },
           {
             role: 'user',
             content: `Find email addresses for: ${hotelName}
 ${website ? `Website: ${website}` : ''}
 ${location ? `Location: ${location}` : ''}
+${contact?.name ? `Contact: ${contact.name}${contact.title ? ` (${contact.title})` : ''}` : ''}
 
 Search for:
 1. General contact email (info@, contact@, hello@)
 2. Reservations email
-3. Any specific contact emails with names/titles (GM, Director, etc.)
+3. Any specific contact emails with names/titles (GM, Director, Owner, etc.)
+${contact?.name ? `4. If you find a direct email for the contact above, include it (highest priority).` : ''}
 
 Return JSON:
 {

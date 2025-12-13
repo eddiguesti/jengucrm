@@ -18,6 +18,12 @@ interface ProspectContext {
     adminTasks?: string[];
     speedRequirements?: string[];
   };
+  // Website scraper data for personalization
+  starRating?: number | null;
+  chainAffiliation?: string | null;
+  estimatedRooms?: number | null;
+  googleRating?: number | null;
+  googleReviewCount?: number | null;
 }
 
 export interface CampaignStrategy {
@@ -401,6 +407,109 @@ Output ONLY valid JSON:
 };
 
 /**
+ * STRATEGY E: Simple & Personalized
+ * Uses a fixed template with subtle personalization from website data.
+ * Human, vulnerable, includes forward request.
+ *
+ * TEMPLATE:
+ * "Hey [firstname],
+ *
+ * This might be a weird one - not even sure if you're the right person.
+ * If not, would you mind forwarding to whoever handles operations?
+ * Would genuinely appreciate it.
+ *
+ * We implement different types of AI systems for hotels - stuff that
+ * genuinely saves time and money without feeling robotic.
+ * Most hotels are surprised what's actually possible now.
+ *
+ * Would love a quick chat to see if you'd be a good fit for us.
+ * Totally fine if it's not for you - just let me know either way?
+ *
+ * Edd"
+ */
+const simplePersonalizedStrategy: CampaignStrategy = {
+  key: 'simple_personalized',
+  name: 'Simple & Personalized',
+  description: 'Fixed template with website personalization. Human tone, forward request.',
+  generatePrompt: (prospect) => {
+    // Build personalization hints from website data
+    const personalization: string[] = [];
+
+    if (prospect.starRating && prospect.starRating >= 4) {
+      personalization.push(`HIGH-END: ${prospect.starRating}-star property - mention quality/standards subtly`);
+    }
+    if (prospect.chainAffiliation) {
+      personalization.push(`CHAIN: Part of ${prospect.chainAffiliation} - could reference brand standards`);
+    }
+    if (prospect.estimatedRooms && prospect.estimatedRooms > 100) {
+      personalization.push(`SIZE: ${prospect.estimatedRooms}+ rooms - larger operation, more complexity`);
+    }
+    if (prospect.googleRating && prospect.googleRating >= 4.5) {
+      personalization.push(`REPUTATION: ${prospect.googleRating} stars on Google (${prospect.googleReviewCount || 'many'} reviews) - they care about guest experience`);
+    }
+    if (prospect.propertyType && prospect.propertyType !== 'hotel') {
+      personalization.push(`TYPE: ${prospect.propertyType} - tailor "hotels" reference to their type`);
+    }
+
+    const personalizationContext = personalization.length > 0
+      ? `\n=== PERSONALIZATION HINTS (use ONE subtly) ===\n${personalization.join('\n')}\n`
+      : '';
+
+    const firstName = prospect.contactName?.split(' ')[0] || null;
+
+    return `Write a cold email using this EXACT template structure, with subtle personalization.
+
+=== TARGET ===
+Property: ${prospect.name}
+${prospect.contactName ? `Contact: ${prospect.contactName}` : 'No contact name'}
+Location: ${prospect.city}${prospect.country ? `, ${prospect.country}` : ''}
+Type: ${prospect.propertyType || 'hotel'}
+${personalizationContext}
+=== EXACT TEMPLATE TO USE ===
+
+**SUBJECT:** 2-4 words, lowercase, question or pattern interrupt. Examples:
+${firstName ? `- "quick question, ${firstName}?"` : '- "quick question?"'}
+- "weird ask"
+- "right person?"
+${firstName ? `- "${firstName} - 1 min?"` : '- "1 min question"'}
+
+**GREETING:**
+${firstName ? `"Hey ${firstName},"` : '"Hey,"'}
+
+**PARAGRAPH 1 (forward request - use almost exactly):**
+"This might be a weird one - not even sure if you're the right person. If not, would you mind forwarding to whoever handles operations? Would genuinely appreciate it."
+
+**PARAGRAPH 2 (what we do + hook - ADD ONE subtle personalization):**
+Base: "We implement different types of AI systems for hotels - stuff that genuinely saves time and money without feeling robotic. Most hotels are surprised what's actually possible now."
+
+${personalization.length > 0 ? `PERSONALIZATION OPTIONS (pick ONE to weave in naturally):
+- If high-end: "...for properties like yours where guest experience really matters..."
+- If large: "...especially for properties handling serious volume..."
+- If great reviews: "...for hotels that actually care about the guest experience (like you clearly do)..."
+- If resort/spa: change "hotels" to "${prospect.propertyType || 'properties'}"` : 'No specific personalization - use template as-is.'}
+
+**PARAGRAPH 3 (qualifying CTA - use almost exactly):**
+"Would love a quick chat to see if you'd be a good fit for us. Totally fine if it's not for you - just let me know either way?"
+
+**SIGN-OFF:**
+"Edd"
+
+=== RULES ===
+- Follow the template CLOSELY - only personalize paragraph 2 slightly
+- Keep total email 70-90 words
+- Sound human, slightly awkward, NOT salesy
+- Include the forward request (it increases replies)
+- "good fit for us" = we're qualifying THEM
+- NO corporate speak, NO hype
+- NO bullet points in the email
+- Add signature "Edd" at the end
+
+Output ONLY valid JSON:
+{"subject": "lowercase subject here", "body": "full email body including Edd signature"}`;
+  },
+};
+
+/**
  * All available campaign strategies
  */
 export const CAMPAIGN_STRATEGIES: Record<string, CampaignStrategy> = {
@@ -410,6 +519,8 @@ export const CAMPAIGN_STRATEGIES: Record<string, CampaignStrategy> = {
   // Pure cold email strategies (no job context)
   cold_direct: coldDirectStrategy,
   cold_pattern_interrupt: coldPatternInterruptStrategy,
+  // Simple template with personalization (recommended for first emails)
+  simple_personalized: simplePersonalizedStrategy,
 };
 
 /**

@@ -8,7 +8,7 @@
  * throttling when bounces detected.
  */
 
-import { InboxStatus, WarmupStatus } from '../types';
+import { WarmupStatus } from '../types';
 
 interface InboxWarmupState {
   id: string;
@@ -166,7 +166,7 @@ export class WarmupCounter implements DurableObject {
   }
 
   private async handleBounce(request: Request): Promise<Response> {
-    const { inboxId, email } = await request.json<{ inboxId: string; email: string }>();
+    const { inboxId } = await request.json<{ inboxId: string; email?: string }>();
 
     const inbox = this.inboxes.get(inboxId);
     if (!inbox) {

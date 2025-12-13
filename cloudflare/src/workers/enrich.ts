@@ -74,7 +74,17 @@ export async function handleEnrich(
 
   // Auto-enrich endpoint - does both
   if (path === '/enrich/auto' && request.method === 'POST') {
-    return autoEnrich(env);
+    // Parse limit from request body
+    let limit = 70; // Default
+    try {
+      const body = await request.json() as { limit?: number };
+      if (body.limit && body.limit > 0) {
+        limit = Math.min(body.limit, 200); // Cap at 200
+      }
+    } catch {
+      // Use default if body parsing fails
+    }
+    return autoEnrich(env, limit);
   }
 
   // Debug endpoint - test DDG search
@@ -99,6 +109,8 @@ interface EnrichmentProgress {
   processed: number;
   total: number;
   found: number;
+  websitesFound: number;
+  emailsFound: number;
   startedAt: string | null;
   lastUpdatedAt: string | null;
 }
@@ -126,6 +138,8 @@ async function getEnrichmentProgress(env: Env): Promise<Response> {
       processed: 0,
       total: 0,
       found: 0,
+      websitesFound: 0,
+      emailsFound: 0,
       startedAt: null,
       lastUpdatedAt: null,
     } as EnrichmentProgress, {
@@ -136,7 +150,7 @@ async function getEnrichmentProgress(env: Env): Promise<Response> {
     });
   } catch (error) {
     console.error('Error getting progress:', error);
-    return Response.json({ isRunning: false, type: null, processed: 0, total: 0, found: 0, startedAt: null, lastUpdatedAt: null });
+    return Response.json({ isRunning: false, type: null, processed: 0, total: 0, found: 0, websitesFound: 0, emailsFound: 0, startedAt: null, lastUpdatedAt: null });
   }
 }
 
@@ -151,7 +165,7 @@ async function updateProgress(
     const existingJson = await env.KV_CACHE.get(PROGRESS_KEY);
     const existing: EnrichmentProgress = existingJson
       ? JSON.parse(existingJson)
-      : { isRunning: false, type: null, processed: 0, total: 0, found: 0, startedAt: null, lastUpdatedAt: null };
+      : { isRunning: false, type: null, processed: 0, total: 0, found: 0, websitesFound: 0, emailsFound: 0, startedAt: null, lastUpdatedAt: null };
 
     const updated: EnrichmentProgress = {
       ...existing,
@@ -358,36 +372,43 @@ async function debugProspect(env: Env): Promise<Response> {
 /**
  * Auto enrichment - runs websites then emails (faster with parallel processing)
  */
-async function autoEnrich(env: Env): Promise<Response> {
+async function autoEnrich(env: Env, limit: number = 70): Promise<Response> {
   const results = {
     websites: { processed: 0, found: 0 },
     emails: { processed: 0, found: 0 },
   };
+
+  // Split limit: 70% websites, 30% emails
+  const websiteLimit = Math.max(1, Math.round(limit * 0.7));
+  const emailLimit = Math.max(1, limit - websiteLimit);
 
   // Mark as running
   await updateProgress(env, {
     isRunning: true,
     type: 'auto',
     processed: 0,
-    total: 70, // 50 websites + 20 emails
+    total: limit,
     found: 0,
+    websitesFound: 0,
+    emailsFound: 0,
     startedAt: new Date().toISOString(),
   });
 
   try {
-    // Step 1: Find websites (batch of 50, 5 parallel)
-    const websiteResult = await enrichWebsitesBatch(env, 50);
+    // Step 1: Find websites
+    const websiteResult = await enrichWebsitesBatch(env, websiteLimit);
     results.websites = websiteResult;
 
     // Update progress after websites
     await updateProgress(env, {
       processed: websiteResult.processed,
       found: websiteResult.found,
+      websitesFound: websiteResult.found,
       type: 'emails', // Moving to emails phase
     });
 
-    // Step 2: Find emails (batch of 20)
-    const emailResult = await enrichEmailsBatch(env, 20);
+    // Step 2: Find emails
+    const emailResult = await enrichEmailsBatch(env, emailLimit);
     results.emails = emailResult;
 
     // Mark as complete
@@ -395,6 +416,8 @@ async function autoEnrich(env: Env): Promise<Response> {
       isRunning: false,
       processed: websiteResult.processed + emailResult.processed,
       found: websiteResult.found + emailResult.found,
+      websitesFound: websiteResult.found,
+      emailsFound: emailResult.found,
     });
 
     return Response.json({

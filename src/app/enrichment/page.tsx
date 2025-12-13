@@ -15,6 +15,7 @@ import {
   buildAlerts,
   ActivityFeed,
   EmptyState,
+  EnrichmentModal,
 } from './components';
 
 interface EnrichmentStats {
@@ -89,6 +90,7 @@ export default function EnrichmentPage() {
   const [triggering, setTriggering] = useState(false);
   const [activityLogs, setActivityLogs] = useState<ActivityItem[]>([]);
   const [hasEverEnriched, setHasEverEnriched] = useState(true);
+  const [modalOpen, setModalOpen] = useState(false);
 
   const fetchStatus = useCallback(async (showRefresh = false) => {
     if (showRefresh) setRefreshing(true);
@@ -210,7 +212,7 @@ export default function EnrichmentPage() {
       <main className="flex-1 p-4 md:p-6 space-y-6 max-w-5xl mx-auto w-full">
         {/* First-time user experience */}
         {!hasEverEnriched && !triggering && (
-          <EmptyState onStart={() => triggerEnrichment('auto')} isFirstTime />
+          <EmptyState onStart={() => setModalOpen(true)} isFirstTime />
         )}
 
         {/* Main content - show when has data or running */}
@@ -246,7 +248,7 @@ export default function EnrichmentPage() {
             {!triggering && (
               <ActionCard
                 needsEnrichment={needsEnrichment}
-                onStartEnrichment={triggerEnrichment}
+                onStartEnrichment={() => setModalOpen(true)}
                 isRunning={triggering}
               />
             )}
@@ -256,7 +258,7 @@ export default function EnrichmentPage() {
 
             {/* All caught up state */}
             {needsEnrichment === 0 && !triggering && hasEverEnriched && (
-              <EmptyState onStart={() => triggerEnrichment('auto')} isFirstTime={false} />
+              <EmptyState onStart={() => setModalOpen(true)} isFirstTime={false} />
             )}
 
             {/* Activity Feed */}
@@ -273,6 +275,21 @@ export default function EnrichmentPage() {
           </p>
         )}
       </main>
+
+      {/* Enrichment Modal */}
+      <EnrichmentModal
+        open={modalOpen}
+        onOpenChange={(open) => {
+          setModalOpen(open);
+          if (!open) {
+            // Refresh data when modal closes
+            fetchStatus();
+            fetchActivityLogs();
+          }
+        }}
+        needsWebsite={status?.stats.needsWebsite || 0}
+        needsEmail={status?.stats.needsEmail || 0}
+      />
     </div>
   );
 }
