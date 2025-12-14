@@ -66,6 +66,12 @@ export async function handleEnrich(
     return getEnrichmentProgress(env);
   }
 
+  // Reset endpoint - cancel stuck enrichment runs
+  if (path === '/enrich/reset' && request.method === 'POST') {
+    await env.KV_CACHE.delete(PROGRESS_KEY);
+    return Response.json({ success: true, message: 'Enrichment progress reset' });
+  }
+
   // Lookup endpoint - return best email for a single contact
   // Useful for enriching CSV rows without inserting into D1 first
   if (path === '/enrich/lookup-email' && request.method === 'POST') {
@@ -614,6 +620,13 @@ async function enrichWebsitesBatch(
     // Count successful finds from this batch
     found += results.filter(Boolean).length;
 
+    // Update progress after each mini-batch for real-time UI feedback
+    await updateProgress(env, {
+      processed: Math.min(i + PARALLEL_SIZE, prospects.length),
+      found,
+      websitesFound: found,
+    });
+
     // Rate limit: wait between batches (3 keys = 3 req/sec, so 1s between batches)
     if (i + PARALLEL_SIZE < prospects.length) {
       await sleep(1100);
@@ -729,6 +742,15 @@ async function enrichEmailsBatch(
     );
 
     found += results.filter(Boolean).length;
+
+    // Update progress after each mini-batch for real-time UI feedback
+    // Get current progress to add to it (websites may have already been processed)
+    const currentProgressJson = await env.KV_CACHE.get(PROGRESS_KEY);
+    const currentProgress = currentProgressJson ? JSON.parse(currentProgressJson) : { websitesFound: 0 };
+    await updateProgress(env, {
+      processed: (currentProgress.websitesFound || 0) + Math.min(i + PARALLEL_SIZE, prospects.length),
+      emailsFound: found,
+    });
 
     // Delay between parallel batches
     if (i + PARALLEL_SIZE < prospects.length) {
