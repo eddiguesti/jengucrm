@@ -118,7 +118,7 @@ export async function GET(request: NextRequest) {
     const response = await fetch(`${baseUrl}/api/enrich`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ limit: 20 }),
+      body: JSON.stringify({ limit: 100 }),
     });
     const data = await response.json();
     results.enrich = { success: response.ok, error: response.ok ? null : data.error, stats: data };

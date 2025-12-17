@@ -57,7 +57,7 @@ export const EMAIL = {
   /** Minimum delay between emails (ms) */
   MIN_DELAY: 1000,
   /** EMERGENCY STOP - Disable all email sending */
-  EMERGENCY_STOP: true,
+  EMERGENCY_STOP: false,
 } as const;
 
 // ============================================
@@ -68,12 +68,12 @@ export const EMAIL = {
 export const WARMUP_SCHEDULE = {
   /** Start date for warmup (ISO string, set when first email sent) */
   START_DATE: "2025-12-06",
-  /** Warmup stages - 3 SMTP inboxes × 20/day + Azure = 80/day total capacity */
+  /** Warmup stages - 3 SMTP inboxes × 20/day = 60/day total capacity */
   STAGES: [
-    { maxDay: Infinity, limit: 80 }, // 80/day max (3 SMTP + 1 Azure × 20 each)
+    { maxDay: Infinity, limit: 60 }, // 60/day max (3 SMTP × 20 each)
   ],
   /** Never exceed this regardless of warmup stage */
-  ABSOLUTE_MAX: 80,
+  ABSOLUTE_MAX: 60,
   /** Per-inbox daily limit (enforced in inbox-tracker) */
   PER_INBOX_LIMIT: 20,
 } as const;
