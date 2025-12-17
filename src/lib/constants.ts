@@ -68,16 +68,16 @@ export const EMAIL = {
 export const WARMUP_SCHEDULE = {
   /** Start date for warmup (ISO string, set when first email sent) */
   START_DATE: "2025-12-06",
-  /** Warmup stages - gradual ramp-up over 5 weeks (4 inboxes) */
+  /** Warmup stages - gradual ramp-up over 5 weeks (3 inboxes) */
   STAGES: [
-    { maxDay: 7, limit: 20 },   // Week 1: 5/inbox × 4 = 20/day total
-    { maxDay: 14, limit: 40 },  // Week 2: 10/inbox × 4 = 40/day total
-    { maxDay: 21, limit: 60 },  // Week 3: 15/inbox × 4 = 60/day total
-    { maxDay: 28, limit: 80 },  // Week 4: 20/inbox × 4 = 80/day total
-    { maxDay: Infinity, limit: 80 }, // Week 5+: 20/inbox × 4 = 80/day max (conservative)
+    { maxDay: 7, limit: 15 },   // Week 1: 5/inbox × 3 = 15/day total
+    { maxDay: 14, limit: 30 },  // Week 2: 10/inbox × 3 = 30/day total
+    { maxDay: 21, limit: 45 },  // Week 3: 15/inbox × 3 = 45/day total
+    { maxDay: 28, limit: 60 },  // Week 4: 20/inbox × 3 = 60/day total
+    { maxDay: Infinity, limit: 60 }, // Week 5+: 20/inbox × 3 = 60/day max (conservative)
   ],
   /** Never exceed this regardless of warmup stage */
-  ABSOLUTE_MAX: 80,
+  ABSOLUTE_MAX: 60,
   /** Per-inbox daily limit (enforced in inbox-tracker) */
   PER_INBOX_LIMIT: 20, // Max per inbox after warmup (conservative for deliverability)
 } as const;
