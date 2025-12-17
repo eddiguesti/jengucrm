@@ -912,7 +912,7 @@ async function enrichEmailsBatch(
 ): Promise<{ processed: number; found: number }> {
   // Get prospects with websites but no email from Supabase (single source of truth)
   // Note: Chain filtering done in JavaScript for consistency with website enrichment
-  const query = 'select=id,name,website,contact_name&archived=eq.false&stage=not.in.(contacted,engaged,meeting,won,lost)&website=not.is.null&contact_email=is.null&contact_name=not.is.null&order=lead_source.desc.nullslast,created_at.desc';
+  const query = 'select=id,name,website,contact_name&archived=eq.false&stage=not.in.(contacted,engaged,meeting,won,lost)&website=not.is.null&email=is.null&contact_name=not.is.null&order=lead_source.desc.nullslast,created_at.desc';
 
   // Fetch more than needed to account for chain filtering
   const fetchLimit = Math.min(limit * 3, 300);
