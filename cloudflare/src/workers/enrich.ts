@@ -98,9 +98,88 @@ export async function handleEnrich(
     return debugSearch(env);
   }
 
+  // Debug Brave search specifically
+  if (path === '/enrich/debug-brave') {
+    const braveConfig = getNextBraveKey(env);
+    const debug: Record<string, unknown> = {
+      braveKeysAvailable: !!braveConfig,
+      keyIndex: braveKeyIndex,
+    };
+
+    if (braveConfig) {
+      const testQuery = 'Hilton London official website';
+      debug.testQuery = testQuery;
+      debug.apiKeyPresent = !!braveConfig.apiKey;
+      debug.apiKeyLength = braveConfig.apiKey?.length || 0;
+      debug.proxyUrl = braveConfig.proxyUrl || 'none';
+
+      try {
+        const results = await searchBrave(testQuery, braveConfig.apiKey, braveConfig.proxyUrl);
+        debug.resultCount = results.length;
+        debug.results = results.slice(0, 3); // First 3 results
+      } catch (error) {
+        debug.error = String(error);
+      }
+    }
+
+    return Response.json(debug);
+  }
+
+  // Debug Google Search - check usage and test API
+  if (path === '/enrich/debug-google') {
+    const debug: Record<string, unknown> = {
+      googleConfigured: !!env.GOOGLE_SEARCH_API_KEY && !!env.GOOGLE_SEARCH_CX,
+      dailyLimit: GOOGLE_DAILY_LIMIT,
+    };
+
+    const count = await getGoogleSearchCount(env);
+    debug.usedToday = count;
+    debug.remaining = Math.max(0, GOOGLE_DAILY_LIMIT - count);
+    debug.canUse = count < GOOGLE_DAILY_LIMIT && !!env.GOOGLE_SEARCH_API_KEY;
+
+    // Test search if requested and under limit
+    const url = new URL(request.url);
+    const testSearch = url.searchParams.get('test') === 'true';
+    if (testSearch && debug.canUse) {
+      const testQuery = 'Hilton London official website';
+      debug.testQuery = testQuery;
+
+      try {
+        const results = await searchGoogle(testQuery, env);
+        debug.resultCount = results.length;
+        debug.results = results.slice(0, 3); // First 3 results
+        debug.newUsedCount = await getGoogleSearchCount(env);
+      } catch (error) {
+        debug.error = String(error);
+      }
+    }
+
+    return Response.json(debug);
+  }
+
   // Debug single prospect
   if (path === '/enrich/debug-prospect') {
     return debugProspect(env);
+  }
+
+  // Debug Google Boost - see what prospects are available
+  if (path === '/enrich/debug-boost') {
+    const googleCount = await getGoogleSearchCount(env);
+    const remaining = GOOGLE_DAILY_LIMIT - googleCount;
+
+    const query = 'select=id,name,city,country&archived=eq.false&website=is.null&name=not.is.null&order=updated_at.asc';
+    const rawProspects = await queryProspectsFromSupabase(env, query, 100);
+    const filtered = rawProspects.filter(p => !isExcludedChain(p.name));
+
+    return Response.json({
+      googleUsed: googleCount,
+      googleRemaining: remaining,
+      rawProspectsCount: rawProspects.length,
+      afterChainFilter: filtered.length,
+      chainsFiltered: rawProspects.length - filtered.length,
+      sampleProspects: filtered.slice(0, 5).map(p => ({ name: p.name, city: p.city })),
+      sampleChains: rawProspects.filter(p => isExcludedChain(p.name)).slice(0, 5).map(p => p.name),
+    });
   }
 
   return new Response('Not found', { status: 404 });
@@ -122,6 +201,8 @@ interface EnrichmentProgress {
 }
 
 const PROGRESS_KEY = 'enrichment:progress';
+const GOOGLE_DAILY_COUNT_KEY = 'google_search:daily_count';
+const GOOGLE_DAILY_LIMIT = 100; // Hard limit - never exceed
 
 /**
  * Get current enrichment progress (for real-time UI updates)
@@ -229,6 +310,54 @@ async function syncToSupabase(
     }
   } catch (error) {
     console.error(`Supabase sync error for ${prospectId}:`, error);
+  }
+}
+
+/**
+ * Query prospects from Supabase (single source of truth)
+ */
+interface SupabaseProspect {
+  id: string;
+  name: string;
+  city: string | null;
+  country: string | null;
+  contact_name: string | null;
+  contact_title: string | null;
+  website: string | null;
+  contact_email: string | null;
+  stage: string;
+  lead_source: string | null;
+}
+
+async function queryProspectsFromSupabase(
+  env: Env,
+  query: string,
+  limit: number
+): Promise<SupabaseProspect[]> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.error('Supabase not configured');
+    return [];
+  }
+
+  try {
+    const url = `${env.SUPABASE_URL}/rest/v1/prospects?${query}&limit=${limit}`;
+    const response = await fetch(url, {
+      headers: {
+        'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+        'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      console.error(`Supabase query failed:`, await response.text());
+      return [];
+    }
+
+    return await response.json() as SupabaseProspect[];
+  } catch (error) {
+    console.error('Supabase query error:', error);
+    return [];
   }
 }
 
@@ -377,11 +506,17 @@ async function debugProspect(env: Env): Promise<Response> {
 
 /**
  * Auto enrichment - runs websites then emails (faster with parallel processing)
+ * ALSO: Uses remaining Google quota to find hard-to-reach prospects
  */
 async function autoEnrich(env: Env, limit: number = 70): Promise<Response> {
+  // Reset API counters for this batch
+  googleApiErrors = 0;
+  googleApiSuccesses = 0;
+
   const results = {
     websites: { processed: 0, found: 0 },
     emails: { processed: 0, found: 0 },
+    googleBoost: { processed: 0, found: 0 },
   };
 
   // Split limit: 70% websites, 30% emails
@@ -401,7 +536,7 @@ async function autoEnrich(env: Env, limit: number = 70): Promise<Response> {
   });
 
   try {
-    // Step 1: Find websites
+    // Step 1: Find websites (uses tiered strategy: Grok → DDG → Brave → Google)
     const websiteResult = await enrichWebsitesBatch(env, websiteLimit);
     results.websites = websiteResult;
 
@@ -417,6 +552,17 @@ async function autoEnrich(env: Env, limit: number = 70): Promise<Response> {
     const emailResult = await enrichEmailsBatch(env, emailLimit);
     results.emails = emailResult;
 
+    // Step 3: USE REMAINING GOOGLE QUOTA progressively
+    // Process 10 per batch (Cloudflare has 30s timeout, 2s per call = max 15 calls)
+    // Over 72 cron runs per day, this ensures we use all 100 Google searches
+    const googleRemaining = GOOGLE_DAILY_LIMIT - await getGoogleSearchCount(env);
+    if (googleRemaining > 0 && env.GOOGLE_SEARCH_API_KEY && env.GOOGLE_SEARCH_CX) {
+      const boostLimit = Math.min(10, googleRemaining); // Max 10 per batch to fit in timeout
+      console.log(`[Google Boost] ${googleRemaining} remaining, processing ${boostLimit} this batch`);
+      const boostResult = await googleBoostBatch(env, boostLimit);
+      results.googleBoost = boostResult;
+    }
+
     // Mark as complete
     await updateProgress(env, {
       isRunning: false,
@@ -426,10 +572,17 @@ async function autoEnrich(env: Env, limit: number = 70): Promise<Response> {
       emailsFound: emailResult.found,
     });
 
+    const finalGoogleCount = await getGoogleSearchCount(env);
     return Response.json({
       success: true,
       message: 'Auto enrichment batch complete',
       results,
+      googleStats: {
+        used: finalGoogleCount,
+        remaining: GOOGLE_DAILY_LIMIT - finalGoogleCount,
+        apiErrors: googleApiErrors,
+        apiSuccesses: googleApiSuccesses,
+      },
     });
   } catch (error) {
     // Mark as stopped on error
@@ -450,27 +603,72 @@ async function enrichWebsites(env: Env): Promise<Response> {
   });
 }
 
+// Major hotel chains to exclude from enrichment (we want independent/boutique hotels)
+const EXCLUDED_CHAINS = [
+  // Major global chains
+  'marriott', 'hilton', 'hyatt', 'ihg', 'accor', 'wyndham', 'choice hotels',
+  'best western', 'radisson', 'carlson', 'intercontinental', 'holiday inn',
+  'crowne plaza', 'kimpton', 'fairmont', 'sofitel', 'novotel', 'ibis',
+  'mercure', 'pullman', 'mgallery', 'mövenpick', 'swissôtel',
+  // Marriott brands
+  'sheraton', 'westin', 'w hotel', 'st. regis', 'st regis', 'ritz-carlton',
+  'ritz carlton', 'jw marriott', 'courtyard', 'residence inn', 'springhill',
+  'fairfield', 'towneplace', 'four points', 'aloft', 'element', 'moxy',
+  'autograph', 'tribute', 'delta hotels', 'gaylord', 'le méridien', 'le meridien',
+  'ac hotels', 'renaissance',
+  // Hilton brands
+  'doubletree', 'embassy suites', 'hampton inn', 'hampton by hilton', 'hilton garden',
+  'homewood suites', 'home2 suites', 'canopy by hilton', 'curio', 'tapestry',
+  'lxr hotels', 'signia', 'motto', 'spark', 'tempo',
+  // IHG brands
+  'intercontinental', 'regent', 'six senses', 'vignette', 'kimpton',
+  'hotel indigo', 'even hotels', 'hualuxe', 'crowne plaza', 'voco',
+  'holiday inn express', 'staybridge', 'atwell', 'candlewood',
+  // Hyatt brands
+  'park hyatt', 'grand hyatt', 'andaz', 'alila', 'thompson', 'hyatt regency',
+  'hyatt centric', 'hyatt place', 'hyatt house', 'caption', 'miraval',
+  // Others
+  'virgin hotels', 'virgin hotel', 'loews', 'omni', 'langham', 'peninsula',
+  'shangri-la', 'mandarin oriental', 'four seasons', 'aman', 'rosewood',
+  'rocco forte', 'kempinski', 'jumeirah', 'oberoi', 'taj hotels',
+  // Budget chains
+  'motel 6', 'super 8', 'days inn', 'la quinta', 'red roof', 'econolodge',
+  'comfort inn', 'comfort suites', 'quality inn', 'sleep inn', 'clarion',
+  'travelodge', 'ramada', 'howard johnson', 'microtel', 'wingate',
+  'baymont', 'hawthorn', 'tryp', 'americinn',
+  // Fast food (keep existing)
+  'popeyes', 'mcdonald', 'taco bell', 'burger king', 'wendy', 'subway',
+  'pizza hut', 'domino', 'kfc', 'chick-fil-a', 'chipotle', 'starbucks',
+];
+
+/**
+ * Check if a prospect name matches a major hotel chain (case-insensitive)
+ */
+function isExcludedChain(name: string): boolean {
+  const nameLower = name.toLowerCase();
+  return EXCLUDED_CHAINS.some(chain => nameLower.includes(chain));
+}
+
 async function enrichWebsitesBatch(
   env: Env,
   limit: number
 ): Promise<{ processed: number; found: number }> {
-  // Get prospects without websites (any stage, prioritize sales_navigator)
-  const result = await env.DB.prepare(`
-    SELECT id, name, city, country, contact_name, contact_title
-    FROM prospects
-    WHERE archived = 0
-      AND website IS NULL
-      AND name IS NOT NULL
-      AND name NOT LIKE '%Popeyes%'
-      AND name NOT LIKE '%McDonald%'
-      AND name NOT LIKE '%Taco Bell%'
-    ORDER BY
-      CASE WHEN lead_source = 'sales_navigator' THEN 0 ELSE 1 END,
-      created_at DESC
-    LIMIT ?
-  `).bind(limit).all();
+  // Get prospects without websites from Supabase (single source of truth)
+  // Filter: archived=false, website is null, has name
+  // Order: sales_navigator first, then by created_at desc
+  // Note: Chain filtering done in JavaScript for better control
+  const query = 'select=id,name,city,country,contact_name,contact_title&archived=eq.false&website=is.null&name=not.is.null&order=lead_source.desc.nullslast,created_at.desc';
 
-  const prospects = result.results || [];
+  // Fetch more than needed to account for chain filtering
+  const fetchLimit = Math.min(limit * 3, 600);
+  const rawProspects = await queryProspectsFromSupabase(env, query, fetchLimit);
+
+  // Filter out major hotel chains (we want independent/boutique hotels)
+  const prospects = rawProspects
+    .filter(p => !isExcludedChain(p.name))
+    .slice(0, limit);
+
+  console.log(`Fetched ${rawProspects.length}, filtered to ${prospects.length} (excluded ${rawProspects.length - prospects.length} chains)`);
   let found = 0;
 
   console.log(`Processing ${prospects.length} prospects for websites (parallel - 3 Brave keys)`);
@@ -529,31 +727,10 @@ async function enrichWebsitesBatch(
             const genericPrefixes = /^(info|contact|hello|hi|reservations|reception|booking|bookings|support|sales|admin|office|enquiries|enquiry|mail|email|help|team|general|press|media|marketing|hr|jobs|careers|events|feedback|webmaster|privacy|legal|billing|accounts|finance|service|services|customerservice|guest|guestservices|frontdesk|concierge|stay|stays)@/i;
             const personalEmail = scraped.emails.find(e => !genericPrefixes.test(e));
 
-            // Update prospect with website, scraped data, and maybe email
+            // Update prospect in Supabase (single source of truth)
             if (personalEmail) {
               console.log(`  ✓ Found email from scraping: ${personalEmail}`);
-              await env.DB.prepare(`
-                UPDATE prospects
-                SET website = ?,
-                    linkedin_url = ?,
-                    instagram_url = ?,
-                    research_notes = ?,
-                    contact_email = ?,
-                    stage = 'enriched',
-                    tier = 'warm',
-                    updated_at = datetime('now')
-                WHERE id = ?
-              `).bind(
-                website,
-                scraped.linkedinUrl || null,
-                scraped.instagramUrl || null,
-                researchNotes.join('\n') || null,
-                personalEmail,
-                prospect.id
-              ).run();
-
-              // Sync to Supabase immediately
-              await syncToSupabase(env, prospect.id as string, {
+              await syncToSupabase(env, prospect.id, {
                 website,
                 email: personalEmail,
                 stage: 'enriched',
@@ -563,24 +740,7 @@ async function enrichWebsitesBatch(
                 research_notes: researchNotes.join('\n') || undefined,
               });
             } else {
-              await env.DB.prepare(`
-                UPDATE prospects
-                SET website = ?,
-                    linkedin_url = ?,
-                    instagram_url = ?,
-                    research_notes = ?,
-                    updated_at = datetime('now')
-                WHERE id = ?
-              `).bind(
-                website,
-                scraped.linkedinUrl || null,
-                scraped.instagramUrl || null,
-                researchNotes.join('\n') || null,
-                prospect.id
-              ).run();
-
-              // Sync to Supabase immediately
-              await syncToSupabase(env, prospect.id as string, {
+              await syncToSupabase(env, prospect.id, {
                 website,
                 linkedin_url: scraped.linkedinUrl || undefined,
                 instagram_url: scraped.instagramUrl || undefined,
@@ -638,6 +798,103 @@ async function enrichWebsitesBatch(
 }
 
 /**
+ * GOOGLE BOOST: Use remaining Google quota to find hard-to-reach prospects
+ * This runs AFTER the main enrichment and uses Google Search directly (skipping other tiers)
+ * Ensures we use ALL 100 Google searches per day
+ */
+async function googleBoostBatch(
+  env: Env,
+  limit: number
+): Promise<{ processed: number; found: number }> {
+  // Check how many Google searches we have left
+  const currentCount = await getGoogleSearchCount(env);
+  const remaining = Math.max(0, GOOGLE_DAILY_LIMIT - currentCount);
+
+  if (remaining === 0) {
+    console.log('[Google Boost] No Google quota remaining today');
+    return { processed: 0, found: 0 };
+  }
+
+  const batchSize = Math.min(limit, remaining);
+  console.log(`[Google Boost] Using up to ${batchSize} of ${remaining} remaining Google searches`);
+
+  // Fetch LOTS of prospects - we'll process them until Google quota is exhausted
+  // Even if we need to go through 500 prospects to use all 100 Google searches
+  const query = 'select=id,name,city,country,contact_name&archived=eq.false&website=is.null&name=not.is.null&order=updated_at.asc';
+  const fetchLimit = Math.max(batchSize * 5, 500); // Fetch plenty to ensure we use all quota
+  const rawProspects = await queryProspectsFromSupabase(env, query, fetchLimit);
+
+  console.log(`[Google Boost] Fetched ${rawProspects.length} raw prospects from Supabase`);
+
+  // Filter out chains - DON'T limit, we'll process until Google quota exhausted
+  const prospects = rawProspects.filter(p => !isExcludedChain(p.name));
+  console.log(`[Google Boost] After chain filter: ${prospects.length} prospects (filtered out ${rawProspects.length - prospects.length} chains)`);
+
+  if (prospects.length === 0) {
+    console.log('[Google Boost] No more prospects needing websites after chain filter');
+    return { processed: 0, found: 0 };
+  }
+
+  console.log(`[Google Boost] ${prospects.length} prospects available, will use all ${remaining} Google searches`);
+
+  let found = 0;
+  let processed = 0;
+  let errors: string[] = [];
+
+  // Process one at a time to maximize Google usage
+  for (const prospect of prospects) {
+    // Check if we still have Google quota
+    const currentCount = await getGoogleSearchCount(env);
+    if (currentCount >= GOOGLE_DAILY_LIMIT) {
+      console.log(`[Google Boost] Google quota exhausted at ${currentCount}/${GOOGLE_DAILY_LIMIT}`);
+      break;
+    }
+
+    const name = prospect.name as string;
+    const location = (prospect.city as string) || (prospect.country as string) || '';
+    const searchQuery = `${name} ${location} official website`;
+
+    try {
+      console.log(`[Google Boost] Searching: ${name} (Google: ${currentCount}/${GOOGLE_DAILY_LIMIT})`);
+
+      // Use Google Search directly (skip other tiers)
+      const searchResults = await searchGoogle(searchQuery, env);
+
+      if (searchResults.length > 0) {
+        const grokResult = await analyzeWithGrok(
+          name,
+          location,
+          prospect.contact_name as string | null,
+          searchResults,
+          env
+        );
+
+        if (grokResult.website && grokResult.confidence !== 'none') {
+          const isValid = await verifyUrl(grokResult.website);
+          if (isValid) {
+            console.log(`[Google Boost] Found: ${name} -> ${grokResult.website}`);
+            await syncToSupabase(env, prospect.id, { website: grokResult.website });
+            found++;
+          }
+        }
+      }
+      processed++;
+    } catch (error) {
+      const errMsg = `${name}: ${error instanceof Error ? error.message : String(error)}`;
+      console.error(`[Google Boost] Error: ${errMsg}`);
+      errors.push(errMsg);
+      processed++;
+    }
+
+    // Delay between requests (2 seconds to avoid Google rate limiting)
+    await sleep(2000);
+  }
+
+  console.log(`[Google Boost] Complete: found ${found}/${processed} websites, ${errors.length} errors, googleApiErrors=${googleApiErrors}, googleApiSuccesses=${googleApiSuccesses}`);
+  return { processed, found, errors: errors.slice(0, 5), googleApiErrors, googleApiSuccesses } as { processed: number; found: number };
+}
+
+/**
  * Find emails for prospects with websites but no email
  */
 async function enrichEmails(env: Env): Promise<Response> {
@@ -653,22 +910,20 @@ async function enrichEmailsBatch(
   env: Env,
   limit: number
 ): Promise<{ processed: number; found: number }> {
-  // Get prospects with websites but no email (any stage except contacted/engaged)
-  const result = await env.DB.prepare(`
-    SELECT id, name, website, contact_name
-    FROM prospects
-    WHERE archived = 0
-      AND stage NOT IN ('contacted', 'engaged', 'meeting', 'won', 'lost')
-      AND website IS NOT NULL
-      AND contact_email IS NULL
-      AND contact_name IS NOT NULL
-    ORDER BY
-      CASE WHEN lead_source = 'sales_navigator' THEN 0 ELSE 1 END,
-      created_at DESC
-    LIMIT ?
-  `).bind(limit).all();
+  // Get prospects with websites but no email from Supabase (single source of truth)
+  // Note: Chain filtering done in JavaScript for consistency with website enrichment
+  const query = 'select=id,name,website,contact_name&archived=eq.false&stage=not.in.(contacted,engaged,meeting,won,lost)&website=not.is.null&contact_email=is.null&contact_name=not.is.null&order=lead_source.desc.nullslast,created_at.desc';
 
-  const prospects = result.results || [];
+  // Fetch more than needed to account for chain filtering
+  const fetchLimit = Math.min(limit * 3, 300);
+  const rawProspects = await queryProspectsFromSupabase(env, query, fetchLimit);
+
+  // Filter out major hotel chains (we want independent/boutique hotels)
+  const prospects = rawProspects
+    .filter(p => !isExcludedChain(p.name))
+    .slice(0, limit);
+
+  console.log(`Email batch: Fetched ${rawProspects.length}, filtered to ${prospects.length} (excluded chains)`);
   let found = 0;
 
   console.log(`Processing ${prospects.length} prospects for emails (parallel)`);
@@ -698,21 +953,15 @@ async function enrichEmailsBatch(
 
           if (email) {
             console.log(`✓ Found email: ${prospect.name} -> ${email}`);
-            await env.DB.prepare(`
-              UPDATE prospects
-              SET contact_email = ?, stage = 'enriched', tier = 'warm', updated_at = datetime('now')
-              WHERE id = ?
-            `).bind(email, prospect.id).run();
-
-            // Sync to Supabase immediately
-            await syncToSupabase(env, prospect.id as string, {
+            // Update Supabase directly (single source of truth)
+            await syncToSupabase(env, prospect.id, {
               email,
               stage: 'enriched',
               tier: 'warm',
             });
 
             // Resolve any existing retry tasks for this prospect
-            await RetryQueue.resolveByProspect(env, prospect.id as string);
+            await RetryQueue.resolveByProspect(env, prospect.id);
             return true;
           }
           // Record failure for retry
@@ -787,8 +1036,25 @@ async function getEnrichmentStatus(env: Env): Promise<Response> {
 }
 
 /**
- * Find website using DDG/Brave Search + Grok analysis (90%+ hit rate)
- * Priority: Vercel DDG proxy (free) > Brave Search > Grok-only
+ * Find website using intelligent multi-tier strategy
+ *
+ * STRATEGY (optimized for cost + success rate):
+ *
+ * Tier 1: Grok Direct (FREE, instant) - ~40% hit rate for known hotels
+ *   → Grok has web knowledge, may already know major chains/famous hotels
+ *   → No API cost, just ask if it knows the URL
+ *
+ * Tier 2: DDG Search + Grok (FREE) - ~50% hit rate
+ *   → Search DuckDuckGo, have Grok pick best result
+ *   → Catches most hotels Grok didn't know directly
+ *
+ * Tier 3: Brave Search + Grok (cheap, 6k/mo) - ~30% additional
+ *   → Different search index catches DDG misses
+ *   → Good backup, still affordable
+ *
+ * Tier 4: Google Search + Grok (expensive, 100/day) - LAST RESORT
+ *   → Highest quality but limited
+ *   → Only for the hardest-to-find hotels
  */
 async function findWebsiteForProspect(
   companyName: string,
@@ -800,9 +1066,24 @@ async function findWebsiteForProspect(
     return null;
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TIER 1: Ask Grok directly (FREE - it may already know!)
+  // ═══════════════════════════════════════════════════════════════════════════
+  const grokDirect = await askGrokDirectly(companyName, location, env);
+  if (grokDirect) {
+    const isValid = await verifyUrl(grokDirect);
+    if (isValid) {
+      console.log(`[Grok-Direct] Found: ${companyName} -> ${grokDirect}`);
+      return grokDirect;
+    }
+    console.log(`[Grok-Direct] URL invalid: ${grokDirect}`);
+  }
+
   const searchQuery = `${companyName} ${location} official website`;
 
-  // Strategy 1: Vercel DDG Proxy (FREE - best option, 90% hit rate)
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TIER 2: DDG Search + Grok analysis (FREE)
+  // ═══════════════════════════════════════════════════════════════════════════
   if (env.VERCEL_SEARCH_URL) {
     const searchResults = await searchViaVercel(searchQuery, env);
     if (searchResults.length > 0) {
@@ -817,7 +1098,9 @@ async function findWebsiteForProspect(
     }
   }
 
-  // Strategy 2: Brave Search (free tier: 2k/month per key, rotation for 3x rate)
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TIER 3: Brave Search + Grok analysis (cheap - 6k/month)
+  // ═══════════════════════════════════════════════════════════════════════════
   const braveConfig = getNextBraveKey(env);
   if (braveConfig) {
     const searchResults = await searchBrave(searchQuery, braveConfig.apiKey, braveConfig.proxyUrl);
@@ -833,19 +1116,52 @@ async function findWebsiteForProspect(
     }
   }
 
-  // Strategy 3: Grok-only (fallback, ~5-10% hit rate)
-  const prompt = `Find the official website URL for this hotel/property:
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TIER 4: Google Search + Grok analysis (expensive - 100/day, LAST RESORT)
+  // ═══════════════════════════════════════════════════════════════════════════
+  if (await canUseGoogleSearch(env)) {
+    const searchResults = await searchGoogle(searchQuery, env);
+    if (searchResults.length > 0) {
+      const grokResult = await analyzeWithGrok(companyName, location, contactName, searchResults, env);
+      if (grokResult.website && grokResult.confidence !== 'none') {
+        const isValid = await verifyUrl(grokResult.website);
+        if (isValid) {
+          console.log(`[Google+Grok] Found: ${companyName} -> ${grokResult.website} (${grokResult.confidence})`);
+          return grokResult.website;
+        }
+      }
+    }
+  }
 
-BUSINESS: ${companyName}
+  console.log(`[All tiers failed] No website found for: ${companyName}`);
+  return null;
+}
+
+/**
+ * Ask Grok directly if it knows the hotel's website (FREE - no search API needed)
+ * Grok has web knowledge baked in, may already know major chains and famous hotels
+ */
+async function askGrokDirectly(
+  companyName: string,
+  location: string,
+  env: Env
+): Promise<string | null> {
+  if (!env.GROK_API_KEY) return null;
+
+  const prompt = `You are a hotel industry expert. Do you know the OFFICIAL WEBSITE URL for this property?
+
+HOTEL: ${companyName}
 LOCATION: ${location || 'Unknown'}
-CONTACT: ${contactName || 'Not provided'}
 
-Search the web and return the most likely OFFICIAL hotel website.
-Never return OTAs (booking.com, expedia, hotels.com), social media, or review sites.
-Only return the hotel's own direct website if you can find it.
+IMPORTANT RULES:
+- Only return URLs you are CONFIDENT about
+- Never guess or make up URLs
+- Never return OTAs (booking.com, expedia), social media, or review sites
+- Only return the hotel's own direct website
+- If you're not sure, return null
 
 Response format (JSON only, no explanation):
-{"website": "https://..." or null, "confidence": "high"|"medium"|"low"|"none", "reasoning": "brief explanation"}`;
+{"website": "https://..." or null, "confidence": "high"|"medium"|"none"}`;
 
   try {
     const response = await fetch('https://api.x.ai/v1/chat/completions', {
@@ -858,39 +1174,136 @@ Response format (JSON only, no explanation):
         model: 'grok-3-mini',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.1,
-        max_tokens: 200,
+        max_tokens: 150,
       }),
     });
 
-    if (!response.ok) {
-      console.log(`Grok API error: ${response.status}`);
-      return null;
-    }
+    if (!response.ok) return null;
 
     const data = await response.json() as { choices: Array<{ message: { content: string } }> };
     const content = data.choices?.[0]?.message?.content;
 
     const jsonMatch = content?.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
-      const result = JSON.parse(jsonMatch[0]) as WebsiteResult;
-
-      if (result.website && result.confidence !== 'none') {
-        const isValid = await verifyUrl(result.website);
-        if (isValid) {
-          console.log(`[Grok-only] Found: ${companyName} -> ${result.website} (${result.confidence})`);
-          return result.website;
-        }
+      const result = JSON.parse(jsonMatch[0]) as { website: string | null; confidence: string };
+      // Only return high/medium confidence results
+      if (result.website && (result.confidence === 'high' || result.confidence === 'medium')) {
+        return result.website;
       }
     }
   } catch (error) {
-    console.error(`Grok search error for ${companyName}:`, error);
+    console.error('Grok direct lookup error:', error);
   }
 
   return null;
 }
 
+
 // Counter for Brave API key rotation (round-robin)
 let braveKeyIndex = 0;
+
+/**
+ * Google Search API Daily Counter
+ * Tracks usage per day with KV - NEVER exceeds 100/day
+ */
+async function getGoogleSearchCount(env: Env): Promise<number> {
+  const countStr = await env.KV_CACHE.get(GOOGLE_DAILY_COUNT_KEY);
+  return countStr ? parseInt(countStr, 10) : 0;
+}
+
+async function incrementGoogleSearchCount(env: Env): Promise<number> {
+  const current = await getGoogleSearchCount(env);
+  const newCount = current + 1;
+
+  // TTL: Reset at midnight UTC (calculate seconds until midnight)
+  const now = new Date();
+  const midnight = new Date(now);
+  midnight.setUTCHours(24, 0, 0, 0);
+  const secondsUntilMidnight = Math.ceil((midnight.getTime() - now.getTime()) / 1000);
+
+  await env.KV_CACHE.put(GOOGLE_DAILY_COUNT_KEY, String(newCount), {
+    expirationTtl: Math.max(secondsUntilMidnight, 60), // Min 60s to avoid edge cases
+  });
+
+  return newCount;
+}
+
+async function canUseGoogleSearch(env: Env): Promise<boolean> {
+  if (!env.GOOGLE_SEARCH_API_KEY || !env.GOOGLE_SEARCH_CX) {
+    return false;
+  }
+  const count = await getGoogleSearchCount(env);
+  return count < GOOGLE_DAILY_LIMIT;
+}
+
+// Track Google API errors (for debugging)
+let googleApiErrors = 0;
+let googleApiSuccesses = 0;
+
+/**
+ * Search Google Custom Search API (100 queries/day FREE, then $5 per 1000)
+ * HIGHEST QUALITY - use sparingly, only when other methods don't find results
+ * Returns search results filtered to exclude OTAs, social media, review sites
+ */
+async function searchGoogle(query: string, env: Env): Promise<SearchResult[]> {
+  // Double-check we can use Google (rate limit)
+  if (!env.GOOGLE_SEARCH_API_KEY || !env.GOOGLE_SEARCH_CX) {
+    console.log('[Google] Not configured, skipping');
+    return [];
+  }
+
+  const count = await getGoogleSearchCount(env);
+  if (count >= GOOGLE_DAILY_LIMIT) {
+    console.log(`[Google] Daily limit reached (${count}/${GOOGLE_DAILY_LIMIT}), skipping`);
+    return [];
+  }
+
+  try {
+    const apiUrl = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_SEARCH_API_KEY}&cx=${env.GOOGLE_SEARCH_CX}&q=${encodeURIComponent(query)}&num=10`;
+
+    const response = await fetch(apiUrl);
+
+    if (!response.ok) {
+      googleApiErrors++;
+      const error = await response.text();
+      console.log(`[Google] API error #${googleApiErrors}: ${response.status} - ${error.slice(0, 200)}`);
+      // If rate limited (429), wait longer before next request
+      if (response.status === 429) {
+        console.log('[Google] Rate limited! Waiting 5 seconds...');
+        await sleep(5000);
+      }
+      return [];
+    }
+    googleApiSuccesses++;
+
+    // Increment counter AFTER successful response
+    const newCount = await incrementGoogleSearchCount(env);
+    console.log(`[Google] Search #${newCount}/${GOOGLE_DAILY_LIMIT} for "${query}"`);
+
+    const data = await response.json() as {
+      items?: Array<{ link: string; title: string; snippet?: string }>;
+    };
+
+    const results: SearchResult[] = [];
+    const items = data.items || [];
+
+    // Filter out OTAs, social media, review sites
+    const excludePatterns = /booking\.com|expedia|tripadvisor|hotels\.com|agoda|trivago|kayak|facebook|twitter|instagram|linkedin|youtube|wikipedia|yelp|google\.com\/maps|tiktok|pinterest/i;
+
+    for (const item of items) {
+      if (!excludePatterns.test(item.link) && item.link.startsWith('http')) {
+        results.push({ url: item.link, title: item.title });
+      }
+      if (results.length >= 10) break;
+    }
+
+    console.log(`[Google] Found ${results.length} results`);
+    return results;
+  } catch (error) {
+    console.error('[Google] Search error:', error);
+    return [];
+  }
+}
 
 /**
  * Get the next Brave API key and proxy URL (round-robin rotation)

@@ -115,10 +115,11 @@ export async function handleCron(
     }
 
     // Enrichment: Off-hours only (6-7am and 7pm-11pm) to not conflict with email sending
-    // Pattern: "*/5 6,19-23 * * *"
+    // Pattern: "*/5 6,19-23 * * *" - runs EVERY DAY including Sunday
+    // Goal: Use all 100 Google searches per day + unlimited free tiers
     const isEnrichmentHour = hour === 6 || (hour >= 19 && hour <= 23);
     if (minute % 5 === 0 && isEnrichmentHour) {
-      logger.info('Running enrichment batch');
+      logger.info('Running enrichment batch (auto-daily, uses all search APIs)');
       await runEnrichmentBatch(env);
       return;
     }
@@ -553,12 +554,18 @@ async function sendFollowUps(env: Env): Promise<void> {
 /**
  * Run enrichment batch - finds websites and emails for prospects
  * Called during off-hours to not conflict with email sending
+ *
+ * RUNS EVERY DAY automatically - uses all search APIs including Google (100/day)
+ * Schedule: Every 5 min from 6am-7am and 7pm-midnight = ~72 runs/day
+ * Batch size: 100 prospects per run = ~7200 prospects/day capacity
  */
 async function runEnrichmentBatch(env: Env): Promise<void> {
   try {
-    // Create a mock request to trigger enrichment
+    // Create a mock request to trigger enrichment with higher batch size
     const request = new Request('https://internal/enrich/auto', {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ limit: 100 }), // Process 100 prospects per batch
     });
     const response = await handleEnrich(request, env);
     const result = await response.json();

@@ -178,71 +178,37 @@ Write the email now. JSON only, no other text.
 `;
 
 /**
- * Strategy E: Simple & Personalized
- * Uses a fixed template with subtle personalization from website data.
+ * Strategy E: Simple & Fixed Template
+ * Uses EXACT fixed template - only firstname changes. No AI variation.
  */
 const simplePersonalizedPrompt: PromptGenerator = (prospect) => {
-  // Build personalization hints from prospect data
-  const personalization: string[] = [];
-
-  if (prospect.starRating && prospect.starRating >= 4) {
-    personalization.push(`HIGH-END: ${prospect.starRating}-star property`);
-  }
-  if (prospect.chainAffiliation) {
-    personalization.push(`CHAIN: Part of ${prospect.chainAffiliation}`);
-  }
-  if (prospect.estimatedRooms && prospect.estimatedRooms > 100) {
-    personalization.push(`SIZE: ${prospect.estimatedRooms}+ rooms`);
-  }
-  if (prospect.googleRating && prospect.googleRating >= 4.5) {
-    personalization.push(`REPUTATION: ${prospect.googleRating} on Google`);
-  }
-
-  const personalizationContext = personalization.length > 0
-    ? `\nPERSONALIZATION (use ONE subtly):\n${personalization.join('\n')}\n`
-    : '';
-
   const firstName = prospect.contactName?.split(' ')[0] || null;
 
-  return `Write a cold email using this EXACT template with subtle personalization.
+  // Fixed template - NO variation, just swap firstname
+  return `Output this EXACT email with NO changes except the subject line.
 
-PROSPECT:
-${buildContext(prospect)}
-${personalizationContext}
-TEMPLATE TO FOLLOW:
-
-SUBJECT: 2-4 words, lowercase. Examples:
-${firstName ? `- "quick question, ${firstName}?"` : '- "quick question?"'}
+SUBJECT LINE: Pick ONE of these exactly:
+${firstName ? `- "quick question, ${firstName.toLowerCase()}?"` : '- "quick question?"'}
 - "weird ask"
 - "right person?"
 
-GREETING: ${firstName ? `"Hey ${firstName},"` : '"Hey,"'}
+EMAIL BODY (use EXACTLY as written, word for word):
 
-PARAGRAPH 1 (use exactly):
-"This might be a weird one - not even sure if you're the right person. If not, would you mind forwarding to whoever handles operations? Would genuinely appreciate it."
+Hey ${firstName || 'there'},
 
-PARAGRAPH 2 (personalize slightly):
-"We implement different types of AI systems for hotels - stuff that genuinely saves time and money without feeling robotic. Most hotels are surprised what's actually possible now."
-${personalization.length > 0 ? `Add subtle personalization like "for properties like yours" or "especially for ${prospect.propertyType || 'hotels'} handling serious volume"` : ''}
+This might be a weird one - not even sure if you're the right person. If not, would you mind forwarding to whoever handles operations? Would genuinely appreciate it.
 
-PARAGRAPH 3 (use exactly):
-"Would love a quick chat to see if you'd be a good fit for us. Totally fine if it's not for you - just let me know either way?"
+We implement different types of AI systems for hotels - stuff that genuinely saves time and money without feeling robotic. Most hotels are surprised what's actually possible now.
 
-SIGN-OFF: "Edd"
+Would love a quick chat to see if you'd be a good fit for us. Totally fine if it's not for you - just let me know either way?
 
-RULES:
-- 70-90 words total
-- Sound human, NOT salesy
-- Include the forward request
-- End with Edd signature
+Edd
 
-OUTPUT FORMAT (JSON only):
+OUTPUT FORMAT (JSON only, no other text):
 {
-  "subject": "your subject line",
-  "body": "full email including Edd signature"
+  "subject": "your chosen subject line",
+  "body": "the exact email body above"
 }
-
-Write the email now. JSON only, no other text.
 `;
 };
 

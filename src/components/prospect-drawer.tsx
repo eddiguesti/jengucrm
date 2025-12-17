@@ -749,6 +749,7 @@ export function ProspectDrawer({
 }
 
 // Hook for managing drawer state with URL
+// NOTE: This hook uses useSearchParams() which requires the component to be wrapped in <Suspense>
 export function useProspectDrawer(prospects: Prospect[]) {
   const router = useRouter();
   const pathname = usePathname();

@@ -26,13 +26,14 @@ interface InboxWarmupState {
   pauseReason: string | null;
 }
 
-// Conservative warmup schedule for new inboxes
+// Warmup schedule based on 2024-2025 best practices
+// 3 inboxes: edd@jengu.me, edd@jengu.space, edd@jengu.shop
 const WARMUP_SCHEDULE = [
-  { maxDay: 7, baseLimit: 5 },    // Week 1: 5 emails/day
-  { maxDay: 14, baseLimit: 10 },  // Week 2: 10 emails/day
-  { maxDay: 21, baseLimit: 15 },  // Week 3: 15 emails/day
-  { maxDay: 28, baseLimit: 18 },  // Week 4: 18 emails/day
-  { maxDay: Infinity, baseLimit: 20 }, // Week 5+: 20 emails/day (max)
+  { maxDay: 7, baseLimit: 10 },   // Week 1: 10/inbox = 30/day total
+  { maxDay: 14, baseLimit: 15 },  // Week 2: 15/inbox = 45/day total
+  { maxDay: 21, baseLimit: 25 },  // Week 3: 25/inbox = 75/day total
+  { maxDay: 28, baseLimit: 35 },  // Week 4: 35/inbox = 105/day total
+  { maxDay: Infinity, baseLimit: 40 }, // Week 5+: 40/inbox = 120/day max
 ];
 
 // Reputation thresholds

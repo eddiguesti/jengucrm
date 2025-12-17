@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, Suspense } from 'react';
 import { Header } from '@/components/layout/header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -204,7 +204,7 @@ function ReadinessSummary({
   );
 }
 
-export default function ProspectsPage() {
+function ProspectsPageContent() {
   const [prospects, setProspects] = useState<Prospect[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1311,5 +1311,18 @@ export default function ProspectsPage() {
         onAction={handleProspectAction}
       />
     </div>
+  );
+}
+
+// Wrap the page in Suspense to handle useSearchParams
+export default function ProspectsPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex h-screen items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    }>
+      <ProspectsPageContent />
+    </Suspense>
   );
 }

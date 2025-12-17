@@ -96,11 +96,8 @@ crons = [
 mode = "smart"
 
 [vars]
-# Vercel DDG search proxy (recommended)
-# This lets the worker search DuckDuckGo via Vercel IPs (Cloudflare IPs often get blocked).
-# Example: https://your-vercel-app.vercel.app/api/search
-VERCEL_SEARCH_URL = ""
+# Vercel DDG search proxy - search DuckDuckGo via Vercel IPs (Cloudflare IPs get blocked)
+VERCEL_SEARCH_URL = "https://crm.jengu.ai/api/search"
 
 # Vercel/Next.js app base URL (for cron-triggering Supabase-backed jobs)
-# Example: https://your-vercel-app.vercel.app
-VERCEL_APP_URL = ""
+VERCEL_APP_URL = "https://crm.jengu.ai"

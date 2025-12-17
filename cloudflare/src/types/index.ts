@@ -42,6 +42,11 @@ export interface Env {
   // Web scraping (for DDG search from Cloudflare)
   SCRAPERAPI_KEY?: string;
 
+  // Google Custom Search API (100 queries/day FREE, then $5 per 1000)
+  // Higher quality results than Brave, use sparingly
+  GOOGLE_SEARCH_API_KEY?: string;
+  GOOGLE_SEARCH_CX?: string; // Custom Search Engine ID
+
   // Brave Search API keys (free tier: 2k/month each, rotate for 3x rate)
   BRAVE_SEARCH_API_KEY?: string;   // Primary key
   BRAVE_SEARCH_API_KEY_2?: string; // Secondary key
