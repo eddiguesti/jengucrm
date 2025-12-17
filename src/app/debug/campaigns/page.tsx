@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 
 export default function DebugCampaignsPage() {
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,8 +22,8 @@ export default function DebugCampaignsPage() {
       } else {
         setResult(data);
       }
-    } catch (err: any) {
-      setError(`Network Error: ${err.message}`);
+    } catch (err) {
+      setError(`Network Error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setLoading(false);
     }
@@ -63,8 +63,8 @@ export default function DebugCampaignsPage() {
         setResult(data);
         alert('Campaign created successfully!');
       }
-    } catch (err: any) {
-      setError(`Network Error: ${err.message}`);
+    } catch (err) {
+      setError(`Network Error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setLoading(false);
     }
@@ -108,7 +108,7 @@ export default function DebugCampaignsPage() {
               </div>
             )}
 
-            {result && (
+            {result !== null && (
               <Card className="bg-gray-50">
                 <CardContent className="pt-6">
                   <pre className="text-xs overflow-auto max-h-96">

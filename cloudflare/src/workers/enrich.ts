@@ -839,7 +839,7 @@ async function googleBoostBatch(
 
   let found = 0;
   let processed = 0;
-  let errors: string[] = [];
+  const errors: string[] = [];
 
   // Process one at a time to maximize Google usage
   for (const prospect of prospects) {
