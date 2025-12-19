@@ -47,3 +47,6 @@ projects/Data/**
 projects/**/uniprot_cache_string/
 projects/**/mobidb_cache_string/
 **/*_cache_string/
+
+# Snyk Security Extension - AI Rules (auto-generated)
+.github/instructions/snyk_rules.instructions.md

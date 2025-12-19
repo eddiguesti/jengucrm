@@ -2,12 +2,13 @@
  * Email Sender - Production Email Sending
  *
  * Supports:
- * - Resend API (primary, recommended for production)
- * - Mailchannels (fallback for Workers)
+ * - Vercel SMTP proxy (primary - uses your existing SMTP credentials via Vercel)
+ * - Resend API (if configured)
  *
  * Features: Round-robin inboxes, health tracking, automatic failover
  *
- * NOTE: Azure/jengu.ai is disabled per configuration
+ * NOTE: Cloudflare Workers can't do direct SMTP (no TCP sockets).
+ * We proxy through Vercel/Next.js which CAN send via SMTP.
  */
 
 import { Env, InboxConfig } from '../types';
@@ -42,8 +43,8 @@ interface SendResult {
  * Called by cron.ts and api.ts with explicit inbox selection
  *
  * Priority:
- * 1. Resend API (if RESEND_API_KEY is set)
- * 2. Mailchannels (free for Workers, but limited)
+ * 1. Vercel SMTP proxy (uses your existing SMTP credentials)
+ * 2. Resend API (if RESEND_API_KEY is set)
  */
 export async function sendEmail(params: SendEmailParams): Promise<SendResult> {
   const { to, subject, body, from, displayName, env } = params;
@@ -60,7 +61,27 @@ export async function sendEmail(params: SendEmailParams): Promise<SendResult> {
     };
   }
 
-  // Try Resend first if available (more reliable for production)
+  // Try Vercel SMTP proxy first (uses your existing SMTP credentials)
+  const vercelUrl = (env.VERCEL_APP_URL || '').trim().replace(/\/+$/, '');
+  if (vercelUrl) {
+    try {
+      const result = await sendViaVercelProxy(
+        { email: from, displayName } as InboxConfig,
+        to,
+        subject,
+        body,
+        vercelUrl,
+        env.VERCEL_CRON_SECRET || ''
+      );
+      result.latencyMs = Date.now() - startTime;
+      return result;
+    } catch (error) {
+      console.error('Vercel proxy failed:', error);
+      // Fall through to Resend if available
+    }
+  }
+
+  // Try Resend if available
   if (env.RESEND_API_KEY) {
     try {
       const result = await sendViaResend(
@@ -73,31 +94,18 @@ export async function sendEmail(params: SendEmailParams): Promise<SendResult> {
       result.latencyMs = Date.now() - startTime;
       return result;
     } catch (error) {
-      console.error('Resend failed, trying Mailchannels:', error);
-      // Fall through to Mailchannels
+      console.error('Resend failed:', error);
     }
   }
 
-  // Fallback to Mailchannels
-  try {
-    const result = await sendViaMailchannels(
-      { email: from, displayName } as InboxConfig,
-      to,
-      subject,
-      body
-    );
-    result.latencyMs = Date.now() - startTime;
-    return result;
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    return {
-      success: false,
-      provider: 'smtp',
-      inbox: from,
-      error: errorMessage,
-      latencyMs: Date.now() - startTime,
-    };
-  }
+  // No working email provider
+  return {
+    success: false,
+    provider: 'none',
+    inbox: from,
+    error: 'No email provider available. Configure VERCEL_APP_URL or RESEND_API_KEY.',
+    latencyMs: Date.now() - startTime,
+  };
 }
 
 /**
@@ -184,50 +192,48 @@ async function sendViaResend(
 }
 
 /**
- * Send via Mailchannels (free for Cloudflare Workers)
- * https://blog.cloudflare.com/sending-email-from-workers-with-mailchannels/
- *
- * Note: Mailchannels free tier has been discontinued for new users.
- * Use Resend API as the primary provider instead.
+ * Send via Vercel SMTP proxy
+ * Calls the Next.js app which has SMTP credentials configured
+ * This allows Cloudflare Workers to send email via your existing SMTP inboxes
  */
-async function sendViaMailchannels(
+async function sendViaVercelProxy(
   inbox: InboxConfig,
   to: string,
   subject: string,
-  body: string
+  body: string,
+  vercelUrl: string,
+  cronSecret: string
 ): Promise<SendResult> {
-  const response = await fetch('https://api.mailchannels.net/tx/v1/send', {
+  const response = await fetch(`${vercelUrl}/api/email/send-raw`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${cronSecret}`,
+    },
     body: JSON.stringify({
-      personalizations: [
-        {
-          to: [{ email: to }],
-        },
-      ],
-      from: {
-        email: inbox.email,
-        name: inbox.displayName,
-      },
+      to,
       subject,
-      content: [
-        {
-          type: 'text/plain',
-          value: body,
-        },
-      ],
+      body,
+      fromEmail: inbox.email,
+      fromName: inbox.displayName,
     }),
   });
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Mailchannels send failed: ${response.status} - ${error}`);
+    throw new Error(`Vercel SMTP proxy failed: ${response.status} - ${error}`);
+  }
+
+  const data = await response.json<{ success: boolean; messageId?: string; error?: string }>();
+
+  if (!data.success) {
+    throw new Error(data.error || 'Unknown error from Vercel proxy');
   }
 
   return {
     success: true,
-    messageId: `mc-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    provider: 'mailchannels',
+    messageId: data.messageId || `vercel-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    provider: 'smtp-via-vercel',
     inbox: inbox.email,
     latencyMs: 0,
   };

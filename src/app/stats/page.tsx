@@ -17,6 +17,10 @@ import {
   RefreshCw,
   ArrowUp,
   ArrowDown,
+  Search,
+  Zap,
+  Database,
+  Activity,
 } from 'lucide-react';
 
 interface DetailedStats {
@@ -75,6 +79,54 @@ interface DetailedStats {
   };
   scraping: Record<string, { runs: number; found: number; new: number }>;
   activity: Record<string, number>;
+  generatedAt: string;
+}
+
+interface EnrichmentStats {
+  pipeline: {
+    total: number;
+    needsWebsite: number;
+    needsEmail: number;
+    enriched: number;
+    contacted: number;
+  };
+  coverage: {
+    total: number;
+    withWebsite: number;
+    withEmail: number;
+    websiteRate: number;
+    emailRate: number;
+  };
+  apiUsage: {
+    google: {
+      configured: boolean;
+      dailyLimit: number;
+      usedToday: number;
+      remaining: number;
+      percentUsed: number;
+    };
+    brave: {
+      configured: boolean;
+      keysAvailable: number;
+      monthlyLimit: number;
+    };
+  };
+  today: {
+    websitesFound: number;
+    emailsFound: number;
+    enrichmentRuns: number;
+  };
+  progress: {
+    isRunning: boolean;
+    type: string | null;
+    processed: number;
+    total: number;
+    found: number;
+    websitesFound: number;
+    emailsFound: number;
+    startedAt: string | null;
+    lastUpdatedAt: string | null;
+  };
   generatedAt: string;
 }
 
@@ -149,6 +201,7 @@ function ProgressBar({ value, max, label, color = 'blue' }: { value: number; max
 
 export default function StatsPage() {
   const [stats, setStats] = useState<DetailedStats | null>(null);
+  const [enrichmentStats, setEnrichmentStats] = useState<EnrichmentStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -156,10 +209,20 @@ export default function StatsPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/stats/detailed');
-      if (!res.ok) throw new Error('Failed to fetch stats');
-      const data = await res.json();
+      // Fetch both stats in parallel
+      const [statsRes, enrichmentRes] = await Promise.all([
+        fetch('/api/stats/detailed'),
+        fetch('/api/enrichment-stats'),
+      ]);
+
+      if (!statsRes.ok) throw new Error('Failed to fetch stats');
+      const data = await statsRes.json();
       setStats(data);
+
+      if (enrichmentRes.ok) {
+        const enrichmentData = await enrichmentRes.json();
+        setEnrichmentStats(enrichmentData.data || enrichmentData);
+      }
     } catch (err) {
       setError(String(err));
     } finally {
@@ -169,7 +232,24 @@ export default function StatsPage() {
 
   useEffect(() => {
     fetchStats();
-  }, []);
+
+    // Auto-refresh enrichment stats every 30 seconds if enrichment is running
+    const interval = setInterval(async () => {
+      if (enrichmentStats?.progress?.isRunning) {
+        try {
+          const res = await fetch('/api/enrichment-stats');
+          if (res.ok) {
+            const data = await res.json();
+            setEnrichmentStats(data.data || data);
+          }
+        } catch {
+          // Ignore refresh errors
+        }
+      }
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, [enrichmentStats?.progress?.isRunning]);
 
   if (loading) {
     return (
@@ -520,6 +600,188 @@ export default function StatsPage() {
             )}
           </CardContent>
         </Card>
+
+        {/* Enrichment Pipeline Stats */}
+        {enrichmentStats && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Database className="h-4 w-4 text-purple-400" />
+                Enrichment Pipeline
+                {enrichmentStats.progress.isRunning && (
+                  <Badge variant="outline" className="ml-auto bg-green-500/10 text-green-400 border-green-500/30">
+                    <Activity className="h-3 w-3 mr-1 animate-pulse" />
+                    Running
+                  </Badge>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* API Usage - Google Search */}
+              <div>
+                <p className="text-xs text-muted-foreground mb-3">API Usage (Today)</p>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {/* Google API */}
+                  <div className="p-4 rounded-lg bg-white/5 border border-white/10">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <Search className="h-4 w-4 text-blue-400" />
+                        <span className="text-sm font-medium">Google Search</span>
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className={
+                          enrichmentStats.apiUsage.google.remaining > 50
+                            ? 'text-green-400 border-green-500/30'
+                            : enrichmentStats.apiUsage.google.remaining > 20
+                            ? 'text-amber-400 border-amber-500/30'
+                            : 'text-red-400 border-red-500/30'
+                        }
+                      >
+                        {enrichmentStats.apiUsage.google.remaining} left
+                      </Badge>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>Daily quota</span>
+                        <span>{enrichmentStats.apiUsage.google.usedToday} / {enrichmentStats.apiUsage.google.dailyLimit}</span>
+                      </div>
+                      <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${
+                            enrichmentStats.apiUsage.google.percentUsed >= 100
+                              ? 'bg-red-500'
+                              : enrichmentStats.apiUsage.google.percentUsed > 80
+                              ? 'bg-amber-500'
+                              : 'bg-blue-500'
+                          }`}
+                          style={{ width: `${Math.min(enrichmentStats.apiUsage.google.percentUsed, 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Brave API */}
+                  <div className="p-4 rounded-lg bg-white/5 border border-white/10">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <Zap className="h-4 w-4 text-orange-400" />
+                        <span className="text-sm font-medium">Brave Search</span>
+                      </div>
+                      <Badge variant="outline" className="text-green-400 border-green-500/30">
+                        {enrichmentStats.apiUsage.brave.keysAvailable} keys
+                      </Badge>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      <p>{enrichmentStats.apiUsage.brave.monthlyLimit.toLocaleString()} searches/month</p>
+                      <p className="text-green-400 mt-1">FREE tier (2k/key)</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Pipeline Status */}
+              <div>
+                <p className="text-xs text-muted-foreground mb-3">Pipeline Status</p>
+                <div className="grid gap-3 md:grid-cols-4">
+                  <div className="text-center p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                    <p className="text-xl font-bold text-blue-400">{enrichmentStats.pipeline.needsWebsite.toLocaleString()}</p>
+                    <p className="text-xs text-muted-foreground">Need Website</p>
+                  </div>
+                  <div className="text-center p-3 rounded-lg bg-purple-500/10 border border-purple-500/20">
+                    <p className="text-xl font-bold text-purple-400">{enrichmentStats.pipeline.needsEmail.toLocaleString()}</p>
+                    <p className="text-xs text-muted-foreground">Need Email</p>
+                  </div>
+                  <div className="text-center p-3 rounded-lg bg-green-500/10 border border-green-500/20">
+                    <p className="text-xl font-bold text-green-400">{enrichmentStats.pipeline.enriched.toLocaleString()}</p>
+                    <p className="text-xs text-muted-foreground">Enriched</p>
+                  </div>
+                  <div className="text-center p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                    <p className="text-xl font-bold text-amber-400">{enrichmentStats.pipeline.contacted}</p>
+                    <p className="text-xs text-muted-foreground">Contacted</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Coverage Rates */}
+              <div>
+                <p className="text-xs text-muted-foreground mb-3">Data Coverage</p>
+                <div className="space-y-3">
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">Website Coverage</span>
+                      <span className="font-medium">{enrichmentStats.coverage.websiteRate}%</span>
+                    </div>
+                    <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-purple-500 rounded-full transition-all duration-500"
+                        style={{ width: `${enrichmentStats.coverage.websiteRate}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {enrichmentStats.coverage.withWebsite.toLocaleString()} / {enrichmentStats.coverage.total.toLocaleString()} prospects
+                    </p>
+                  </div>
+
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">Email Coverage</span>
+                      <span className="font-medium">{enrichmentStats.coverage.emailRate}%</span>
+                    </div>
+                    <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-green-500 rounded-full transition-all duration-500"
+                        style={{ width: `${enrichmentStats.coverage.emailRate}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {enrichmentStats.coverage.withEmail.toLocaleString()} / {enrichmentStats.coverage.total.toLocaleString()} prospects
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Current Progress (if running) */}
+              {enrichmentStats.progress.isRunning && (
+                <div className="p-4 rounded-lg bg-green-500/5 border border-green-500/20">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-green-400">
+                      {enrichmentStats.progress.type === 'auto' ? 'Auto Enrichment' :
+                       enrichmentStats.progress.type === 'websites' ? 'Finding Websites' :
+                       enrichmentStats.progress.type === 'emails' ? 'Finding Emails' : 'Enriching'}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {enrichmentStats.progress.processed} / {enrichmentStats.progress.total}
+                    </span>
+                  </div>
+                  <div className="h-2 bg-white/5 rounded-full overflow-hidden mb-2">
+                    <div
+                      className="h-full bg-green-500 rounded-full transition-all duration-300"
+                      style={{ width: `${enrichmentStats.progress.total > 0 ? (enrichmentStats.progress.processed / enrichmentStats.progress.total) * 100 : 0}%` }}
+                    />
+                  </div>
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>Found: {enrichmentStats.progress.websitesFound} websites, {enrichmentStats.progress.emailsFound} emails</span>
+                    {enrichmentStats.progress.startedAt && (
+                      <span>Started: {new Date(enrichmentStats.progress.startedAt).toLocaleTimeString()}</span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Enrichment Info */}
+              <div className="text-xs text-muted-foreground border-t border-white/10 pt-4">
+                <p className="font-medium mb-1">Search Strategy (4-tier fallback):</p>
+                <ol className="list-decimal list-inside space-y-0.5 text-muted-foreground/70">
+                  <li>Grok Direct (FREE) - AI knows ~40% of hotels</li>
+                  <li>DuckDuckGo + Grok (FREE) - catches ~50% more</li>
+                  <li>Brave + Grok (6k/month) - different index</li>
+                  <li>Google + Grok (100/day) - last resort, highest quality</li>
+                </ol>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Scraper Performance */}
         {Object.keys(stats.scraping).length > 0 && (
