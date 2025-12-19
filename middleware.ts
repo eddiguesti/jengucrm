@@ -22,10 +22,11 @@ const LEGACY_AUTH_ENABLED = process.env.LEGACY_AUTH_ENABLED === 'true';
 
 // Routes that don't require authentication
 // /api/search is public - it's a DDG proxy for Cloudflare worker enrichment (rate-limited by DDG)
-const publicRoutes = ['/login', '/api/auth/login', '/api/search'];
+// /api/debug-smtp is temporarily public for troubleshooting
+const publicRoutes = ['/login', '/api/auth/login', '/api/search', '/api/debug-smtp'];
 
-// API routes that need to work for cron jobs (authenticated via header)
-const cronRoutes = ['/api/cron/', '/api/check-replies', '/api/auto-email', '/api/setup-campaigns'];
+// API routes that need to work for cron jobs or external services (authenticated via header)
+const cronRoutes = ['/api/cron/', '/api/check-replies', '/api/auto-email', '/api/setup-campaigns', '/api/email/send-raw'];
 
 /**
  * Check if a session token is valid
