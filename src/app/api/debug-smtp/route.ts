@@ -5,10 +5,16 @@ export async function GET() {
   const raw1 = process.env.SMTP_INBOX_1;
   const raw2 = process.env.SMTP_INBOX_2;
   const raw3 = process.env.SMTP_INBOX_3;
+  const cronSecret = process.env.CRON_SECRET;
 
   const inboxes = getSmtpInboxes();
 
   return NextResponse.json({
+    cron_secret_info: {
+      is_set: !!cronSecret,
+      length: cronSecret?.length || 0,
+      prefix: cronSecret?.substring(0, 8) || 'NOT_SET',
+    },
     raw_env_values: {
       SMTP_INBOX_1: raw1,
       SMTP_INBOX_2: raw2,
