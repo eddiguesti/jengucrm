@@ -13,10 +13,22 @@ import { getSmtpInboxes } from '@/lib/email/config';
 // Verify the request is from our Cloudflare Worker
 function verifyAuth(request: NextRequest): boolean {
   const authHeader = request.headers.get('Authorization');
-  if (!authHeader) return false;
+  if (!authHeader) {
+    console.log('[send-raw] No auth header');
+    return false;
+  }
 
   const token = authHeader.replace('Bearer ', '');
   const cronSecret = process.env.CRON_SECRET;
+
+  // Debug: Log auth attempt (only log presence, not values for security)
+  console.log('[send-raw] Auth check:', {
+    hasToken: !!token,
+    hasCronSecret: !!cronSecret,
+    tokenLength: token?.length || 0,
+    secretLength: cronSecret?.length || 0,
+    match: token === cronSecret,
+  });
 
   return token === cronSecret;
 }

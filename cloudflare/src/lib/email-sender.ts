@@ -50,6 +50,13 @@ export async function sendEmail(params: SendEmailParams): Promise<SendResult> {
   const { to, subject, body, from, displayName, env } = params;
   const startTime = Date.now();
 
+  // Debug: Log available email providers
+  console.log('[sendEmail] Checking providers:', {
+    vercelUrl: env.VERCEL_APP_URL ? 'configured' : 'missing',
+    vercelSecret: env.VERCEL_CRON_SECRET ? 'configured' : 'missing',
+    resendKey: env.RESEND_API_KEY ? 'configured' : 'missing',
+  });
+
   // Skip Azure - only use SMTP/Resend
   if (params.provider === 'azure') {
     return {
