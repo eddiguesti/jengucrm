@@ -14,11 +14,21 @@ import { getSmtpInboxes } from '@/lib/email/config';
 function verifyAuth(request: NextRequest): boolean {
   const authHeader = request.headers.get('Authorization');
   if (!authHeader) {
+    console.log('[send-raw] No Authorization header');
     return false;
   }
 
   const token = authHeader.replace('Bearer ', '');
   const cronSecret = process.env.CRON_SECRET;
+
+  // Debug: log first 8 chars of each for troubleshooting (safe - not full secret)
+  console.log('[send-raw] Auth check:', {
+    tokenPrefix: token.substring(0, 8) + '...',
+    secretPrefix: cronSecret ? cronSecret.substring(0, 8) + '...' : 'NOT_SET',
+    tokenLength: token.length,
+    secretLength: cronSecret?.length || 0,
+    match: token === cronSecret
+  });
 
   if (!cronSecret) {
     console.error('[send-raw] CRON_SECRET not configured in environment');
