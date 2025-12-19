@@ -14,24 +14,16 @@ import { getSmtpInboxes } from '@/lib/email/config';
 function verifyAuth(request: NextRequest): boolean {
   const authHeader = request.headers.get('Authorization');
   if (!authHeader) {
-    console.log('[send-raw] No auth header');
     return false;
   }
 
   const token = authHeader.replace('Bearer ', '');
+  const cronSecret = process.env.CRON_SECRET;
 
-  // Use CRON_SECRET from env, fallback to known value if not set
-  // This handles the case where Vercel production env var is missing
-  const cronSecret = process.env.CRON_SECRET || 'simple123';
-
-  // Debug: Log auth attempt (only log presence, not values for security)
-  console.log('[send-raw] Auth check:', {
-    hasToken: !!token,
-    hasCronSecret: !!process.env.CRON_SECRET,
-    usingFallback: !process.env.CRON_SECRET,
-    tokenLength: token?.length || 0,
-    match: token === cronSecret,
-  });
+  if (!cronSecret) {
+    console.error('[send-raw] CRON_SECRET not configured in environment');
+    return false;
+  }
 
   return token === cronSecret;
 }
