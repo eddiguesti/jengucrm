@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
       port: inbox.port,
       secure: inbox.port === 465,
       auth: {
-        user: inbox.user || inbox.email,
+        user: inbox.email,
         pass: inbox.password,
       },
     });
@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
     // Send the email
     const startTime = Date.now();
     const result = await transporter.sendMail({
-      from: `"${fromName || inbox.displayName}" <${fromEmail}>`,
+      from: `"${fromName || inbox.name}" <${fromEmail}>`,
       to,
       subject,
       text: emailBody,
