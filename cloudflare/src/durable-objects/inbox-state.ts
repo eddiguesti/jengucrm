@@ -87,6 +87,12 @@ export class InboxState implements DurableObject {
         case '/reset-circuit':
           return this.handleResetCircuit(request);
 
+        case '/clear':
+          return this.handleClear();
+
+        case '/remove':
+          return this.handleRemove(request);
+
         default:
           return new Response('Not Found', { status: 404 });
       }
@@ -395,5 +401,25 @@ export class InboxState implements DurableObject {
       inboxes: Object.fromEntries(this.inboxes),
       rrIndex: this.roundRobinIndex,
     });
+  }
+
+  private async handleClear(): Promise<Response> {
+    const count = this.inboxes.size;
+    this.inboxes.clear();
+    this.roundRobinIndex = 0;
+    await this.persist();
+    return Response.json({ success: true, cleared: count });
+  }
+
+  private async handleRemove(request: Request): Promise<Response> {
+    const { inboxId } = await request.json<{ inboxId: string }>();
+
+    if (!this.inboxes.has(inboxId)) {
+      return Response.json({ error: 'Inbox not found' }, { status: 404 });
+    }
+
+    this.inboxes.delete(inboxId);
+    await this.persist();
+    return Response.json({ success: true, removed: inboxId });
   }
 }

@@ -129,6 +129,18 @@ export async function handleAPI(
         }
         break;
 
+      case 'admin/clear-inboxes':
+        if (request.method === 'POST') {
+          return handleClearInboxes(env);
+        }
+        break;
+
+      case 'admin/remove-inbox':
+        if (request.method === 'POST') {
+          return handleRemoveInbox(request, env);
+        }
+        break;
+
       // ==================
       // DELIVERABILITY ENDPOINTS
       // ==================
@@ -1159,6 +1171,26 @@ async function handleGetBlockedSends(url: URL, env: Env): Promise<Response> {
     count: blockedSends.length,
     limit,
   });
+}
+
+async function handleClearInboxes(env: Env): Promise<Response> {
+  const inboxState = env.INBOX_STATE.get(env.INBOX_STATE.idFromName('pool'));
+  const response = await inboxState.fetch(new Request('http://do/clear', { method: 'POST' }));
+  const result = await response.json();
+  return Response.json(result);
+}
+
+async function handleRemoveInbox(request: Request, env: Env): Promise<Response> {
+  const body = await request.json<{ inboxId: string }>();
+  const inboxState = env.INBOX_STATE.get(env.INBOX_STATE.idFromName('pool'));
+  const response = await inboxState.fetch(
+    new Request('http://do/remove', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+  );
+  const result = await response.json();
+  return Response.json(result);
 }
 
 // ==================
