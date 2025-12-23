@@ -195,7 +195,12 @@
       "Bash(npx vercel env:*)",
       "Bash(xxd:*)",
       "Bash(echo \"   curl https://crm.jengu.ai/api/debug-smtp\")",
-      "Bash(echo \"   curl -X POST ''https://jengu-crm.edd-181.workers.dev/api/admin/trigger-send'' -H ''Content-Type: application/json'' -d ''{\"\"dry_run\"\": false}''\")"
+      "Bash(echo \"   curl -X POST ''https://jengu-crm.edd-181.workers.dev/api/admin/trigger-send'' -H ''Content-Type: application/json'' -d ''{\"\"dry_run\"\": false}''\")",
+      "Bash(curl -s -X POST \"https://jengu-crm.edd-181.workers.dev/api/admin/trigger-send\" -H \"Content-Type: application/json\" -d '{\"\"dry_run\"\": false, \"\"test_email\"\": \"\"edd.guest@gmail.com\"\"}')",
+      "Bash(date:*)",
+      "Bash(curl -s -X POST \"https://jengu-crm.edd-181.workers.dev/api/admin/clear-inboxes\")",
+      "Bash(curl -s -X POST \"https://jengu-crm.edd-181.workers.dev/api/admin/clear-warmup\")",
+      "Bash(curl -s \"https://jengu-crm.edd-181.workers.dev/api/status/warmup\")"
     ],
     "deny": [],
     "ask": []

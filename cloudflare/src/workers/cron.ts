@@ -92,12 +92,7 @@ export async function handleCron(
     // Route based on cron schedule pattern
     // Pattern: "*/5 8-18 * * 1-6" - Every 5 min, 8am-6pm, Mon-Sat
     if (minute % 5 === 0 && hour >= 8 && hour <= 18 && dayOfWeek >= 1 && dayOfWeek <= 6) {
-      // 30% random skip for human-like sending pattern
-      if (Math.random() < 0.3) {
-        logger.info('Random skip for human-like pattern');
-        return;
-      }
-
+      logger.info('Email sending window - triggering batch');
       await sendEmailBatch(env);
       return;
     }

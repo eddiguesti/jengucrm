@@ -141,6 +141,12 @@ export async function handleAPI(
         }
         break;
 
+      case 'admin/clear-warmup':
+        if (request.method === 'POST') {
+          return handleClearWarmup(env);
+        }
+        break;
+
       // ==================
       // DELIVERABILITY ENDPOINTS
       // ==================
@@ -1189,6 +1195,13 @@ async function handleRemoveInbox(request: Request, env: Env): Promise<Response> 
       body: JSON.stringify(body),
     })
   );
+  const result = await response.json();
+  return Response.json(result);
+}
+
+async function handleClearWarmup(env: Env): Promise<Response> {
+  const warmupCounter = env.WARMUP_COUNTER.get(env.WARMUP_COUNTER.idFromName('global'));
+  const response = await warmupCounter.fetch(new Request('http://do/clear', { method: 'POST' }));
   const result = await response.json();
   return Response.json(result);
 }

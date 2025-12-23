@@ -90,6 +90,9 @@ export class WarmupCounter implements DurableObject {
         case '/daily-reset':
           return this.handleDailyReset();
 
+        case '/clear':
+          return this.handleClear();
+
         default:
           return new Response('Not Found', { status: 404 });
       }
@@ -362,5 +365,12 @@ export class WarmupCounter implements DurableObject {
 
   private async persist(): Promise<void> {
     await this.state.storage.put('inboxes', Object.fromEntries(this.inboxes));
+  }
+
+  private async handleClear(): Promise<Response> {
+    const count = this.inboxes.size;
+    this.inboxes.clear();
+    await this.persist();
+    return Response.json({ success: true, cleared: count });
   }
 }
