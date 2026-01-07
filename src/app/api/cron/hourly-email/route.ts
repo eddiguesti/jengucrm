@@ -2,10 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   getWarmupDailyLimit,
   getWarmupStatus,
-  isBusinessHours,
   EMAIL,
 } from "@/lib/constants";
-import { createServerClient } from "@/lib/supabase";
 
 /**
  * HUMAN-LIKE EMAIL CRON
@@ -96,7 +94,7 @@ export async function GET(request: NextRequest) {
       body: JSON.stringify({
         max_emails: 1,
         min_score: 0,
-        stagger_delay: false,
+        stagger_delay: true,  // Enable 30-90s random delay for human-like behavior
       }),
     });
 

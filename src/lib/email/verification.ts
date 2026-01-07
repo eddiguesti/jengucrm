@@ -625,24 +625,25 @@ export async function canSendTo(email: string): Promise<{ canSend: boolean; reas
   }
 
   // MillionVerifier check - verify email actually exists
-  // CRITICAL: Block on failure to prevent bounces
+  // Strategy: Block on definite failures, allow through on API errors (temporary issues)
   try {
     const { millionVerifierVerify } = await import('./finder/services');
     const mvResult = await millionVerifierVerify(normalizedEmail);
 
-    // If no result returned, BLOCK (don't allow unverified emails)
+    // If no result returned (API key not set), allow through with warning
+    // This lets emails send even without MillionVerifier configured
     if (!mvResult) {
-      logger.warn({ email: normalizedEmail }, 'MillionVerifier returned no result - blocking email');
-      return { canSend: false, reason: 'Email verification failed (no result)' };
+      logger.warn({ email: normalizedEmail }, 'MillionVerifier not configured - allowing email through');
+      return { canSend: true };
     }
 
-    // Block on API errors
+    // On API errors, allow through with warning (temporary issues shouldn't block sending)
     if (mvResult.result === 'error') {
-      logger.warn({ email: normalizedEmail, subresult: mvResult.subresult }, 'MillionVerifier returned error - blocking email');
-      return { canSend: false, reason: `Email verification error: ${mvResult.subresult || 'unknown'}` };
+      logger.warn({ email: normalizedEmail, subresult: mvResult.subresult }, 'MillionVerifier API error - allowing email through');
+      return { canSend: true };
     }
 
-    // Block invalid emails
+    // Block invalid emails (definite failures)
     if (mvResult.result === 'invalid') {
       logger.info({ email: normalizedEmail, mvResult: mvResult.result, subresult: mvResult.subresult }, 'Email blocked by MillionVerifier (invalid)');
       return { canSend: false, reason: `MillionVerifier: ${mvResult.subresult || 'invalid'}` };
@@ -660,12 +661,12 @@ export async function canSendTo(email: string): Promise<{ canSend: boolean; reas
       return { canSend: false, reason: 'Disposable email' };
     }
 
-    // Only allow: ok, unknown (might be valid)
+    // Allow: ok, unknown (might be valid)
     logger.debug({ email: normalizedEmail, mvResult: mvResult.result }, 'MillionVerifier passed');
     return { canSend: true };
   } catch (error) {
-    // CRITICAL: Block on API errors - better to miss a send than bounce
-    logger.error({ error, email: normalizedEmail }, 'MillionVerifier check threw exception - blocking email');
-    return { canSend: false, reason: 'Email verification service unavailable' };
+    // On exception, allow through with warning (don't block all email sending on API issues)
+    logger.error({ error, email: normalizedEmail }, 'MillionVerifier exception - allowing email through');
+    return { canSend: true };
   }
 }
