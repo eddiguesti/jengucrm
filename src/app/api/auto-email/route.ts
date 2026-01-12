@@ -267,7 +267,7 @@ export async function POST(request: NextRequest) {
     const { data: prospects, error: prospectsError } = await supabase
       .from("prospects")
       .select(baseSelect)
-      .in("stage", ["new", "researching"])
+      .in("stage", ["new", "researching", "enriched", "ready"])
       .eq("archived", false)
       .not("email", "is", null)
       .gte("score", minScore)
