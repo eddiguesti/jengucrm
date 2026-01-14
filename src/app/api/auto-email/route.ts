@@ -324,27 +324,50 @@ export async function POST(request: NextRequest) {
     // Check if timezone-aware sending is enabled
     const timezoneAwareSending = process.env.TIMEZONE_AWARE_SENDING !== "false";
 
+    // Debug counters
+    const filterStats = {
+      total: prospects.length,
+      alreadyEmailed: 0,
+      noEmail: 0,
+      fakeEmail: 0,
+      corpEmail: 0,
+      genericPrefix: 0,
+      outsideHours: 0,
+      passed: 0,
+    };
+
     const eligibleProspects = prospects.filter((p) => {
-      if (emailedIds.has(p.id)) return false;
-      if (!p.email) return false;
-      if (FAKE_EMAIL_PATTERNS.some((pattern) => pattern.test(p.email!)))
-        return false;
-      if (GENERIC_CORPORATE_EMAILS.some((pattern) => pattern.test(p.email!)))
-        return false;
-      // Skip generic email prefixes (info@, reception@, etc.) - we want personal emails
-      if (GENERIC_EMAIL_PREFIXES.some((pattern) => pattern.test(p.email!)))
-        return false;
-      // Timezone-aware sending: only email during their business hours (9am-5pm local)
-      if (timezoneAwareSending && p.country && !isBusinessHours(p.country)) {
-        const localHour = getLocalHour(p.country);
-        logger.debug(
-          { prospect: p.name, country: p.country, localHour },
-          "Skipped: outside business hours",
-        );
+      if (emailedIds.has(p.id)) {
+        filterStats.alreadyEmailed++;
         return false;
       }
+      if (!p.email) {
+        filterStats.noEmail++;
+        return false;
+      }
+      if (FAKE_EMAIL_PATTERNS.some((pattern) => pattern.test(p.email!))) {
+        filterStats.fakeEmail++;
+        return false;
+      }
+      if (GENERIC_CORPORATE_EMAILS.some((pattern) => pattern.test(p.email!))) {
+        filterStats.corpEmail++;
+        return false;
+      }
+      // Skip generic email prefixes (info@, reception@, etc.) - we want personal emails
+      if (GENERIC_EMAIL_PREFIXES.some((pattern) => pattern.test(p.email!))) {
+        filterStats.genericPrefix++;
+        return false;
+      }
+      // Timezone-aware sending: only email during their business hours (9am-5pm local)
+      if (timezoneAwareSending && p.country && !isBusinessHours(p.country)) {
+        filterStats.outsideHours++;
+        return false;
+      }
+      filterStats.passed++;
       return true;
     });
+
+    logger.info({ filterStats }, "Prospect filtering stats");
 
     logger.info(
       {
@@ -598,6 +621,7 @@ export async function POST(request: NextRequest) {
       message: `Auto-email completed: ${results.sent} sent, ${results.failed} failed, ${results.blocked} blocked, ${results.bounced} bounced, ${results.skipped} skipped`,
       ...results,
       checked: eligibleProspects.length,
+      filterStats,
       warmup: {
         ...warmupStatus,
         sent_today: totalSentToday + results.sent,
