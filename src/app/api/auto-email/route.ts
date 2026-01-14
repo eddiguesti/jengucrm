@@ -280,10 +280,27 @@ export async function POST(request: NextRequest) {
     }
 
     if (!prospects || prospects.length === 0) {
+      // Debug: check if we can read ANY prospects
+      const { count: totalCount } = await supabase
+        .from("prospects")
+        .select("*", { count: "exact", head: true });
+
+      const { count: stageCount } = await supabase
+        .from("prospects")
+        .select("*", { count: "exact", head: true })
+        .in("stage", ["new", "researching", "enriched", "ready"])
+        .eq("archived", false);
+
       return success({
         message: "No eligible prospects to email",
         sent: 0,
         checked: 0,
+        debug: {
+          totalProspects: totalCount,
+          eligibleStageCount: stageCount,
+          minScore,
+          stages: ["new", "researching", "enriched", "ready"],
+        },
       });
     }
 
