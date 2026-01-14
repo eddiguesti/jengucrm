@@ -264,6 +264,9 @@ export async function POST(request: NextRequest) {
         google_rating, google_review_count, source_job_title,
         source, contact_name, score, tier`;
 
+    // Query MORE prospects to ensure we include personal emails (which often have low scores)
+    // High-score job board prospects usually have generic emails (info@, reservations@)
+    // Low-score Sales Navigator prospects often have personal emails (firstname.lastname@)
     const { data: prospects, error: prospectsError } = await supabase
       .from("prospects")
       .select(baseSelect)
@@ -272,7 +275,7 @@ export async function POST(request: NextRequest) {
       .not("email", "is", null)
       .gte("score", minScore)
       .order("score", { ascending: false })
-      .limit(Math.max(maxEmails * 100, 500)); // Min 500: top prospects often have generic emails
+      .limit(2000); // Increased from 500 to include low-score personal emails
 
     if (prospectsError) {
       logger.error({ error: prospectsError }, "Prospects query failed");
