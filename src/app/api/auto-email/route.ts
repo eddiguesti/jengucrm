@@ -23,11 +23,9 @@ import {
   getWarmupDailyLimit,
   getWarmupStatus,
   isBusinessHours,
-  getLocalHour,
 } from "@/lib/constants";
 import { aiGateway } from "@/lib/ai-gateway";
 import { flags } from "@/lib/feature-flags";
-import { CACHE_TTL } from "@/lib/cache";
 
 interface Campaign {
   id: string;
@@ -624,7 +622,6 @@ export async function POST(request: NextRequest) {
       message: `Auto-email completed: ${results.sent} sent, ${results.failed} failed, ${results.blocked} blocked, ${results.bounced} bounced, ${results.skipped} skipped`,
       ...results,
       checked: eligibleProspects.length,
-      filterStats,
       warmup: {
         ...warmupStatus,
         sent_today: totalSentToday + results.sent,
