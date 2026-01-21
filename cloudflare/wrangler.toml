@@ -65,17 +65,22 @@ tag = "v1"
 new_sqlite_classes = ["WarmupCounter", "InboxState", "RateLimiter", "ProspectDedup"]
 
 # ============================================
-# CRON TRIGGERS
+# CRON TRIGGERS - DISABLED
 # ============================================
-# Note: Reply checking is handled by Cloudflare Email Routing (real-time)
-[triggers]
-crons = [
-  "*/5 8-18 * * 1-6",  # Every 5 min, 8am-6pm, Mon-Sat (email sending)
-  "0 7 * * *",         # 7am daily (pipeline: reset counters, cleanup)
-  "0 10 * * 1-5",      # 10am weekdays (follow-ups)
-  "*/5 6,19-23 * * *", # Every 5 min, 6am + 7pm-11pm (enrichment: find websites/emails)
-  "2-59/10 * * * *",   # Every 10 min at :02/:12/... (trigger Sales Navigator enrichment on Vercel)
-]
+# DISABLED: Cloudflare Worker uses D1 database which is separate from Supabase.
+# Prospects are in Supabase, so these crons were running but finding no data.
+# Email sending now handled by Vercel + external cron (cron-job.org).
+#
+# To re-enable, uncomment the crons below and ensure D1 is synced with Supabase.
+#
+# [triggers]
+# crons = [
+#   "*/5 8-18 * * 1-6",  # Every 5 min, 8am-6pm, Mon-Sat (email sending)
+#   "0 7 * * *",         # 7am daily (pipeline: reset counters, cleanup)
+#   "0 10 * * 1-5",      # 10am weekdays (follow-ups)
+#   "*/5 6,19-23 * * *", # Every 5 min, 6am + 7pm-11pm (enrichment: find websites/emails)
+#   "2-59/10 * * * *",   # Every 10 min at :02/:12/... (trigger Sales Navigator enrichment on Vercel)
+# ]
 
 # ============================================
 # EMAIL ROUTING (Inbound Email Handling)
