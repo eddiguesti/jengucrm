@@ -622,6 +622,7 @@ export async function POST(request: NextRequest) {
       message: `Auto-email completed: ${results.sent} sent, ${results.failed} failed, ${results.blocked} blocked, ${results.bounced} bounced, ${results.skipped} skipped`,
       ...results,
       checked: eligibleProspects.length,
+      filterStats, // Debug: temporarily re-added
       warmup: {
         ...warmupStatus,
         sent_today: totalSentToday + results.sent,

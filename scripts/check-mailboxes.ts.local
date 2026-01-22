@@ -1,0 +1,60 @@
+import { createClient } from '@supabase/supabase-js';
+import * as dotenv from 'dotenv';
+dotenv.config({ path: '.env.local' });
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
+
+async function check() {
+  // Check mailboxes
+  const { data: mailboxes, error: mbError } = await supabase
+    .from('mailboxes')
+    .select('*')
+    .eq('is_active', true);
+
+  console.log('=== Active Mailboxes ===');
+  if (mbError) {
+    console.log('Error:', mbError.message);
+  } else if (!mailboxes || mailboxes.length === 0) {
+    console.log('NO ACTIVE MAILBOXES! This is why no emails are sending.');
+  } else {
+    mailboxes.forEach((m: any) => {
+      console.log('- ' + m.email + ': sent_today=' + m.sent_today + ', daily_limit=' + m.daily_limit + ', warmup_stage=' + m.warmup_stage);
+    });
+  }
+
+  // Check prospects ready to email
+  const { count: readyCount } = await supabase
+    .from('prospects')
+    .select('*', { count: 'exact', head: true })
+    .in('stage', ['enriched', 'ready'])
+    .eq('archived', false)
+    .not('contact_email', 'is', null)
+    .eq('email_bounced', false);
+
+  console.log('');
+  console.log('=== Prospects Ready to Email ===');
+  console.log('Count:', readyCount);
+
+  // Sample prospects
+  const { data: samples } = await supabase
+    .from('prospects')
+    .select('name, contact_email, stage')
+    .in('stage', ['enriched', 'ready'])
+    .eq('archived', false)
+    .not('contact_email', 'is', null)
+    .eq('email_bounced', false)
+    .limit(10);
+
+  console.log('');
+  console.log('Sample prospects:');
+  const genericPrefixes = ['info@','contact@','reservations@','reception@','booking@','hello@','support@','sales@','admin@','office@'];
+  samples?.forEach((p: any) => {
+    const isGeneric = genericPrefixes.some(prefix => p.contact_email?.toLowerCase().startsWith(prefix));
+    console.log('  ' + p.name + ': ' + p.contact_email + ' [' + (isGeneric ? 'GENERIC' : 'personal') + ']');
+  });
+}
+
+check();

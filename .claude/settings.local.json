@@ -200,7 +200,18 @@
       "Bash(date:*)",
       "Bash(curl -s -X POST \"https://jengu-crm.edd-181.workers.dev/api/admin/clear-inboxes\")",
       "Bash(curl -s -X POST \"https://jengu-crm.edd-181.workers.dev/api/admin/clear-warmup\")",
-      "Bash(curl -s \"https://jengu-crm.edd-181.workers.dev/api/status/warmup\")"
+      "Bash(curl -s \"https://jengu-crm.edd-181.workers.dev/api/status/warmup\")",
+      "Bash(gh run list:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git fetch:*)",
+      "Bash(node --loader tsx:*)",
+      "Bash(set -a)",
+      "Bash(set +a)",
+      "Bash(gh api:*)",
+      "Bash(npx wrangler whoami:*)",
+      "Bash(WRANGLER_LOG=debug npx wrangler deploy:*)",
+      "Bash(xargs ls:*)",
+      "Bash(git commit --no-verify -m \"$\\(cat <<''EOF''\nDisable Cloudflare crons to stop wasted usage\n\nThe Cloudflare Worker queries D1 database but prospects are in Supabase.\nThis caused ~1,800 cron invocations/day doing nothing useful.\n\nEmail sending now handled by Vercel + external cron \\(cron-job.org\\).\nCloudflare still handles inbound email routing.\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
     ],
     "deny": [],
     "ask": []
