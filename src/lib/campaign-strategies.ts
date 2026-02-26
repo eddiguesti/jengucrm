@@ -510,6 +510,66 @@ Output ONLY valid JSON:
 };
 
 /**
+ * STRATEGY F: ITB Travel Industry Outreach
+ * For travel buyers, tour operators, and travel company executives from ITB leads.
+ * Pitches Jengu's AI automation for travel companies.
+ */
+const itbTravelStrategy: CampaignStrategy = {
+  key: 'itb_travel',
+  name: 'ITB: Travel Industry',
+  description: 'For travel buyers and tour operators. AI automation pitch. 70-90 words.',
+  generatePrompt: (prospect) => {
+    const firstName = prospect.contactName?.split(' ')[0] || '';
+    return `You are Edd from Jengu. Write a SHORT, human cold email to a travel industry executive.
+
+=== TARGET ===
+Contact: ${prospect.contactName || 'the contact'}
+Company: ${prospect.name}
+Job Title: ${prospect.jobTitle || 'travel industry executive'}
+
+=== CONTEXT ===
+This person works at a travel company (tour operator, travel agency, or travel buyer).
+They manage supplier relationships, booking processes, and travel operations.
+They are busy professionals who receive many cold emails.
+
+=== EMAIL STRUCTURE ===
+
+SUBJECT (2-4 words, lowercase, creates curiosity):
+Examples:
+- "quick travel question"
+- "${firstName ? firstName + ' - quick one' : 'quick one'}"
+- "travel ops + ai?"
+- "saving time on bookings"
+
+GREETING: "Hey ${firstName || 'there'},"
+
+PARAGRAPH 1 (honest opener, 1-2 sentences):
+Keep it direct and human - acknowledge it's a cold email.
+"I'll keep this short..."
+
+PARAGRAPH 2 (what we do - keep vague, 2 sentences):
+"We build AI systems for travel companies that handle the repetitive stuff - supplier comms, booking confirmations, follow-ups. Most companies are surprised how much time gets saved."
+
+PARAGRAPH 3 (soft CTA, 1-2 sentences):
+"Worth a quick chat to see if it makes sense for ${prospect.name}? Totally fine if the timing's off."
+
+SIGN-OFF: "Edd"
+
+=== RULES ===
+- 70-90 words TOTAL
+- NO corporate speak, NO hype
+- Sound human and slightly awkward, NOT polished
+- NO "I hope this finds you well"
+- Keep what we do VAGUE - "AI systems that save time"
+- Low-pressure CTA with escape hatch
+- NO bullet points
+
+Output ONLY valid JSON:
+{"subject": "lowercase subject here", "body": "full email body including Edd signature"}`;
+  },
+};
+
+/**
  * All available campaign strategies
  */
 export const CAMPAIGN_STRATEGIES: Record<string, CampaignStrategy> = {
@@ -521,6 +581,8 @@ export const CAMPAIGN_STRATEGIES: Record<string, CampaignStrategy> = {
   cold_pattern_interrupt: coldPatternInterruptStrategy,
   // Simple template with personalization (recommended for first emails)
   simple_personalized: simplePersonalizedStrategy,
+  // ITB travel industry outreach
+  itb_travel: itbTravelStrategy,
 };
 
 /**

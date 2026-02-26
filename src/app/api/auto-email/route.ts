@@ -428,15 +428,20 @@ export async function POST(request: NextRequest) {
       }
 
       // Match campaigns to prospect source:
+      // - ITB leads → itb_travel strategy
       // - Sales Navigator prospects → cold strategies (cold_direct, cold_pattern_interrupt)
       // - Job board prospects → job board strategies (authority_scarcity, curiosity_value)
       const coldStrategyKeys = ["cold_direct", "cold_pattern_interrupt"];
       const jobBoardStrategyKeys = ["authority_scarcity", "curiosity_value"];
+      const itbStrategyKeys = ["itb_travel"];
 
+      const isITBLead = prospect.source === "itb_leads";
       const isSalesNav = prospect.source === "sales_navigator";
-      const relevantStrategyKeys = isSalesNav
-        ? coldStrategyKeys
-        : jobBoardStrategyKeys;
+      const relevantStrategyKeys = isITBLead
+        ? itbStrategyKeys
+        : isSalesNav
+          ? coldStrategyKeys
+          : jobBoardStrategyKeys;
       const relevantCampaigns = availableCampaigns.filter((c) =>
         relevantStrategyKeys.includes(c.strategy_key),
       );
@@ -622,7 +627,6 @@ export async function POST(request: NextRequest) {
       message: `Auto-email completed: ${results.sent} sent, ${results.failed} failed, ${results.blocked} blocked, ${results.bounced} bounced, ${results.skipped} skipped`,
       ...results,
       checked: eligibleProspects.length,
-      filterStats, // Debug: temporarily re-added
       warmup: {
         ...warmupStatus,
         sent_today: totalSentToday + results.sent,
