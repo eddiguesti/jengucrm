@@ -66,7 +66,7 @@ export async function GET() {
     // Check enrichment API
     try {
       const enrichmentResponse = await fetch(
-        `${process.env.NEXT_PUBLIC_SUPABASE_URL || 'http://localhost:3000'}/api/enrichment/status`,
+        `${CLOUDFLARE_WORKER_URL}/enrich/status`,
         { signal: AbortSignal.timeout(5000) }
       );
 
