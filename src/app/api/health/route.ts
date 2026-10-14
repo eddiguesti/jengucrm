@@ -5,6 +5,7 @@
 
 import { supabase } from '@/lib/supabase';
 import { NextResponse } from 'next/server';
+import { CLOUDFLARE_WORKER_URL } from '@/lib/cloudflare-worker';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -18,7 +19,7 @@ export async function GET() {
       cloudflare: 'unknown',
       enrichment: 'unknown',
     },
-    details: {} as Record<string, any>,
+    details: {} as Record<string, unknown>,
   };
 
   try {
@@ -37,7 +38,7 @@ export async function GET() {
     }
 
     // Check Cloudflare Workers (if configured)
-    const cloudflareUrl = process.env.CLOUDFLARE_WORKER_URL;
+    const cloudflareUrl = CLOUDFLARE_WORKER_URL;
     if (cloudflareUrl) {
       try {
         const cfResponse = await fetch(`${cloudflareUrl}/health`, {

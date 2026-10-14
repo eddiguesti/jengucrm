@@ -2,7 +2,7 @@ import { success, errors } from '@/lib/api-response';
 import { logger } from '@/lib/logger';
 import { createServerClient } from '@/lib/supabase';
 
-const CLOUDFLARE_WORKER_URL = 'https://jengu-crm.edd-181.workers.dev';
+import { CLOUDFLARE_WORKER_URL } from '@/lib/cloudflare-worker';
 
 interface EnrichmentStatus {
   total: number;

@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
-const CLOUDFLARE_WORKER_URL = 'https://jengu-crm.edd-181.workers.dev';
+import { CLOUDFLARE_WORKER_URL } from '@/lib/cloudflare-worker';
 
 export async function GET() {
   try {

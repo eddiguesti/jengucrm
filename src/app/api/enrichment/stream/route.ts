@@ -8,7 +8,7 @@ import { NextRequest } from 'next/server';
 export const dynamic = 'force-dynamic';
 export const runtime = 'edge';
 
-const CLOUDFLARE_WORKER_URL = 'https://jengu-crm.edd-181.workers.dev';
+import { CLOUDFLARE_WORKER_URL } from '@/lib/cloudflare-worker';
 
 interface EnrichmentProgress {
   isRunning: boolean;
