@@ -50,6 +50,9 @@ export default function RootLayout({
               <MobileNav />
               <main className="flex-1 overflow-auto pb-safe">
                 {children}
+                <footer className="px-6 py-3 text-center text-xs text-muted-foreground">
+                  <a href="https://hexcore.digital/" className="inline-flex min-h-11 items-center underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4">Made by Hexcore</a>
+                </footer>
               </main>
             </div>
             <Toaster />
